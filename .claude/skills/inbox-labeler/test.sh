@@ -265,12 +265,13 @@ check "only derived declares references" \
     "derived"
 # The processing order lives in SKILL.md, so assert the documented sequence there.
 order_check() {  # order_check <marker> ... -> True when each follows the previous one
+    # Whitespace is collapsed on both sides, so markers survive line rewrapping.
     SKILL="$SCRIPT_DIR/SKILL.md" python3 - "$@" <<'PY'
-import os, sys
-text = open(os.environ["SKILL"], encoding="utf-8").read()
+import os, re, sys
+flat = re.sub(r"\s+", " ", open(os.environ["SKILL"], encoding="utf-8").read())
 start = 0
 for marker in sys.argv[1:]:
-    index = text.find(marker, start)
+    index = flat.find(re.sub(r"\s+", " ", marker), start)
     if index < 0:
         print("OUT OF ORDER OR MISSING: %s" % marker)
         raise SystemExit
@@ -344,6 +345,61 @@ check "the explain-then-create rule is documented" \
         'Do not wait for approval' \
         'When a single detection label is all it takes')" \
     "True"
+
+echo
+echo "--- labels are evaluated timelessly ---"
+check "the principle has its own section, stated as a rule" \
+    "$(order_check \
+        '## Labels are timeless' \
+        'as if you were reading the email at the moment it was written' \
+        'The current date and the current time never influence whether a label applies' \
+        'a minute after it lands or five years later' \
+        'never against now')" \
+    "True"
+check "the worked example is present" \
+    "$(order_check \
+        '## Labels are timeless' \
+        'Your package will arrive tomorrow.' \
+        'Imminent' \
+        'Payment due tomorrow' \
+        'Meeting starts in one hour' \
+        'Flight departs today')" \
+    "True"
+check "current relevance is named as a separate, later stage" \
+    "$(order_check \
+        '## Labels are timeless' \
+        'NeedsAttentionToday' \
+        'Expired' \
+        'prioritisation, not labelling' \
+        'Detection labels and derived labels never make it')" \
+    "True"
+check "selection is distinguished from evaluation" \
+    "$(order_check \
+        '## Labels are timeless' \
+        'choosing which messages to look at' \
+        'selection, not evaluation')" \
+    "True"
+check "the processing rules restate it where evaluation happens" \
+    "$(order_check \
+        'Rules for both commands' \
+        'Judge every message as of the day it was written' \
+        'Neither stage consults the current date')" \
+    "True"
+check "the modelling section defers time-relative concepts" \
+    "$(order_check \
+        '### Modelling what the user asked for' \
+        'Model the timeless meaning, not the current relevance' \
+        'cannot be a label at all')" \
+    "True"
+check "the derived prompt reads dates as facts of the email" \
+    "$(order_check \
+        '## The derived-label prompt' \
+        'as they stood when the email was written' \
+        "not something to compare against today's date")" \
+    "True"
+check "no guidance tells the agent to compare against the current date" \
+    "$(grep -ciE "compare .{0,20}(against|to) (today|the current (date|time))|based on (today|the current date)|if (it|the email) is still" "$SCRIPT_DIR/SKILL.md")" \
+    "0"
 check "required_labels gate the derived stage" \
     "$(order_check '**Derived stage.**' 'required_labels' 'did not all match')" "True"
 

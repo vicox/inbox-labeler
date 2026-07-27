@@ -100,6 +100,45 @@ Example: a LinkedIn connection request carries several aspects at once. It is so
 is a connection request, and the user treats it as important. If the user keeps labels for all
 three aspects, the message carries `IL/Social`, `IL/Connection` and `IL/Important` together.
 
+## Labels are timeless
+
+A label describes what an email **means**. It says nothing about whether that meaning is still
+relevant today.
+
+> **Evaluate every label as if you were reading the email at the moment it was written.**
+
+- The current date and the current time never influence whether a label applies. Neither does
+  how long ago the email arrived.
+- The same email gets the same labels whether it is processed a minute after it lands or five
+  years later.
+- A relative date inside the email — "tomorrow", "in one hour", "next Tuesday" — is a fact
+  *about the email*. Read it against the email's own date if you need to, never against now.
+
+An email sent last week saying:
+
+> Your package will arrive tomorrow.
+
+can still correctly receive `Imminent`, because the arrival *was* imminent when the email was
+written. The same goes for "Payment due tomorrow", "Meeting starts in one hour" and "Flight
+departs today": each is a property of the email itself, so it stays true forever.
+
+**"Is this still relevant?" is a different question at a different stage.** Labels like
+`NeedsAttentionToday`, `Today` or `Expired` are prioritisation, not labelling — they compare the
+email against the clock, and that comparison may legitimately belong to a later stage once one
+exists. Detection labels and derived labels never make it. If a user asks for a label of that
+kind, say so plainly and offer the timeless part instead: `PaymentDueSoon` can be detected from
+the email ("states a payment due within a few days of writing"), while whether that due date has
+now passed cannot.
+
+Time still has one legitimate role, and it is upstream of evaluation: **choosing which messages
+to look at.** When the user asks to process "everything from today", narrowing the search is
+selection, not evaluation — the labels each selected message then receives are unaffected by
+when the run happens.
+
+This is also what makes `reprocess` trustworthy. Because evaluation does not depend on when it
+runs, re-evaluating year-old mail cannot change its labels for time reasons. If a reprocess
+changes something, the labels changed — never the clock.
+
 ## The `IL/` namespace
 
 **Inbox Labeler owns the entire `IL/` namespace.** Every Gmail label whose name starts with
@@ -226,6 +265,10 @@ Choosing between the two reference lists follows from the user's wording:
 
 If an interpretation seems to need another interpretation, the missing piece is a detection
 label — derived labels never reference derived labels.
+
+Model the timeless meaning, not the current relevance. A concept that only makes sense relative
+to today — `Expired`, `StillOpen`, `NeedsAttentionToday` — cannot be a label at all; see
+[Labels are timeless](#labels-are-timeless) and offer the part that can be read off the email.
 
 #### Example: an interpretation over new observations
 
@@ -391,7 +434,8 @@ change the unread state** (no marking as read) and never treat unread as the pro
    `nextPageToken` until no next page token comes back. Process the complete result set —
    there is no cap on how many messages you handle, and no "first page only" shortcut.
    Narrow the query only if the user explicitly asked for a narrower scope (e.g.
-   "everything from today" → add `newer_than:1d`).
+   "everything from today" → add `newer_than:1d`). That is selection; it does not change what
+   any selected message means.
 5. For each thread, call `get_thread` and pick out the individual messages that are in the
    inbox, unread, and lack the `IL/Processed` id in `labelIds`. Gmail returns a whole thread
    when any one of its messages matches, so a result can mix in-scope and out-of-scope
@@ -525,7 +569,8 @@ run summary the same way detection evidence is carried.
 
 Treat the listed detection labels as established facts and reason from them — do not re-check
 whether the email really is an invoice. The email is there for the details the labels do not
-carry, like the due date or who sent it.
+carry, like the due date or who sent it. Read those details as they stood when the email was
+written: a due date is a fact of the email, not something to compare against today's date.
 
 Keep each derived label's evaluation independent: one derived label's outcome is never input to
 another. If a derived label needs a fact no detection label provides, the answer is a new
@@ -535,6 +580,10 @@ Rules for both commands:
 
 - **Detection first, derived second, always.** A derived label is never evaluated before the
   detection stage has finished for that message, because its input is the detection result.
+- **Judge every message as of the day it was written.** Neither stage consults the current date
+  or time, and an email's age never changes what it means — see
+  [Labels are timeless](#labels-are-timeless). The only time-dependent choice in a run is which
+  messages to select, and only when the user asked for a narrower scope.
 - **Resolve logical labels once, then stay in Gmail terms.** Every Gmail call and every
   comparison against a message's `labelIds` uses the resolved `IL/…` name, and processing
   output names labels the way the user sees them in Gmail — report `IL/Invoice`, not `Invoice`.
