@@ -2,13 +2,13 @@
   {
     "id": "8da8071c",
     "name": "Invoices",
-    "label": "IL/Invoices",
+    "label": "Invoices",
     "instruction": "Emails containing an invoice, receipt or payment confirmation. Not payment reminders."
   },
   {
     "id": "3f4d4d84",
     "name": "Newsletters",
-    "label": "IL/Newsletters",
+    "label": "Newsletters",
     "instruction": "Bulk marketing mail and newsletters the user subscribed to. Not transactional mail about an account or order."
   }
 ]

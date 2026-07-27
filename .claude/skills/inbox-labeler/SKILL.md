@@ -11,17 +11,23 @@ it detects and the Gmail label to apply when that aspect is present:
 | Field | Meaning |
 | --- | --- |
 | `id` | stable identifier, generated on create — the only handle for updates and deletes |
-| `name` | short human name for the aspect, e.g. `Invoices` |
-| `label` | Gmail label applied when the aspect is present, always inside the `IL/` namespace, e.g. `IL/Invoices` |
+| `name` | short human name for the aspect, e.g. `Invoice` |
+| `label` | **logical** label, stored without a prefix, e.g. `Invoice` — resolves to the Gmail label `IL/Invoice` |
 | `instruction` | how you decide whether that aspect is present in a message, in natural language |
+
+`label` holds the logical label only. `IL/` is Inbox Labeler's Gmail namespace — plumbing,
+not part of a label's identity — so it never appears in stored configuration and is added
+only when talking to Gmail: **the logical label `Invoice` resolves to the Gmail label
+`IL/Invoice`.** Resolve in that direction every time you create a label, apply one, remove
+one, compare one against a message's labels, or name one in output.
 
 ## What a label request is
 
 > A user-defined way to detect an aspect of a message that is interesting to the user.
 
 The aspect may be broad or narrow — that is entirely the user's choice, and both are equally
-valid. `IL/Social` covering everything from a social platform is a good label request; so is
-`IL/Connection` for connection requests alone; so is a user keeping both. The set of label
+valid. A `Social` label request covering everything from a social platform is a good one; so
+is `Connection` for connection requests alone; so is a user keeping both. The set of label
 requests the user has defined *is* the model. Have no opinion about how fine-grained it
 should be.
 
@@ -51,25 +57,28 @@ that namespace and that the way to get a new `IL/` label is a label request.
 
 Every kind of label Inbox Labeler works with lives inside it:
 
-| Kind | Origin | Example |
-| --- | --- | --- |
-| **business labels** | the `label` of a label request | `IL/Invoices`, `IL/Social` |
-| **case labels** | future label kind, not part of this version | — |
-| **bucket labels** | future label kind, not part of this version | — |
-| **system labels** | Inbox Labeler's own state and outcome | `IL/Processed`, `IL/NoMatch` |
+| Kind | Origin | Logical label | Gmail label |
+| --- | --- | --- | --- |
+| **business labels** | the `label` of a label request | `Invoice`, `Social` | `IL/Invoice`, `IL/Social` |
+| **case labels** | future label kind, not part of this version | — | — |
+| **bucket labels** | future label kind, not part of this version | — | — |
+| **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
 
 The two system labels:
 
-| Label | Meaning |
+| Gmail label | Meaning |
 | --- | --- |
 | `IL/Processed` | Inbox Labeler has finished evaluating this message. |
 | `IL/NoMatch` | None of the current label requests matched this message. |
 
 `IL/Processed` records **processing state** — that the work happened. `IL/NoMatch` records
 the **outcome** of that work — that the evaluation produced no matches. They serve different
-purposes and are applied independently of one another. Both are reserved and the CLI rejects
-them as a `label` value on create and on update; if a user asks for one, explain that the name
-is taken by Inbox Labeler's own state and agree on a different label.
+purposes and are applied independently of one another.
+
+Because these two occupy `IL/Processed` and `IL/NoMatch`, the logical labels `Processed` and
+`NoMatch` are reserved: the CLI rejects them on create and on update, case-insensitively. If a
+user asks for one, explain that the name is taken by Inbox Labeler's own state and agree on a
+different label.
 
 **The boundary runs the other way too: Inbox Labeler never modifies a label outside `IL/`.**
 Everything outside the namespace belongs to Gmail or to the user — `INBOX`, `UNREAD`,
@@ -95,7 +104,7 @@ python3 label_requests.py list
 # create_label_request
 python3 label_requests.py create \
   --name "Invoice" \
-  --label "IL/Invoice" \
+  --label "Invoice" \
   --instruction "The message is an invoice or bill for a purchase or service."
 
 # update_label_request — pass only the fields that change
@@ -121,10 +130,13 @@ Guidance:
 - Take the aspect as the user frames it. If they describe something broad, keep it broad; if
   they describe several things they want as separate labels, create one request per label.
   The breadth is theirs to choose, so do not push toward finer or coarser requests.
-- If the user gives a label without the `IL/` prefix, prepend it (`Invoices` → `IL/Invoices`).
-  The CLI rejects labels outside that namespace.
-- `IL/Processed` and `IL/NoMatch` are reserved system labels; the CLI rejects them on create
-  and on update. If a user asks for one, explain that Inbox Labeler uses it for its own state
+- Configure the **logical** label, never the Gmail one. If the user says `IL/Invoices`, store
+  `Invoices` — the CLI rejects anything starting with `IL/`, because it adds the namespace
+  itself. Talk about labels the way the user does; just strip the prefix before it reaches
+  `--label`.
+- The logical labels `Processed` and `NoMatch` are reserved, since they resolve to Inbox
+  Labeler's own `IL/Processed` and `IL/NoMatch`. The CLI rejects them on create and on update,
+  in any casing. If a user asks for one, explain that Inbox Labeler uses it for its own state
   and agree on a different label rather than retrying.
 - Before deleting, confirm which request is meant if the reference is ambiguous.
 - After a successful change, report the resulting label request back to the user.
@@ -168,10 +180,12 @@ change the unread state** (no marking as read) and never treat unread as the pro
 
 ### process
 
-1. Run `python3 label_requests.py list`. If it is empty, say so and stop.
-2. Run `list_labels` and note the ids of `IL/Processed`, `IL/NoMatch` and every request's
-   label. Create any that are missing with `create_label` (the `IL` parent is created
-   automatically).
+1. Run `python3 label_requests.py list`. If it is empty, say so and stop. Resolve each
+   request's logical label to its Gmail name — `Invoice` → `IL/Invoice` — and work with the
+   resolved names from here on; Gmail knows nothing about logical labels.
+2. Run `list_labels` and note the ids of `IL/Processed`, `IL/NoMatch` and every resolved
+   request label. Create any that are missing with `create_label`, passing the resolved name
+   (the `IL` parent is created automatically).
 3. Find candidate threads with `search_threads`, query
    `in:inbox is:unread -label:<IL/Processed id>` — pass the label *id*, not the display
    name. If you just created `IL/Processed`, `in:inbox is:unread` is equivalent. Use
@@ -191,10 +205,10 @@ change the unread state** (no marking as read) and never treat unread as the pro
    the complete set of triggered label requests — empty, one, several, or all.
 7. Apply the outcome with `label_message`, which branch depending on whether the set is
    empty:
-   - **At least one label request triggered** — apply the business label of every triggered
-     request, then `IL/Processed`. If the message still carries `IL/NoMatch` from an earlier
-     run, remove it with `unlabel_message`: the message has matches now, so that outcome no
-     longer holds.
+   - **At least one label request triggered** — apply the resolved business label of every
+     triggered request, then `IL/Processed`. If the message still carries `IL/NoMatch` from an
+     earlier run, remove it with `unlabel_message`: the message has matches now, so that
+     outcome no longer holds.
    - **No label request triggered** — apply `IL/NoMatch`, then `IL/Processed`.
    In both branches `IL/Processed` goes on last, once the message has been evaluated against
    every label request and its outcome labels have been applied. If evaluation is incomplete
@@ -218,7 +232,8 @@ deleted — anything in the namespace is Inbox Labeler's previous answer, and th
 is being discarded.
 
 1. Run `python3 label_requests.py list`. If it is empty, say so and stop — with no label
-   requests there is nothing to re-evaluate against.
+   requests there is nothing to re-evaluate against. Resolve each logical label to its Gmail
+   name as in `process` step 1.
 2. Run `list_labels` and build the id map for the whole namespace: **every** label whose name
    starts with `IL/`, not just the ones you expect. Create any label a current request needs,
    plus `IL/Processed` and `IL/NoMatch`, with `create_label`.
@@ -239,7 +254,8 @@ is being discarded.
 7. Evaluate the message against every current label request independently, the same way as
    `process` step 6. The message now carries no `IL/` labels at all, so judge it purely on its
    own content — this is a first look, not a review of an earlier decision.
-8. Apply the new business labels with `label_message`: the label of every triggered request.
+8. Apply the new business labels with `label_message`: the resolved label of every triggered
+   request.
 9. Apply any matching **case labels**, then the resulting **bucket label**. Neither kind exists
    in this version, so today these steps are no-ops — when they are introduced they slot in
    here, and step 6 already clears them for free because they live in the namespace.
@@ -261,6 +277,10 @@ state: the next `process` run picks it up again, because that is precisely its s
 
 Rules for both commands:
 
+- **Resolve logical labels once, then stay in Gmail terms.** Every Gmail call and every
+  comparison against a message's `labelIds` uses the resolved `IL/…` name, and processing
+  output names labels the way the user sees them in Gmail — report `IL/Invoice`, not `Invoice`.
+  Logical labels belong to configuration; only the CLI deals in them.
 - **Every message goes through the full list.** Each label request gets its own decision for
   that message, and each one that triggers contributes its label. A message that triggers six
   requests gets six labels; how many labels a message ends up with is simply how many of the

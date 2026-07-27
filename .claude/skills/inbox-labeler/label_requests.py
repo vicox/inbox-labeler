@@ -5,10 +5,15 @@ A label request is {id, name, label, instruction}. They live in
 label-requests.json next to this script. Every command prints JSON to stdout
 and exits non-zero with {"error": ...} when something is wrong.
 
+`label` holds the *logical* label and is stored without a prefix ("Invoice").
+`IL/` is Inbox Labeler's Gmail namespace — infrastructure, not part of a
+label's identity — so it is added only when talking to Gmail, where the
+logical label resolves to `IL/Invoice`. See gmail_label().
+
 Usage:
     label_requests.py list
-    label_requests.py create --name NAME --label IL/LABEL --instruction TEXT
-    label_requests.py update ID [--name NAME] [--label IL/LABEL] [--instruction TEXT]
+    label_requests.py create --name NAME --label LABEL --instruction TEXT
+    label_requests.py update ID [--name NAME] [--label LABEL] [--instruction TEXT]
     label_requests.py delete ID
 
 update and delete take the label request id only — never the name. Use list to
@@ -22,13 +27,16 @@ import uuid
 from pathlib import Path
 
 STORE = Path(__file__).resolve().parent / "label-requests.json"
-LABEL_NAMESPACE = "IL/"
 
-# Inbox Labeler's own labels: processing state and evaluation outcome. A label
-# request may never write one of these, so they are rejected as `label` values.
+# The Gmail namespace Inbox Labeler owns. Logical labels are stored without it
+# and resolved through it on the way to Gmail.
+GMAIL_NAMESPACE = "IL/"
+
+# Inbox Labeler's own Gmail labels are IL/Processed and IL/NoMatch, so these
+# logical labels are reserved: a label request may not resolve to one of them.
 RESERVED_LABELS = {
-    "IL/Processed": "Inbox Labeler's processing state",
-    "IL/NoMatch": "Inbox Labeler's evaluation outcome",
+    "Processed": "Inbox Labeler's processing state",
+    "NoMatch": "Inbox Labeler's evaluation outcome",
 }
 
 
@@ -36,11 +44,30 @@ class ValidationError(Exception):
     pass
 
 
+# --- logical labels --------------------------------------------------------
+
+
+def gmail_label(label):
+    """Resolve a logical label to the Gmail label Inbox Labeler applies."""
+    return GMAIL_NAMESPACE + label
+
+
+def strip_namespace(label):
+    """Remove exactly one leading `IL/` from a label, if it has one."""
+    if label[: len(GMAIL_NAMESPACE)].lower() == GMAIL_NAMESPACE.lower():
+        return label[len(GMAIL_NAMESPACE):]
+    return label
+
+
 # --- storage ---------------------------------------------------------------
 
 
 def load_label_requests():
-    """Read all label requests, creating an empty store if needed."""
+    """Read all label requests, creating an empty store if needed.
+
+    Labels persisted by an older version carry the `IL/` prefix; they are
+    normalised to logical labels here and written back on the next save.
+    """
     if not STORE.exists():
         save_label_requests([])
         return []
@@ -50,6 +77,9 @@ def load_label_requests():
         raise ValidationError("%s is not valid JSON: %s" % (STORE.name, exc))
     if not isinstance(data, list):
         raise ValidationError("%s must contain a JSON array" % STORE.name)
+    for entry in data:
+        if isinstance(entry, dict) and isinstance(entry.get("label"), str):
+            entry["label"] = strip_namespace(entry["label"].strip())
     return data
 
 
@@ -81,15 +111,22 @@ def validate(name, label, instruction, label_requests, own_id=None):
         raise ValidationError("name must not be empty")
     if not label:
         raise ValidationError("label must not be empty")
-    if not label.startswith(LABEL_NAMESPACE) or not label[len(LABEL_NAMESPACE):].strip():
+    if label[: len(GMAIL_NAMESPACE)].lower() == GMAIL_NAMESPACE.lower():
+        without = strip_namespace(label)
         raise ValidationError(
-            "label must use the %s namespace, e.g. %sNewsletter" % (LABEL_NAMESPACE, LABEL_NAMESPACE)
+            "label is stored without the %s prefix, which Inbox Labeler adds for Gmail%s"
+            % (GMAIL_NAMESPACE, (" — use %r instead of %r" % (without, label)) if without else "")
+        )
+    if label.startswith("/") or label.endswith("/") or "//" in label:
+        raise ValidationError(
+            "label must not start or end with '/' or contain '//' (it becomes %r in Gmail)"
+            % gmail_label(label)
         )
     for reserved, purpose in RESERVED_LABELS.items():
         if label.lower() == reserved.lower():
             raise ValidationError(
-                "%s is reserved for %s and cannot be used as a label request's label"
-                % (reserved, purpose)
+                "label %r resolves to %s, which is reserved for %s — choose a different label"
+                % (label, gmail_label(reserved), purpose)
             )
     if not instruction:
         raise ValidationError("instruction must not be empty")
@@ -161,14 +198,14 @@ def main(argv=None):
     create.add_argument(
         "--label",
         required=True,
-        help="Gmail label, must start with IL/ and must not be a reserved system label",
+        help="logical label without the IL/ prefix, e.g. Invoice (becomes IL/Invoice in Gmail)",
     )
     create.add_argument("--instruction", required=True, help="how Claude decides whether an email matches")
 
     update = sub.add_parser("update", help="update a label request")
     update.add_argument("id", help="label request id (not the name)")
     update.add_argument("--name")
-    update.add_argument("--label")
+    update.add_argument("--label", help="logical label without the IL/ prefix")
     update.add_argument("--instruction")
 
     delete = sub.add_parser("delete", help="delete a label request")

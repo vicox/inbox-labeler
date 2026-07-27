@@ -3,26 +3,30 @@
 A Claude Agent Skill for keeping persistent **label requests** and applying them to
 Gmail inbox mail on demand.
 
-A label request names the aspect of a message it detects, how to detect it, and the Gmail
-label to apply when that aspect is present.
+A label request names the aspect of a message it detects, how to detect it, and the label to
+apply when that aspect is present.
 
 ```json
 {
   "id": "8da8071c",
   "name": "Invoice",
-  "label": "IL/Invoice",
+  "label": "Invoice",
   "instruction": "The message is an invoice or bill for a purchase or service."
 }
 ```
+
+`label` is the **logical** label and is stored without a prefix. `IL/` is Inbox Labeler's
+Gmail namespace — infrastructure, not part of a label's identity — so it is added only when
+talking to Gmail: the logical label `Invoice` becomes the Gmail label **`IL/Invoice`**.
 
 ## What a label request is
 
 > A user-defined way to detect an aspect of a message that is interesting to the user.
 
-That aspect can be as broad or as narrow as you like. `IL/Social` for everything from a
-social platform is a perfectly good label request; so is `IL/Connection` for connection
-requests specifically. You can have both. Your choice of label requests *is* the model —
-Inbox Labeler has no opinion on how fine-grained they should be.
+That aspect can be as broad or as narrow as you like. A `Social` label request for everything
+from a social platform is perfectly good; so is `Connection` for connection requests
+specifically. You can have both. Your choice of label requests *is* the model — Inbox Labeler
+has no opinion on how fine-grained they should be.
 
 What matters is how label requests behave together:
 
@@ -40,8 +44,8 @@ mail, it is a connection request, and you treat it as important. If you keep lab
 for all three aspects, the message carries `IL/Social`, `IL/Connection` and `IL/Important`
 together.
 
-The same holds at any breadth. Someone with `IL/Invoice`, `IL/Stripe` and `IL/Reminder` sees
-all three land on a Stripe invoice reminder. Someone who prefers a single `IL/Billing`
+The same holds at any breadth. Someone with `Invoice`, `Stripe` and `Reminder` label requests
+sees all three land on a Stripe invoice reminder. Someone who prefers a single `Billing`
 request covering the same ground gets that one label instead. Both work the same way: every
 label request that triggers adds its label, and none of them displaces another.
 
@@ -51,6 +55,7 @@ label request that triggers adds its label, and none of them displaces another.
 .claude/skills/inbox-labeler/
 ├── SKILL.md                      instructions Claude follows
 ├── label_requests.py             the CRUD implementation (Python 3 stdlib, no dependencies)
+├── test.sh                        the test suite — runs in a temp dir, touches nothing real
 ├── label-requests.example.json   documentation only, never read at runtime
 └── label-requests.json           the store — local, gitignored, created on first use
 README.md
@@ -67,14 +72,17 @@ labels. Treat it as internal: don't create or maintain `IL/` labels by hand in G
 reprocess will overwrite anything it finds there. The way to get a new `IL/` label is to add a
 label request.
 
-Every kind of label Inbox Labeler works with lives inside the namespace:
+Because the namespace belongs to Inbox Labeler rather than to any individual label, it never
+appears in configuration. Label requests store the **logical** label (`Invoice`) and Inbox
+Labeler resolves it to the **Gmail** label (`IL/Invoice`) whenever it creates, applies,
+removes, compares or reports one:
 
-| Kind | Origin | Example |
-| --- | --- | --- |
-| **business labels** | the `label` of a label request | `IL/Invoices`, `IL/Social` |
-| **case labels** | future label kind, not in this version | — |
-| **bucket labels** | future label kind, not in this version | — |
-| **system labels** | Inbox Labeler's own state and outcome | `IL/Processed`, `IL/NoMatch` |
+| Kind | Origin | Logical | In Gmail |
+| --- | --- | --- | --- |
+| **business labels** | the `label` of a label request | `Invoice`, `Social` | `IL/Invoice`, `IL/Social` |
+| **case labels** | future label kind, not in this version | — | — |
+| **bucket labels** | future label kind, not in this version | — | — |
+| **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
 
 The boundary holds in both directions: **Inbox Labeler never modifies a label outside `IL/`.**
 Everything out there belongs to Gmail or to you — `INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`,
@@ -82,7 +90,7 @@ Everything out there belongs to Gmail or to you — `INBOX`, `UNREAD`, `STARRED`
 
 ### System labels
 
-| Label | Meaning |
+| Gmail label | Meaning |
 | --- | --- |
 | `IL/Processed` | Inbox Labeler has finished evaluating this message. |
 | `IL/NoMatch` | None of the current label requests matched this message. |
@@ -93,8 +101,9 @@ that was processed and matched nothing carries both; a message that matched some
 `IL/Processed` alongside its business labels. `IL/NoMatch` and business labels never coexist
 on a message — the outcome is one or the other.
 
-Both system labels are reserved, and `label_requests.py` rejects them as a `label` value on
-both create and update.
+Since these two occupy `IL/Processed` and `IL/NoMatch`, the logical labels `Processed` and
+`NoMatch` are reserved: `label_requests.py` rejects them on create and on update, in any
+casing.
 
 `IL/NoMatch` is what makes an empty result visible. Without it, a message that matched
 nothing looks exactly like a message that was never processed once you stop looking at
@@ -223,11 +232,14 @@ From `.claude/skills/inbox-labeler/`:
 
 ```bash
 python3 label_requests.py list
-python3 label_requests.py create --name "Invoice" --label "IL/Invoice" \
+python3 label_requests.py create --name "Invoice" --label "Invoice" \
   --instruction "The message is an invoice or bill for a purchase or service."
 python3 label_requests.py update 8da8071c --instruction "The message is an invoice, bill or receipt."
 python3 label_requests.py delete 8da8071c
 ```
+
+`--label` takes the logical label — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
+is rejected, as are the reserved `Processed` and `NoMatch`.
 
 `update` and `delete` take the stable `id` only — never the name. Use `list` to look up
 the id belonging to a name. Every command prints JSON; on a validation failure it prints
@@ -235,44 +247,23 @@ the id belonging to a name. Every command prints JSON; on a validation failure i
 
 ## Test it
 
-There is no test framework — check the behaviour from the shell. Run it in a scratch copy so
-your own store stays untouched:
+There is no test framework, just a shell script. It copies `label_requests.py` into a
+temporary directory, so your own label requests are never touched:
 
 ```bash
-mkdir -p /tmp/il-test && cp .claude/skills/inbox-labeler/label_requests.py /tmp/il-test/
-cd /tmp/il-test
-
-python3 label_requests.py list                                   # [] and creates the file
-
-python3 label_requests.py create --name "Invoices" --label "IL/Invoices" --instruction "Invoices."
-python3 label_requests.py create --name "News" --label "IL/News" --instruction "Newsletters."
-python3 label_requests.py list                                   # both, each with an id
-
-ID=$(python3 -c "import json;print(json.load(open('label-requests.json'))[1]['id'])")
-python3 label_requests.py update "$ID" --label "IL/Newsletters"  # update by id
-python3 label_requests.py delete "$ID"                           # delete by id
-
-# each of these must print an error and exit 1
-python3 label_requests.py create --name " "     --label "IL/X" --instruction "x"
-python3 label_requests.py create --name "X"     --label "Work" --instruction "x"   # missing IL/
-python3 label_requests.py create --name "X"     --label "IL/X" --instruction ""
-python3 label_requests.py create --name "invoices" --label "IL/Dup" --instruction "x" # duplicate name
-python3 label_requests.py delete Invoices                                          # name, not an id
-python3 label_requests.py delete deadbeef                                          # unknown id
-python3 label_requests.py update "$ID"                                            # nothing to update
-
-# reserved system labels are rejected on create and on update, in any casing
-python3 label_requests.py create --name "P" --label "IL/Processed" --instruction "x"
-python3 label_requests.py create --name "N" --label "IL/NoMatch"   --instruction "x"
-python3 label_requests.py create --name "P" --label "IL/processed" --instruction "x"
-ID2=$(python3 -c "import json;print(json.load(open('label-requests.json'))[0]['id'])")
-python3 label_requests.py update "$ID2" --label "IL/Processed"
-python3 label_requests.py update "$ID2" --label "IL/NoMatch"
-
-# labels that merely resemble the reserved ones are fine
-python3 label_requests.py create --name "Q" --label "IL/Processing" --instruction "x"
-python3 label_requests.py create --name "R" --label "IL/NoMatches"  --instruction "x"
+.claude/skills/inbox-labeler/test.sh
 ```
+
+It prints one line per check and exits non-zero if any fails. Coverage: store bootstrap,
+labels persisting without the `IL/` prefix, logical→Gmail resolution, rejection of `IL/`-prefixed
+labels, rejection of `Processed` and `NoMatch` in any casing, malformed labels, loading an
+older store whose labels still carry the prefix, and the pre-existing CRUD and validation
+behaviour.
+
+Migration is worth knowing about: a store written by an earlier version has labels like
+`IL/Invoices`. Loading it strips exactly one leading `IL/` in memory, so `list` already shows
+logical labels, and the normalised values are persisted on the next write — no migration
+command to run.
 
 ## Scope
 
