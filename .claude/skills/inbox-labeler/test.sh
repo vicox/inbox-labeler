@@ -172,7 +172,38 @@ check "a nested label resolves" \
     "IL/Travel/Flight delay"
 check "the reserved labels resolve to the system labels" \
     "$(python3 -c 'import labels;print(",".join(sorted(labels.gmail_label(x) for x in labels.RESERVED_LABELS)))')" \
-    "IL/NoMatch,IL/Processed"
+    "IL/nomatch,IL/processed"
+
+echo
+echo "--- reserved system labels ---"
+check "Gmail uses IL/processed" \
+    "$(python3 -c 'import labels;print(labels.gmail_label("processed"))')" "IL/processed"
+check "Gmail uses IL/nomatch" \
+    "$(python3 -c 'import labels;print(labels.gmail_label("nomatch"))')" "IL/nomatch"
+check "the reserved names are lowercase" \
+    "$(python3 -c 'import labels;print(",".join(sorted(labels.RESERVED_LABELS)))')" \
+    "nomatch,processed"
+err "users cannot create processed" -- create --label "processed" --instruction "x"
+err "users cannot create nomatch" -- create --label "nomatch" --instruction "x"
+err "nor Processed in title case" -- create --label "Processed" --instruction "x"
+err "nor NOMATCH shouted" -- create --label "NOMATCH" --instruction "x"
+err "nor with padding around it" -- create --label "  processed  " --instruction "x"
+ok "a label for the test below" -- create --label "Renameable" --instruction "x"
+err "users cannot rename onto processed" -- update "Renameable" --label "processed"
+err "users cannot rename onto nomatch, any casing" -- update "Renameable" --label "NoMatch"
+check "the rename attempt changed nothing" "$(field "Renameable" label)" "Renameable"
+err "users cannot delete processed" -- delete "processed"
+err "users cannot delete nomatch" -- delete "nomatch"
+check "the error calls it a reserved system label" \
+    "$(python3 labels.py delete "processed" 2>&1 | grep -c 'reserved system label')" "1"
+check "the create error calls it a reserved system label" \
+    "$(python3 labels.py create --label "nomatch" --instruction "x" 2>&1 | grep -c 'reserved system label')" \
+    "1"
+ok "look-alikes are still ordinary labels" -- create --label "Processed orders" --instruction "x"
+ok "and so is No match found" -- create --label "No match found" --instruction "x"
+ok "cleanup renameable" -- delete "Renameable"
+ok "cleanup processed orders" -- delete "Processed orders"
+ok "cleanup no match found" -- delete "No match found"
 
 echo
 echo "--- 8. renaming updates every reference ---"
@@ -297,8 +328,8 @@ err "il/ prefix, lowercase" -- create --label "il/something" --instruction "x"
 err "leading slash" -- create --label "/Something" --instruction "x"
 err "trailing slash" -- create --label "Something/" --instruction "x"
 err "double slash" -- create --label "Some//thing" --instruction "x"
-err "the reserved Processed" -- create --label "Processed" --instruction "x"
-err "the reserved NoMatch" -- create --label "nomatch" --instruction "x"
+err "the reserved processed" -- create --label "processed" --instruction "x"
+err "the reserved nomatch" -- create --label "nomatch" --instruction "x"
 ok "look-alikes are fine" -- create --label "No match found" --instruction "x"
 ok "and so is Processing" -- create --label "Processing" --instruction "x"
 ok "leading and trailing whitespace is trimmed" -- create --label "  Trimmed  " --instruction "x"
@@ -344,12 +375,12 @@ print(True)
 PY
 }
 
-check "process: detection -> IL/NoMatch -> derived -> IL/Processed" \
-    "$(order_check '### process' '**Detection stage.**' 'apply `IL/NoMatch`' \
-        '**Derived stage.**' 'Apply `IL/Processed` last')" "True"
-check "reprocess: detection -> IL/NoMatch -> derived -> IL/Processed" \
-    "$(order_check '### reprocess' '**Detection stage.**' 'apply `IL/NoMatch`' \
-        '**Derived stage.**' 'Apply `IL/Processed` last')" "True"
+check "process: detection -> IL/nomatch -> derived -> IL/processed" \
+    "$(order_check '### process' '**Detection stage.**' 'apply `IL/nomatch`' \
+        '**Derived stage.**' 'Apply `IL/processed` last')" "True"
+check "reprocess: detection -> IL/nomatch -> derived -> IL/processed" \
+    "$(order_check '### reprocess' '**Detection stage.**' 'apply `IL/nomatch`' \
+        '**Derived stage.**' 'Apply `IL/processed` last')" "True"
 check "the derived prompt lists its four inputs in order" \
     "$(order_check '## The derived-label prompt' '**the email**' \
         '**the detection labels that matched**' '**the evidence**' "derived label's instruction")" \
@@ -360,6 +391,19 @@ check "the derived prompt uses the Email / Detection Results / Task layout" \
         'Label:' 'Instruction:' 'Answer yes or no and explain briefly.' '```')" "True"
 check "the prompt has no generic Question section" \
     "$(grep -c '^Question$' "$SCRIPT_DIR/SKILL.md")" "0"
+check "the skill has no title-case system labels left" \
+    "$(grep -c 'IL/Processed\|IL/NoMatch' "$SCRIPT_DIR/SKILL.md")" "0"
+check "the readme has no title-case system labels left" \
+    "$(grep -c 'IL/Processed\|IL/NoMatch' "$SCRIPT_DIR/../../../README.md")" "0"
+check "the skill does use the lowercase ones" \
+    "$(grep -q 'IL/processed' "$SCRIPT_DIR/SKILL.md" && grep -q 'IL/nomatch' "$SCRIPT_DIR/SKILL.md" && echo yes)" \
+    "yes"
+check "the skill documents the lowercase convention" \
+    "$(order_check 'Lowercase is reserved for the system' '`processed` and `nomatch`' \
+        'marks them as internal' 'User labels are readable phrases')" "True"
+check "the skill calls them reserved system labels" \
+    "$(order_check '`processed` and `nomatch` are **reserved system labels**' \
+        'internal' 'rejects them on create, on rename and on delete')" "True"
 
 echo
 echo "--- 14. agent guidance prefers readable labels with spaces ---"

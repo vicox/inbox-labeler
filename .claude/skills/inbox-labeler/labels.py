@@ -46,11 +46,14 @@ STORE = Path(__file__).resolve().parent / "labels.json"
 # resolved through it on the way to Gmail.
 GMAIL_NAMESPACE = "IL/"
 
-# Inbox Labeler's own Gmail labels are IL/Processed and IL/NoMatch, so these
-# labels are reserved: no label may resolve to one of them.
+# Inbox Labeler's own labels. They are internal state rather than anything a
+# user models, so they are spelled lowercase — a convention that keeps them
+# apart from the readable phrases users write — and reserved: no label may
+# resolve to one of them. Matching is case-insensitive, so "Processed" is
+# reserved too.
 RESERVED_LABELS = {
-    "Processed": "Inbox Labeler's processing state",
-    "NoMatch": "Inbox Labeler's evaluation outcome",
+    "processed": "Inbox Labeler's processing state",
+    "nomatch": "Inbox Labeler's evaluation outcome",
 }
 
 # Fields every label carries, whatever its type.
@@ -249,8 +252,8 @@ def validate(entry, existing, own=None):
     for reserved, purpose in RESERVED_LABELS.items():
         if same_label(label, reserved):
             raise ValidationError(
-                'label "%s" resolves to %s, which is reserved for %s — choose a different label'
-                % (label, gmail_label(reserved), purpose)
+                '"%s" is a reserved system label: %s is %s, not something a label may model '
+                "— choose a different label" % (label, gmail_label(reserved), purpose)
             )
     for other in existing:
         if other is not own and same_label(other.get("label", ""), label):
@@ -374,6 +377,12 @@ def referencing_labels(labels, entry):
 
 
 def delete_label(label):
+    for reserved, purpose in RESERVED_LABELS.items():
+        if same_label(label, reserved):
+            raise ValidationError(
+                '"%s" is a reserved system label: %s is %s and is not stored as a label, '
+                "so there is nothing to delete" % (normalise(label), gmail_label(reserved), purpose)
+            )
     labels = load_labels()
     entry = find(labels, label)
     blocking = referencing_labels(labels, entry)

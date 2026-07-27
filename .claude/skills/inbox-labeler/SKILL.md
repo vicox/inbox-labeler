@@ -40,6 +40,10 @@ the user reads is what other labels reference and what `get`, `update` and `dele
   `"  Large   amount "` is stored as `Large amount`. Punctuation, digits and `&` are fine.
 - **Renaming is `update <label> --label <new text>`**, and it rewrites every reference to that
   label in the same write. Renaming onto a label that already exists is rejected.
+- **Lowercase is reserved for the system.** Inbox Labeler's own two labels are spelled
+  `processed` and `nomatch`, and the lowercase form is what marks them as internal. User labels
+  are readable phrases starting with a capital; nothing you create should imitate the system
+  spelling.
 
 ## Label types
 
@@ -170,7 +174,7 @@ Every kind of Gmail label Inbox Labeler works with lives inside it:
 | --- | --- | --- | --- |
 | **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
 | **bucket labels** | future label kind, not part of this version | — | — |
-| **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
+| **system labels** | Inbox Labeler's own state and outcome | `processed`, `nomatch` | `IL/processed`, `IL/nomatch` |
 
 Both label types produce business labels; nothing in Gmail distinguishes a derived label's
 output from a detection label's.
@@ -179,23 +183,24 @@ The two system labels:
 
 | Gmail label | Meaning |
 | --- | --- |
-| `IL/Processed` | Inbox Labeler has finished evaluating this message. |
-| `IL/NoMatch` | No **detection** label matched this message. |
+| `IL/processed` | Inbox Labeler has finished evaluating this message. |
+| `IL/nomatch` | No **detection** label matched this message. |
 
-`IL/Processed` records **processing state** — that the work happened. `IL/NoMatch` records
+`IL/processed` records **processing state** — that the work happened. `IL/nomatch` records
 the **outcome** of detection — that no detection label matched. They serve different purposes
 and are applied independently of one another.
 
-`IL/NoMatch` is about detection only, and is decided before derived labels are evaluated. So a
-message can carry `IL/NoMatch` together with a derived business label, in the one case where
+`IL/nomatch` is about detection only, and is decided before derived labels are evaluated. So a
+message can carry `IL/nomatch` together with a derived business label, in the one case where
 that is possible: a derived label with no `required_labels` triggering on a message no detection
 label matched. That is rare and it is correct — detection found nothing, interpretation found
 something.
 
-Because these two occupy `IL/Processed` and `IL/NoMatch`, the labels `Processed` and
-`NoMatch` are reserved: the CLI rejects them on create and on update, case-insensitively. If a
-user asks for one, explain that the name is taken by Inbox Labeler's own state and agree on a
-different label.
+`processed` and `nomatch` are **reserved system labels**. The lowercase spelling is the
+convention that marks them as internal: user labels are readable phrases, system labels are
+not. The CLI rejects them on create, on rename and on delete, case-insensitively, so
+`Processed` and `NOMATCH` are refused too. If a user asks for one, explain that it is Inbox
+Labeler's own state rather than something a label can model, and agree on a different label.
 
 **The boundary runs the other way too: Inbox Labeler never modifies a Gmail label outside
 `IL/`.** Everything outside the namespace belongs to Gmail or to the user — `INBOX`, `UNREAD`,
@@ -365,10 +370,10 @@ Guidance:
 - Store the label, never the Gmail label. If the user says `IL/Invoices`, store `Invoices` —
   the CLI rejects anything starting with `IL/`, because it adds the namespace itself. Talk
   about labels the way the user does; just strip the prefix before it reaches `--label`.
-- The labels `Processed` and `NoMatch` are reserved, since they resolve to Inbox Labeler's own
-  `IL/Processed` and `IL/NoMatch`. The CLI rejects them on create and on update, in any casing.
-  If a user asks for one, explain that Inbox Labeler uses it for its own state and agree on a
-  different label rather than retrying.
+- `processed` and `nomatch` are reserved system labels, since they resolve to Inbox Labeler's
+  own `IL/processed` and `IL/nomatch`. The CLI rejects them on create, rename and delete, in
+  any casing. If a user asks for one, explain that Inbox Labeler uses it for its own state and
+  agree on a different label rather than retrying.
 - `--type` follows from the model you chose above, not from anything the user has to say. It
   defaults to `detection` and appears in the output either way, so the kind is never hidden.
 - `--required-label` and `--recommended-label` are repeatable and take the exact text of an
@@ -407,7 +412,7 @@ background. Two commands exist:
 
 | The user says | Command | Scope |
 | --- | --- | --- |
-| "process my inbox" | **process** | unread inbox messages **without** `IL/Processed` — new mail only |
+| "process my inbox" | **process** | unread inbox messages **without** `IL/processed` — new mail only |
 | "reprocess my inbox" | **reprocess** | **every** unread inbox message, including those already processed |
 
 Both commands run the same two stages per message — **detection first, then derived**:
@@ -417,11 +422,11 @@ Email
   ↓
 Detection labels
   ↓
-IL/NoMatch          (when no detection label matched)
+IL/nomatch          (when no detection label matched)
   ↓
 Derived labels
   ↓
-IL/Processed        (last, always)
+IL/processed        (last, always)
 ```
 
 `process` is the everyday run: it looks at mail Inbox Labeler has not seen yet and leaves
@@ -433,7 +438,7 @@ than guessing: `reprocess` rewrites Gmail labels that `process` would leave unto
 
 Both commands share the same fundamentals. A **message** is the unit of work — never a
 thread. Only unread inbox messages are ever touched, so archived mail and read mail are out of
-scope in both commands. `IL/Processed` records that a message was evaluated and `IL/NoMatch`
+scope in both commands. `IL/processed` records that a message was evaluated and `IL/nomatch`
 records that the evaluation produced no matches. Unread is only a scope filter — **never
 change the unread state** (no marking as read) and never treat unread as the processing state.
 
@@ -442,12 +447,12 @@ change the unread state** (no marking as read) and never treat unread as the pro
 1. Run `python3 labels.py list`. If it is empty, say so and stop. Resolve each label to its Gmail
    name — `Large amount` → `IL/Large amount` — and work with the resolved names from here on;
    Gmail knows nothing about the unprefixed form.
-2. Run `list_labels` and note the ids of `IL/Processed`, `IL/NoMatch` and every resolved
+2. Run `list_labels` and note the ids of `IL/processed`, `IL/nomatch` and every resolved
    business label. Create any that are missing with `create_label`, passing the resolved name
    (the `IL` parent is created automatically).
 3. Find candidate threads with `search_threads`, query
-   `in:inbox is:unread -label:<IL/Processed id>` — pass the label *id*, not the display
-   name. If you just created `IL/Processed`, `in:inbox is:unread` is equivalent. Use
+   `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display
+   name. If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use
    `pageSize: 50`.
 4. **Follow pagination to the end.** Keep calling `search_threads` with the returned
    `nextPageToken` until no next page token comes back. Process the complete result set —
@@ -456,7 +461,7 @@ change the unread state** (no marking as read) and never treat unread as the pro
    "everything from today" → add `newer_than:1d`). That is selection; it does not change what
    any selected message means.
 5. For each thread, call `get_thread` and pick out the individual messages that are in the
-   inbox, unread, and lack the `IL/Processed` id in `labelIds`. Gmail returns a whole thread
+   inbox, unread, and lack the `IL/processed` id in `labelIds`. Gmail returns a whole thread
    when any one of its messages matches, so a result can mix in-scope and out-of-scope
    messages — check every message and skip the ones that do not qualify.
 6. **Detection stage.** For each in-scope message, work through the whole list of detection
@@ -467,18 +472,18 @@ change the unread state** (no marking as read) and never treat unread as the pro
 7. Apply the detection outcome with `label_message`, which branch depending on whether the set
    is empty:
    - **At least one detection label triggered** — apply the resolved business label of every
-     triggered label. If the message still carries `IL/NoMatch` from an earlier run, remove it
+     triggered label. If the message still carries `IL/nomatch` from an earlier run, remove it
      with `unlabel_message`: detection found matches now, so that outcome no longer holds.
-   - **No detection label triggered** — apply `IL/NoMatch`.
+   - **No detection label triggered** — apply `IL/nomatch`.
 8. **Derived stage.** Evaluate every derived label against the message, using the detection
    result as context — see [The derived-label prompt](#the-derived-label-prompt). Apply the
    resolved business label of each derived label that triggered. Skip a derived label whose
    `required_labels` did not all match; that is not a failure, it simply does not apply here.
-9. Apply `IL/Processed` last, once both stages finished and every business label is in place.
-   If either stage is incomplete or a labelling call fails, leave `IL/Processed` off so the
+9. Apply `IL/processed` last, once both stages finished and every business label is in place.
+   If either stage is incomplete or a labelling call fails, leave `IL/processed` off so the
    message is picked up again on the next run.
 10. Report a short summary: how many messages were processed, which message got which business
-    labels and why, which got `IL/NoMatch`, and anything you were unsure about instead of
+    labels and why, which got `IL/nomatch`, and anything you were unsure about instead of
     guessing silently. Say which labels came from interpretation when a derived label triggered.
 
 ### reprocess
@@ -498,15 +503,15 @@ is being discarded.
    nothing to re-evaluate against. Resolve each label to its Gmail name as in `process` step 1.
 2. Run `list_labels` and build the id map for the whole namespace: **every** label whose name
    starts with `IL/`, not just the ones you expect. Create any Gmail label a current label
-   needs, plus `IL/Processed` and `IL/NoMatch`, with `create_label`.
+   needs, plus `IL/processed` and `IL/nomatch`, with `create_label`.
 3. Find candidate threads with `search_threads`, query `in:inbox is:unread`, `pageSize: 50`.
-   There is deliberately no `-label:` filter: messages that already carry `IL/Processed` are
+   There is deliberately no `-label:` filter: messages that already carry `IL/processed` are
    included this time.
 4. **Follow pagination to the end**, exactly as in `process` — keep calling `search_threads`
    with the returned `nextPageToken` until no next page token comes back, and handle the
    complete result set.
 5. For each thread, call `get_thread` and pick out the messages that are in the inbox and
-   unread. `IL/Processed` is not a disqualifier here, but read messages and messages outside
+   unread. `IL/processed` is not a disqualifier here, but read messages and messages outside
    the inbox still are, so check `labelIds` per message.
 6. **Clear the namespace on that message.** Intersect its `labelIds` with the `IL/` ids from
    step 2 and remove all of them in **one** `unlabel_message` call. Every label outside the
@@ -518,26 +523,26 @@ is being discarded.
    message now carries no `IL/` labels at all, so judge it purely on its own content — this is a
    first look, not a review of an earlier decision.
 8. Apply the detection business labels with `label_message`: the resolved label of every
-   triggered detection label. If no detection label matched, apply `IL/NoMatch`.
+   triggered detection label. If no detection label matched, apply `IL/nomatch`.
 9. **Derived stage.** Evaluate every derived label with the detection result as context, exactly
    as in `process` step 8, and apply the resolved label of each one that triggered. A derived
    label whose `required_labels` did not all match is skipped.
 10. Apply any resulting **bucket label**. Bucket labels do not exist in this version, so this
     step is a no-op today — when they arrive they slot in here, and step 6 already clears them
     for free because they live in the namespace.
-11. Apply `IL/Processed` last, once both stages finished and every outcome label is in place.
+11. Apply `IL/processed` last, once both stages finished and every outcome label is in place.
 12. Report a summary: how many messages were re-evaluated, what changed (labels gained, labels
-    lost, `IL/NoMatch` set or cleared), what stayed the same, and any message you could not
+    lost, `IL/nomatch` set or cleared), what stayed the same, and any message you could not
     complete.
 
 The outcome fully replaces the previous one, so a message that no longer matches `IL/Social`
-loses it, a message that was `IL/NoMatch` and now matches `IL/Birthday` ends up with
+loses it, a message that was `IL/nomatch` and now matches `IL/Birthday` ends up with
 `IL/Birthday` alone, a Gmail label whose label was deleted disappears, and a message whose
 matches are unchanged ends up exactly as it was.
 
 Failure handling is per message. If a call fails partway through a message, leave
-`IL/Processed` off that message, report it, and carry on with the remaining messages — one
-failure never aborts the run. A message left stripped and without `IL/Processed` is in a safe
+`IL/processed` off that message, report it, and carry on with the remaining messages — one
+failure never aborts the run. A message left stripped and without `IL/processed` is in a safe
 state: the next `process` run picks it up again, because that is precisely its scope.
 
 ## The derived-label prompt
@@ -610,12 +615,12 @@ Rules for both commands:
   that message, and each one that triggers contributes its Gmail label. A message that triggers
   six labels gets six Gmail labels; how many a message ends up with is simply how many of the
   user's labels found their aspect in it.
-- **`IL/NoMatch` reflects the detection stage.** A processed message carries either at least
-  one detection business label or `IL/NoMatch`, never both. Derived labels do not affect it.
-- **`IL/Processed` is always last and always earned.** Never leave it on a message whose
+- **`IL/nomatch` reflects the detection stage.** A processed message carries either at least
+  one detection business label or `IL/nomatch`, never both. Derived labels do not affect it.
+- **`IL/processed` is always last and always earned.** Never leave it on a message whose
   evaluation did not complete successfully, in either command.
 - **Removal is confined to the `IL/` namespace.** Inside it, anything may be removed —
-  `reprocess` clears all of it, `process` drops a stale `IL/NoMatch`. Outside it, nothing is
+  `reprocess` clears all of it, `process` drops a stale `IL/nomatch`. Outside it, nothing is
   ever added or removed: Gmail's own labels (`INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`,
   `CATEGORY_*`) and every user label are read-only. Never archive, mark as read, delete, or
   reply — labelling is the entire job.
