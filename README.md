@@ -8,17 +8,23 @@ apply when that aspect is present.
 
 ```json
 {
-  "id": "8da8071c",
-  "name": "Invoice",
-  "label": "Invoice",
+  "label": "Delivery arriving soon",
   "type": "detection",
-  "instruction": "The message is an invoice or bill for a purchase or service."
+  "instruction": "The message says a delivery is arriving today or in the next few days."
 }
 ```
 
-`label` is the **logical** label and is stored without a prefix. `IL/` is Inbox Labeler's
-Gmail namespace — infrastructure, not part of a label's identity — so it is added only when
-talking to Gmail: the logical label `Invoice` becomes the Gmail label **`IL/Invoice`**.
+`label` is the label's **only identifier** — there is no separate name and no technical id.
+It is a readable phrase, spaces and all, and it is what other labels reference and what
+`get`, `update` and `delete` address.
+
+`IL/` is Inbox Labeler's Gmail namespace — infrastructure, not part of a label's identity — so
+it is stored nowhere and added only when talking to Gmail: `Delivery arriving soon` becomes
+the Gmail label **`IL/Delivery arriving soon`**, spaces preserved.
+
+Labels are unique ignoring case, and lookups are case-insensitive too, so
+`get "delivery arriving soon"` finds it. Leading and trailing spaces are trimmed and inner
+runs of whitespace collapse to one; punctuation and digits are fine.
 
 ## Label types
 
@@ -32,7 +38,7 @@ label the same way — only the decision differs:
 
 **Detection labels recognise facts. Derived labels interpret those facts.**
 
-`Invoice`, `Newsletter`, `Login` and `LargeAmount` are detection labels: each reads the email
+`Invoice`, `Newsletter`, `Login` and `Large amount` are detection labels: each reads the email
 and decides. A derived label doesn't rediscover the email from scratch — it reads the email
 *together with the detection labels that already matched* and decides what that combination
 means:
@@ -40,44 +46,44 @@ means:
 ```text
 Email
   ↓
-Detection labels:  Invoice, LargeAmount
+Detection labels:  Invoice, Large amount
   ↓
-Derived label:     LargePaymentNeedsAttention
+Derived label:     Large payment needs attention
 ```
 
 ```text
 Email
   ↓
-Detection labels:  TravelBooking, FlightCancellation
+Detection labels:  Travel booking, Flight cancellation
   ↓
-Derived label:     TravelDisruption
+Derived label:     Travel disruption
 ```
 
 A derived label names the detection labels it builds on:
 
 ```json
 {
-  "id": "b7c1e290",
-  "name": "LargePaymentNeedsAttention",
-  "label": "LargePaymentNeedsAttention",
+  "label": "Large payment needs attention",
   "type": "derived",
-  "instruction": "A payment this large should be looked at before it is due.",
-  "required_labels": ["LargeAmount"],
+  "instruction": "A payment this large should be looked at, whether still due or already paid.",
+  "required_labels": ["Large amount"],
   "recommended_labels": ["Invoice"]
 }
 ```
+
+References are the exact label text of an existing detection label — spaces included.
 
 - **`required_labels`** — all of them must have matched, or the derived label isn't evaluated
   for that message. This is the gate.
 - **`recommended_labels`** — context. Included in the prompt when they matched; when they
   didn't, the derived label is still evaluated.
 
-Both hold logical labels (`LargeAmount`, not `IL/LargeAmount`), both may be empty, and both may
+Both hold labels (`Large amount`, not `IL/Large amount`), both may be empty, and both may
 only point at detection labels — there is no chaining from one derived label to another. The
 email is still available during evaluation; the detection labels are structured context that
 makes the decision easier and more consistent.
 
-Two rules keep the references honest:
+Three rules keep the references honest:
 
 - **A label's type is immutable.** You cannot turn a detection label into a derived one, or the
   reverse — create a new label instead.
@@ -85,6 +91,9 @@ Two rules keep the references honest:
   `required_labels` or `recommended_labels`, the delete is rejected and tells you which derived
   label is in the way. Nothing is rewritten for you: drop the reference or delete the derived
   label first.
+- **Renaming carries the references with it.** `update "Large amount" --label "Big amount"`
+  rewrites every reference to it in the same write, so the store is never left dangling.
+  Renaming onto a label that already exists is rejected.
 
 ## What a label is
 
@@ -139,13 +148,13 @@ reprocess will overwrite anything it finds there. The way to get a new `IL/` lab
 label.
 
 Because the namespace belongs to Inbox Labeler rather than to any individual label, it never
-appears in configuration. Labels store the **logical** label (`Invoice`) and Inbox Labeler
+appears in configuration. Labels store the label itself (`Invoice`) and Inbox Labeler
 resolves it to the **Gmail** label (`IL/Invoice`) whenever it creates, applies, removes,
 compares or reports one:
 
-| Kind | Origin | Logical | In Gmail |
+| Kind | Origin | Label | In Gmail |
 | --- | --- | --- | --- |
-| **business labels** | the `label` of a detection or derived label | `Invoice`, `LargePaymentNeedsAttention` | `IL/Invoice`, `IL/LargePaymentNeedsAttention` |
+| **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
 | **bucket labels** | future label kind, not in this version | — | — |
 | **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
 
@@ -170,7 +179,7 @@ carries `IL/Processed` alongside its business labels. `IL/NoMatch` and detection
 never coexist on a message — the outcome is one or the other. Derived labels don't affect
 `IL/NoMatch`, since it is decided before they are evaluated.
 
-Since these two occupy `IL/Processed` and `IL/NoMatch`, the logical labels `Processed` and
+Since these two occupy `IL/Processed` and `IL/NoMatch`, the labels `Processed` and
 `NoMatch` are reserved: `labels.py` rejects them on create and on update, in any casing.
 
 `IL/NoMatch` is what makes an empty result visible. Without it, a message that matched
@@ -312,35 +321,39 @@ From `.claude/skills/inbox-labeler/`:
 
 ```bash
 python3 labels.py list
-python3 labels.py get 8da8071c
+python3 labels.py get "Large amount"
 
 # a detection label
-python3 labels.py create --name "Invoice" --label "Invoice" \
+python3 labels.py create --label "Invoice" \
   --instruction "The message is an invoice or bill for a purchase or service."
 
 # a derived label — the reference flags are repeatable
-python3 labels.py create --name "LargePaymentNeedsAttention" \
-  --label "LargePaymentNeedsAttention" --type derived \
-  --instruction "A payment this large should be looked at before it is due." \
-  --required-label "LargeAmount" --recommended-label "Invoice"
+python3 labels.py create --label "Large payment needs attention" --type derived \
+  --instruction "A payment this large should be looked at, whether still due or already paid." \
+  --required-label "Large amount" --recommended-label "Invoice"
 
-python3 labels.py update 8da8071c --instruction "The message is an invoice, bill or receipt."
-python3 labels.py delete 8da8071c
+python3 labels.py update "Invoice" --instruction "The message is an invoice, bill or receipt."
+
+# rename, rewriting every reference to it
+python3 labels.py update "Large amount" --label "Big amount"
+
+python3 labels.py delete "Invoice"
 ```
 
-`--label` takes the logical label — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
-is rejected, as are the reserved `Processed` and `NoMatch`.
+`--label` takes the label itself — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
+is rejected, as are the reserved `Processed` and `NoMatch`. Spaces are expected; quote the
+argument.
 
 `--type` defaults to `detection`, and every command prints the stored `type` so the kind of
 label is always visible. An unknown type is rejected.
 
 `--required-label` and `--recommended-label` apply to derived labels only and name existing
-detection labels. On update they replace the stored list rather than adding to it; passing an
-empty value clears it.
+detection labels by their exact text. On update they replace the stored list rather than adding
+to it; passing an empty value clears it.
 
-`get`, `update` and `delete` take the stable `id` only — never the name. Use `list` to look up
-the id belonging to a name. Every command prints JSON; on a validation failure it prints
-`{"error": "..."}` and exits with status 1.
+`get`, `update` and `delete` address a label by its text, matched case-insensitively. Passing
+`--label` to `update` renames the label. Every command prints JSON; on a validation failure it
+prints `{"error": "..."}` and exits with status 1.
 
 ## Test it
 
@@ -360,9 +373,13 @@ untouched), the documented detection→derived processing order, labels persisti
 pre-existing CRUD and validation behaviour.
 
 Migration is worth knowing about, and there is no command to run for it. A store written by an
-earlier version may have labels like `IL/Invoices` and no `type` at all. Loading it strips
-exactly one leading `IL/` and fills in `type: detection` in memory, so `list` already shows the
-current shape; the normalised values are persisted by the next write.
+earlier version may carry a technical `id`, a separate `name`, an `IL/` prefix on the label, or
+no `type` at all. Loading it drops the `id` and `name`, falls back to the old `name` if the
+label is missing, strips one leading `IL/`, trims and collapses whitespace, and fills in
+`type: detection` — all in memory, so `list` already shows the current shape and the next write
+persists it. Turning a `CamelCase` label into a readable phrase is a rename you make
+deliberately: `update "LargeAmount" --label "Large amount"`, which carries the references
+along.
 
 ## Scope
 

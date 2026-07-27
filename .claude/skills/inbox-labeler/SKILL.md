@@ -1,6 +1,6 @@
 ---
 name: inbox-labeler
-description: Manage persistent labels (name + logical label + instruction) and apply them to inbox emails as Gmail labels on demand. Use when the user wants to create, change, delete, list or inspect labels, or asks Inbox Labeler to process or reprocess / relabel their inbox.
+description: Manage persistent labels (a readable label, a type and an instruction) and apply them to inbox emails as Gmail labels on demand. Use when the user wants to create, change, rename, delete, list or inspect labels, or asks Inbox Labeler to process or reprocess / relabel their inbox.
 ---
 
 # Inbox Labeler
@@ -10,19 +10,36 @@ Gmail label to apply when that aspect is present:
 
 | Field | Meaning |
 | --- | --- |
-| `id` | stable identifier, generated on create — the only handle for get, update and delete |
-| `name` | short human name for the aspect, e.g. `Invoice` |
-| `label` | **logical** label, stored without a prefix, e.g. `Invoice` — resolves to the Gmail label `IL/Invoice` |
+| `label` | the label itself — its identity and its display text, e.g. `Delivery arriving soon` |
 | `type` | how the label decides whether it applies: `detection` or `derived` |
 | `instruction` | how you decide whether that aspect is present in a message, in natural language |
 | `required_labels` | *derived only* — detection labels that must all have matched before this label is evaluated |
 | `recommended_labels` | *derived only* — detection labels offered as context when they matched |
 
-`label` holds the logical label only. `IL/` is Inbox Labeler's Gmail namespace — plumbing,
-not part of a label's identity — so it never appears in stored configuration and is added
-only when talking to Gmail: **the logical label `Invoice` resolves to the Gmail label
-`IL/Invoice`.** Resolve in that direction every time you create a Gmail label, apply one,
+`label` holds the label only. `IL/` is Inbox Labeler's Gmail namespace — plumbing, not part of
+a label's identity — so it never appears in stored configuration and is added only when talking
+to Gmail: **`Delivery arriving soon` resolves to the Gmail label `IL/Delivery arriving soon`,
+spaces and all.** Resolve in that direction every time you create a Gmail label, apply one,
 remove one, compare one against a message's labels, or name one in output.
+
+## Labels are identified by their text
+
+A label's text is **the only identifier**. There is no separate name and no technical id: what
+the user reads is what other labels reference and what `get`, `update` and `delete` address.
+
+- **Write labels as ordinary phrases.** They **may contain spaces** and should read naturally:
+  `Delivery arriving soon`, not `DeliveryArrivingSoon`. Capitalise the first word and leave the
+  rest lowercase unless the words are proper nouns or an acronym — `BVK`, `VIP customer`,
+  `PDF invoice` keep their capitals. Do not force title case.
+- **References are exact label text.** A derived label names its detection labels by their
+  label, spaces included: `required_labels: ["Delivery", "Imminent"]`.
+- **Labels are unique, ignoring case.** `Delivery` and `delivery` are the same label, so a
+  create that collides is rejected. The spelling you give is the spelling that is stored, and
+  lookups match either way — `get "large amount"` finds `Large amount`.
+- **Leading and trailing spaces are trimmed and inner runs collapse** to single spaces, so
+  `"  Large   amount "` is stored as `Large amount`. Punctuation, digits and `&` are fine.
+- **Renaming is `update <label> --label <new text>`**, and it rewrites every reference to that
+  label in the same write. Renaming onto a label that already exists is rejected.
 
 ## Label types
 
@@ -37,7 +54,7 @@ only difference is how they decide.
 **Detection labels recognise facts. Derived labels interpret those facts.**
 
 A detection label reads the email and decides. `Invoice`, `Newsletter`, `Login`,
-`LargeAmount` are detection labels.
+`Large amount` are detection labels.
 
 A derived label does **not** rediscover the email from scratch. It reads the email *together
 with the detection labels that already matched* and decides what that combination means:
@@ -45,17 +62,17 @@ with the detection labels that already matched* and decides what that combinatio
 ```text
 Email
   ↓
-Detection labels:  Invoice, LargeAmount
+Detection labels:  Invoice, Large amount
   ↓
-Derived label:     LargePaymentNeedsAttention
+Derived label:     Large payment needs attention
 ```
 
 ```text
 Email
   ↓
-Detection labels:  TravelBooking, FlightCancellation
+Detection labels:  Travel booking, Flight cancellation
   ↓
-Derived label:     TravelDisruption
+Derived label:     Travel disruption
 ```
 
 The email is still available when a derived label is evaluated. The detection labels are
@@ -69,7 +86,7 @@ A derived label names the detection labels it builds on:
 - **`recommended_labels`** — helpful context. Include them in the prompt when they matched;
   when they did not, evaluate the derived label anyway.
 
-Both hold **logical labels** (`LargeAmount`, not `IL/LargeAmount`), both may be empty, and both
+Both hold **labels** (`Large amount`, not `IL/Large amount`), both may be empty, and both
 may only point at detection labels. A derived label with no `required_labels` is evaluated for
 every message. Derived labels never reference other derived labels — there is no chaining, and
 the CLI rejects it.
@@ -123,10 +140,10 @@ written. The same goes for "Payment due tomorrow", "Meeting starts in one hour" 
 departs today": each is a property of the email itself, so it stays true forever.
 
 **"Is this still relevant?" is a different question at a different stage.** Labels like
-`NeedsAttentionToday`, `Today` or `Expired` are prioritisation, not labelling — they compare the
+`Needs attention today`, `Today` or `Expired` are prioritisation, not labelling — they compare the
 email against the clock, and that comparison may legitimately belong to a later stage once one
 exists. Detection labels and derived labels never make it. If a user asks for a label of that
-kind, say so plainly and offer the timeless part instead: `PaymentDueSoon` can be detected from
+kind, say so plainly and offer the timeless part instead: `Payment due soon` can be detected from
 the email ("states a payment due within a few days of writing"), while whether that due date has
 now passed cannot.
 
@@ -151,7 +168,7 @@ Every kind of Gmail label Inbox Labeler works with lives inside it:
 
 | Kind | Origin | Logical label | Gmail label |
 | --- | --- | --- | --- |
-| **business labels** | the `label` of a detection or derived label | `Invoice`, `LargePaymentNeedsAttention` | `IL/Invoice`, `IL/LargePaymentNeedsAttention` |
+| **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
 | **bucket labels** | future label kind, not part of this version | — | — |
 | **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
 
@@ -175,7 +192,7 @@ that is possible: a derived label with no `required_labels` triggering on a mess
 label matched. That is rare and it is correct — detection found nothing, interpretation found
 something.
 
-Because these two occupy `IL/Processed` and `IL/NoMatch`, the logical labels `Processed` and
+Because these two occupy `IL/Processed` and `IL/NoMatch`, the labels `Processed` and
 `NoMatch` are reserved: the CLI rejects them on create and on update, case-insensitively. If a
 user asks for one, explain that the name is taken by Inbox Labeler's own state and agree on a
 different label.
@@ -200,34 +217,36 @@ Run these from this skill's directory:
 # list every label
 python3 labels.py list
 
-# show one label
-python3 labels.py get 8da8071c
+# show one label — quote it, labels contain spaces
+python3 labels.py get "Delivery arriving soon"
 
 # create a detection label — --type defaults to detection
 python3 labels.py create \
-  --name "Invoice" \
   --label "Invoice" \
   --instruction "The message is an invoice or bill for a purchase or service."
 
 # create a derived label — repeat the reference flags for several labels
 python3 labels.py create \
-  --name "LargePaymentNeedsAttention" \
-  --label "LargePaymentNeedsAttention" \
+  --label "Large payment needs attention" \
   --type derived \
   --instruction "A payment this large should be looked at before it is due." \
-  --required-label "LargeAmount" \
+  --required-label "Large amount" \
   --recommended-label "Invoice"
 
 # update a label — pass only the fields that change
-python3 labels.py update 8da8071c --instruction "Invoices and receipts, but not payment reminders."
+python3 labels.py update "Invoice" --instruction "Invoices and receipts, but not payment reminders."
+
+# rename a label — every reference to it is rewritten in the same write
+python3 labels.py update "Invoice" --label "Invoice or receipt"
 
 # delete a label
-python3 labels.py delete 8da8071c
+python3 labels.py delete "Invoice or receipt"
 ```
 
-`get`, `update` and `delete` take the `id` only. When the user refers to a label by name, run
-`list` first, match the name yourself, and use the `id` you found. If no name matches, or
-several plausibly do, ask instead of guessing.
+`get`, `update` and `delete` address a label by its text, matched case-insensitively, so
+`get "large amount"` finds `Large amount`. Always quote it — labels contain spaces. If the
+user's wording does not match a stored label, run `list` and match it yourself; if several
+plausibly fit, ask instead of guessing.
 
 Every command prints JSON — including `type`, so the kind of label is always visible. On
 failure it prints `{"error": "..."}` and exits non-zero.
@@ -241,14 +260,14 @@ to detection without looking at the concept first.
 Start from meaning: **what would have to be true of an email for this label to belong on it?**
 
 - If that can be recognised **directly in the email**, it is a **detection label** —
-  `Invoice`, `Newsletter`, `Login`, `FlightCancellation`, `LargeAmount`.
+  `Invoice`, `Newsletter`, `Login`, `Flight cancellation`, `Large amount`.
 - If it is an **interpretation of things already recognised**, it is a **derived label** —
-  `LargePaymentNeedsAttention`, `TravelDisruption`, `CommercialOpportunity`.
+  `Large payment needs attention`, `Travel disruption`, `Commercial opportunity`.
 
 Aim for the smallest useful model — as few labels as express the idea, and no fewer. Then:
 
 1. **Run `list` first.** The detection labels that already exist are your vocabulary. Reuse
-   them instead of creating a near-duplicate: if `LargeAmount` is there, do not add `BigAmount`.
+   them instead of creating a near-duplicate: if `Large amount` is there, do not add `Big amount`.
 2. **Name the observations the concept rests on.** When the user's label is an interpretation
    and the observations it needs do not exist yet, those become supporting detection labels.
 3. **Create the supporting detection labels first**, then the derived label. Its references
@@ -267,12 +286,12 @@ If an interpretation seems to need another interpretation, the missing piece is 
 label — derived labels never reference derived labels.
 
 Model the timeless meaning, not the current relevance. A concept that only makes sense relative
-to today — `Expired`, `StillOpen`, `NeedsAttentionToday` — cannot be a label at all; see
+to today — `Expired`, `Still open`, `Needs attention today` — cannot be a label at all; see
 [Labels are timeless](#labels-are-timeless) and offer the part that can be read off the email.
 
 #### Example: an interpretation over new observations
 
-> Create a label called TravelDisruption for emails where a cancellation or severe delay is
+> Create a label called Travel disruption for emails where a cancellation or severe delay is
 > likely to disrupt a trip.
 
 "Likely to disrupt a trip" is a judgement, not something you read off the page. The observable
@@ -280,14 +299,14 @@ facts are the cancellation and the delay, and *either* one alone can disrupt a t
 are recommended, not required:
 
 ```text
-FlightCancellation      detection
-FlightDelay             detection
-TravelDisruption        derived   (recommended: FlightCancellation, FlightDelay)
+Flight cancellation      detection
+Flight delay             detection
+Travel disruption        derived   (recommended: Flight cancellation, Flight delay)
 ```
 
 #### Example: an interpretation over observations that must both hold
 
-> Create a label called LargePaymentNeedsAttention for invoices with unusually large amounts
+> Create a label called Large payment needs attention for invoices with unusually large amounts
 > that should be reviewed.
 
 Being an invoice and carrying a large amount are two separate observations, and here the user
@@ -295,23 +314,23 @@ wants both:
 
 ```text
 Invoice                     detection
-LargeAmount                 detection
-LargePaymentNeedsAttention  derived   (required: Invoice, LargeAmount)
+Large amount                 detection
+Large payment needs attention  derived   (required: Invoice, Large amount)
 ```
 
 Had they said "large payments, especially invoices", the amount would be the gate and the
-invoice merely context: `required: LargeAmount`, `recommended: Invoice`.
+invoice merely context: `required: Large amount`, `recommended: Invoice`.
 
 #### Example: reuse instead of rebuilding
 
-> Add CommercialOpportunity for mail that might turn into business.
+> Add Commercial opportunity for mail that might turn into business.
 
 If `Newsletter` and `Invoice` already exist but nothing recognises an inbound enquiry, add only
 the missing observation and build on what is there:
 
 ```text
-InboundEnquiry              detection   (new — the missing observation)
-CommercialOpportunity       derived     (recommended: InboundEnquiry, Newsletter)
+Inbound enquiry              detection   (new — the missing observation)
+Commercial opportunity       derived     (recommended: Inbound enquiry, Newsletter)
 ```
 
 #### Say the model out loud when it is more than one label
@@ -321,9 +340,9 @@ Do not wait for approval unless the user's intent is genuinely unclear:
 
 > I would model this using two detection labels and one derived label:
 >
-> - `FlightCancellation`
-> - `FlightDelay`
-> - `TravelDisruption`
+> - `Flight cancellation`
+> - `Flight delay`
+> - `Travel disruption`
 >
 > This keeps the reusable observations separate from the higher-level interpretation.
 
@@ -343,20 +362,19 @@ Guidance:
   is about breadth, not structure: splitting an interpretation into the observations it rests
   on is modelling, and it never narrows what the user asked for — they still get the label they
   named, and the supporting detection labels are what make it work.
-- Configure the **logical** label, never the Gmail one. If the user says `IL/Invoices`, store
-  `Invoices` — the CLI rejects anything starting with `IL/`, because it adds the namespace
-  itself. Talk about labels the way the user does; just strip the prefix before it reaches
-  `--label`.
-- The logical labels `Processed` and `NoMatch` are reserved, since they resolve to Inbox
-  Labeler's own `IL/Processed` and `IL/NoMatch`. The CLI rejects them on create and on update,
-  in any casing. If a user asks for one, explain that Inbox Labeler uses it for its own state
-  and agree on a different label rather than retrying.
+- Store the label, never the Gmail label. If the user says `IL/Invoices`, store `Invoices` —
+  the CLI rejects anything starting with `IL/`, because it adds the namespace itself. Talk
+  about labels the way the user does; just strip the prefix before it reaches `--label`.
+- The labels `Processed` and `NoMatch` are reserved, since they resolve to Inbox Labeler's own
+  `IL/Processed` and `IL/NoMatch`. The CLI rejects them on create and on update, in any casing.
+  If a user asks for one, explain that Inbox Labeler uses it for its own state and agree on a
+  different label rather than retrying.
 - `--type` follows from the model you chose above, not from anything the user has to say. It
   defaults to `detection` and appears in the output either way, so the kind is never hidden.
-- `--required-label` and `--recommended-label` are repeatable and take logical labels. On
-  update they replace the stored list rather than adding to it; passing an empty value clears
-  it. Both reject anything that is not an existing detection label, so create the detection
-  labels first.
+- `--required-label` and `--recommended-label` are repeatable and take the exact text of an
+  existing detection label. On update they replace the stored list rather than adding to it;
+  passing an empty value clears it. Create the detection labels first — a reference to a label
+  that does not exist is rejected.
 - **A label's type is immutable.** `update` refuses to turn a detection label into a derived one
   or the other way round. If the user wants the other kind, create a new label — and ask before
   deleting the old one, since its Gmail label disappears from their mail on the next reprocess.
@@ -377,9 +395,10 @@ Labels that frequently land on the same mail while detecting different aspects a
 their own job, and both belong in the list. Two labels are the same label only when they detect
 the same aspect — the same purpose and essentially the same instruction.
 
-Names are unique (case-insensitive), so a create can fail on a name collision. That is a
-naming clash about the `name` field alone: offer a different name, or ask whether the existing
-label should be updated instead.
+Labels are unique ignoring case, so a create can fail because that label already exists. Offer
+a different wording, or ask whether the existing label should be updated instead. If the user
+wants the existing label to read better, `update <label> --label <new text>` renames it and
+carries every reference along.
 
 ## Processing the inbox
 
@@ -420,9 +439,9 @@ change the unread state** (no marking as read) and never treat unread as the pro
 
 ### process
 
-1. Run `python3 labels.py list`. If it is empty, say so and stop. Resolve each label's logical
-   label to its Gmail name — `Invoice` → `IL/Invoice` — and work with the resolved names from
-   here on; Gmail knows nothing about logical labels.
+1. Run `python3 labels.py list`. If it is empty, say so and stop. Resolve each label to its Gmail
+   name — `Large amount` → `IL/Large amount` — and work with the resolved names from here on;
+   Gmail knows nothing about the unprefixed form.
 2. Run `list_labels` and note the ids of `IL/Processed`, `IL/NoMatch` and every resolved
    business label. Create any that are missing with `create_label`, passing the resolved name
    (the `IL` parent is created automatically).
@@ -476,8 +495,7 @@ deleted — anything in the namespace is Inbox Labeler's previous answer, and th
 is being discarded.
 
 1. Run `python3 labels.py list`. If it is empty, say so and stop — with no labels there is
-   nothing to re-evaluate against. Resolve each logical label to its Gmail name as in
-   `process` step 1.
+   nothing to re-evaluate against. Resolve each label to its Gmail name as in `process` step 1.
 2. Run `list_labels` and build the id map for the whole namespace: **every** label whose name
    starts with `IL/`, not just the ones you expect. Create any Gmail label a current label
    needs, plus `IL/Processed` and `IL/NoMatch`, with `create_label`.
@@ -546,7 +564,7 @@ Detection Results
 Invoice
 Evidence: states "invoice INV-4021" with an amount due
 
-LargeAmount
+Large amount
 Evidence: 1,450.00 EUR, over the 100 threshold
 
 Task
@@ -554,7 +572,7 @@ Task
 Determine whether the following Derived Label applies.
 
 Label:
-LargePaymentNeedsAttention
+Large payment needs attention
 
 Instruction:
 A payment this large should be looked at before it is due.
@@ -584,10 +602,10 @@ Rules for both commands:
   or time, and an email's age never changes what it means — see
   [Labels are timeless](#labels-are-timeless). The only time-dependent choice in a run is which
   messages to select, and only when the user asked for a narrower scope.
-- **Resolve logical labels once, then stay in Gmail terms.** Every Gmail call and every
-  comparison against a message's `labelIds` uses the resolved `IL/…` name, and processing
-  output names labels the way the user sees them in Gmail — report `IL/Invoice`, not `Invoice`.
-  Logical labels belong to configuration; only the CLI deals in them.
+- **Resolve labels once, then stay in Gmail terms.** Every Gmail call and every comparison
+  against a message's `labelIds` uses the resolved `IL/…` name, spaces included, and processing
+  output names labels the way the user sees them in Gmail — report `IL/Large amount`, not
+  `Large amount`. The unprefixed form belongs to configuration; only the CLI deals in it.
 - **Every message goes through the full list.** Each detection label gets its own decision for
   that message, and each one that triggers contributes its Gmail label. A message that triggers
   six labels gets six Gmail labels; how many a message ends up with is simply how many of the

@@ -1,26 +1,20 @@
 [
   {
-    "id": "8da8071c",
-    "name": "Invoice",
     "label": "Invoice",
     "type": "detection",
     "instruction": "The message is an invoice or bill for a purchase or service."
   },
   {
-    "id": "3f4d4d84",
-    "name": "LargeAmount",
-    "label": "LargeAmount",
+    "label": "Large amount",
     "type": "detection",
     "instruction": "The message states a monetary amount over 100 in any currency."
   },
   {
-    "id": "b7c1e290",
-    "name": "LargePaymentNeedsAttention",
-    "label": "LargePaymentNeedsAttention",
+    "label": "Large payment needs attention",
     "type": "derived",
-    "instruction": "A payment this large should be looked at before it is due.",
+    "instruction": "A payment this large should be looked at, whether it is still due or already paid.",
     "required_labels": [
-      "LargeAmount"
+      "Large amount"
     ],
     "recommended_labels": [
       "Invoice"

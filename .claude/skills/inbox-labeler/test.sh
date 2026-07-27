@@ -47,11 +47,31 @@ check() {
     fi
 }
 
-field_of() {  # field_of <index> <field>
-    python3 -c "import json;print(json.load(open('labels.json'))[$1]['$2'])"
+# field <label> <field>   — read a field of a stored label, by label text
+field() {
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+label, field = sys.argv[1], sys.argv[2]
+for entry in json.load(open("labels.json")):
+    if entry["label"].lower() == label.lower():
+        value = entry.get(field, "<missing>")
+        print(",".join(value) if isinstance(value, list) else value)
+        break
+else:
+    print("<no such label>")
+PY
 }
-id_of() {     # id_of <index>
-    field_of "$1" id
+labels_in_store() {
+    python3 -c "import json;print(','.join(e['label'] for e in json.load(open('labels.json'))))"
+}
+fields_of() {
+    python3 - "$1" <<'PY'
+import json, sys
+for entry in json.load(open("labels.json")):
+    if entry["label"].lower() == sys.argv[1].lower():
+        print(",".join(entry))
+        break
+PY
 }
 
 echo "--- storage bootstrap ---"
@@ -60,210 +80,254 @@ check "store starts empty" "$(cat labels.json)" "[]"
 check "the store is labels.json" "$(ls labels.json)" "labels.json"
 
 echo
-echo "--- create persists type: detection ---"
-ok "create without --type" -- create --name "Invoice" --label "Invoice" \
-    --instruction "The message is an invoice."
-check "type defaults to detection" "$(field_of 0 type)" "detection"
-ok "create with explicit --type detection" -- create --name "News" --label "News" \
-    --type detection --instruction "Newsletters."
-check "explicit type persisted" "$(field_of 1 type)" "detection"
-ok "type is case-insensitive" -- create --name "Cased" --label "Cased" \
-    --type "Detection" --instruction "x"
-check "type normalised to lowercase" "$(field_of 2 type)" "detection"
-ok "cleanup cased" -- delete "$(id_of 2)"
-check "field order is id, name, label, type, instruction" \
-    "$(python3 -c "import json;print(','.join(json.load(open('labels.json'))[0]))")" \
-    "id,name,label,type,instruction"
+echo "--- 1. a detection label with spaces ---"
+ok "create it" -- create --label "Flight cancellation" \
+    --instruction "The message says a flight is cancelled."
+check "the label keeps its spaces" "$(field "Flight cancellation" label)" "Flight cancellation"
+check "type defaults to detection" "$(field "Flight cancellation" type)" "detection"
+check "fields are label, type, instruction" \
+    "$(fields_of "Flight cancellation")" "label,type,instruction"
+ok "another one" -- create --label "Flight delay" \
+    --instruction "The message says a flight is delayed."
+ok "punctuation is allowed" -- create --label "Won't arrive (probably)" --instruction "x"
+ok "so are digits and ampersands" -- create --label "Q3 profit & loss" --instruction "x"
+ok "so is a nested label" -- create --label "Travel/Flight" --instruction "x"
+ok "cleanup punctuation" -- delete "Won't arrive (probably)"
+ok "cleanup digits" -- delete "Q3 profit & loss"
+ok "cleanup nested" -- delete "Travel/Flight"
 
 echo
-echo "--- list and get expose the type ---"
-check "list exposes type" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["type"])')" \
+echo "--- 2. a derived label with spaces, 3. + 4. referencing labels with spaces ---"
+ok "create it, referencing both ways" -- create --label "Travel disruption" --type derived \
+    --instruction "The trip is likely to be disrupted." \
+    --required-label "Flight cancellation" --recommended-label "Flight delay"
+check "the derived label keeps its spaces" \
+    "$(field "Travel disruption" label)" "Travel disruption"
+check "required_labels holds the spaced label" \
+    "$(field "Travel disruption" required_labels)" "Flight cancellation"
+check "recommended_labels holds the spaced label" \
+    "$(field "Travel disruption" recommended_labels)" "Flight delay"
+check "derived field order" \
+    "$(fields_of "Travel disruption")" \
+    "label,type,instruction,required_labels,recommended_labels"
+check "no extra fields beyond the schema" \
+    "$(python3 -c "import json;print(len([e for e in json.load(open('labels.json')) if e['label']=='Travel disruption'][0]))")" \
+    "5"
+ok "references resolve case-insensitively" -- update "Travel disruption" \
+    --required-label "flight cancellation"
+check "and are stored with the target's spelling" \
+    "$(field "Travel disruption" required_labels)" "Flight cancellation"
+err "an unknown spaced reference is rejected" -- create --label "Nope" --type derived \
+    --instruction "x" --required-label "Flight cancellation that never was"
+err "a derived label may not reference a derived label" -- create --label "Chained" \
+    --type derived --instruction "x" --required-label "Travel disruption"
+err "detection labels reject --required-label" -- create --label "Plain" --instruction "x" \
+    --required-label "Flight delay"
+
+echo
+echo "--- 5. list and get expose no name field ---"
+check "list has no name" \
+    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("name" in e for e in json.load(sys.stdin)))')" \
+    "False"
+check "list has no id either" \
+    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("id" in e for e in json.load(sys.stdin)))')" \
+    "False"
+ok "get by label text" -- get "Travel disruption"
+check "get has no name" \
+    "$(python3 labels.py get "Travel disruption" | python3 -c 'import json,sys;print("name" in json.load(sys.stdin))')" \
+    "False"
+check "get is case-insensitive" \
+    "$(python3 labels.py get "TRAVEL DISRUPTION" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "Travel disruption"
+err "get on an unknown label" -- get "Does not exist"
+
+echo
+echo "--- 6. the CLI exposes label, never name ---"
+check "create has no --name" \
+    "$(python3 labels.py create --help 2>&1 | grep -c -- '--name')" "0"
+check "update has no --name" \
+    "$(python3 labels.py update --help 2>&1 | grep -c -- '--name')" "0"
+check "create takes --label" \
+    "$(python3 labels.py create --help 2>&1 | grep -q -- '--label' && echo yes)" "yes"
+check "get takes a positional label" \
+    "$(python3 labels.py get --help 2>&1 | grep -qi 'label' && echo yes)" "yes"
+check "--name is rejected outright by the parser" \
+    "$(python3 labels.py create --name "Nope" --label "Nope" --instruction "x" >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "rejected"
+check "the module declares no name field" \
+    "$(python3 -c 'import labels;print("name" in labels.COMMON_FIELDS)')" "False"
+check "the help mentions spaces are fine" \
+    "$(python3 labels.py create --help 2>&1 | grep -c 'may contain spaces')" "1"
+
+echo
+echo "--- 7. Gmail labels keep the spaces ---"
+check "a spaced label resolves" \
+    "$(python3 -c 'import labels;print(labels.gmail_label("Delivery arriving soon"))')" \
+    "IL/Delivery arriving soon"
+check "no underscores or camel case are introduced" \
+    "$(python3 -c 'import labels;print("_" in labels.gmail_label("Delivery arriving soon"))')" \
+    "False"
+check "a nested label resolves" \
+    "$(python3 -c 'import labels;print(labels.gmail_label("Travel/Flight delay"))')" \
+    "IL/Travel/Flight delay"
+check "the reserved labels resolve to the system labels" \
+    "$(python3 -c 'import labels;print(",".join(sorted(labels.gmail_label(x) for x in labels.RESERVED_LABELS)))')" \
+    "IL/NoMatch,IL/Processed"
+
+echo
+echo "--- 8. renaming updates every reference ---"
+ok "rename a referenced detection label" -- update "Flight cancellation" \
+    --label "Cancelled flight"
+check "the label is renamed" "$(field "Cancelled flight" label)" "Cancelled flight"
+check "required_labels followed the rename" \
+    "$(field "Travel disruption" required_labels)" "Cancelled flight"
+check "the old label is gone" "$(field "Flight cancellation" label)" "<no such label>"
+ok "rename one referenced through recommended_labels" -- update "Flight delay" \
+    --label "Delayed flight"
+check "recommended_labels followed the rename" \
+    "$(field "Travel disruption" recommended_labels)" "Delayed flight"
+ok "rename the derived label itself" -- update "Travel disruption" \
+    --label "Travel disruption likely"
+check "it renamed" "$(field "Travel disruption likely" label)" "Travel disruption likely"
+check "and kept its references" \
+    "$(field "Travel disruption likely" required_labels)" "Cancelled flight"
+ok "a rename may only change casing" -- update "Cancelled flight" --label "Cancelled Flight"
+check "the new casing is stored" "$(field "cancelled flight" label)" "Cancelled Flight"
+check "references picked up the new casing" \
+    "$(field "Travel disruption likely" required_labels)" "Cancelled Flight"
+ok "rename back" -- update "Cancelled Flight" --label "Cancelled flight"
+ok "renaming to the same text is a no-op" -- update "Cancelled flight" --label "Cancelled flight"
+check "still one such label" \
+    "$(python3 -c "import json;print(sum(1 for e in json.load(open('labels.json')) if e['label']=='Cancelled flight'))")" \
+    "1"
+ok "an unrelated update leaves references alone" -- update "Cancelled flight" \
+    --instruction "The message says a flight is cancelled, full stop."
+check "references untouched" \
+    "$(field "Travel disruption likely" required_labels)" "Cancelled flight"
+
+echo
+echo "--- 9. renaming onto an existing label is rejected ---"
+err "rename onto an existing label" -- update "Cancelled flight" --label "Delayed flight"
+check "the source label is untouched" "$(field "Cancelled flight" label)" "Cancelled flight"
+check "the target label is untouched" "$(field "Delayed flight" label)" "Delayed flight"
+err "rename onto an existing label, different casing" -- update "Cancelled flight" \
+    --label "DELAYED FLIGHT"
+err "creating a duplicate is rejected too" -- create --label "delayed flight" --instruction "x"
+check "the store still holds three labels" \
+    "$(python3 -c "import json;print(len(json.load(open('labels.json'))))")" "3"
+
+echo
+echo "--- 10. deletion guards use the readable labels ---"
+err "delete a required detection label" -- delete "Cancelled flight"
+check "the error names both labels" \
+    "$(python3 labels.py delete "Cancelled flight" 2>&1 | grep -c 'Travel disruption likely')" "1"
+check "it is still there" "$(field "Cancelled flight" label)" "Cancelled flight"
+err "delete a recommended detection label" -- delete "Delayed flight"
+ok "an unreferenced label deletes" -- create --label "Loose end" --instruction "x"
+ok "deleting it works" -- delete "Loose end"
+ok "the derived label deletes" -- delete "Travel disruption likely"
+ok "and then its references delete too" -- delete "Cancelled flight"
+ok "cleanup" -- delete "Delayed flight"
+check "store is empty again" "$(labels_in_store)" ""
+
+echo
+echo "--- 11.-13. migrating a store written by an earlier version ---"
+cat > labels.json <<'JSON'
+[
+  {"id": "aaaa1111", "name": "Invoices", "label": "Invoices", "type": "detection",
+   "instruction": "Invoices."},
+  {"id": "bbbb2222", "name": "LargeAmount", "label": "IL/LargeAmount", "type": "detection",
+   "instruction": "Over 100."},
+  {"id": "cccc3333", "name": "Legacy", "type": "detection", "instruction": "No label field."},
+  {"id": "dddd4444", "name": "Spaced", "label": "  Padded   label  ", "type": "detection",
+   "instruction": "Whitespace everywhere."},
+  {"id": "eeee5555", "name": "Untyped", "label": "Untyped", "instruction": "No type field."},
+  {"id": "ffff6666", "name": "LargePayment", "label": "LargePayment", "type": "derived",
+   "instruction": "Large payment.", "required_labels": ["LargeAmount"],
+   "recommended_labels": ["Invoices"]}
+]
+JSON
+check "every label survives the load" \
+    "$(python3 labels.py list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')" \
+    "6"
+check "no name survives the load" \
+    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("name" in e for e in json.load(sys.stdin)))')" \
+    "False"
+check "no id survives the load" \
+    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("id" in e for e in json.load(sys.stdin)))')" \
+    "False"
+check "a stray IL/ prefix is stripped" \
+    "$(python3 labels.py get "LargeAmount" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "LargeAmount"
+check "a label-less entry falls back to its old name" \
+    "$(python3 labels.py get "Legacy" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "Legacy"
+check "whitespace is normalised" \
+    "$(python3 labels.py get "Padded label" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "Padded label"
+check "a missing type becomes detection" \
+    "$(python3 labels.py get "Untyped" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" \
     "detection"
-ok "get by id" -- get "$(id_of 0)"
-check "get exposes type" \
-    "$(python3 labels.py get "$(id_of 0)" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" \
-    "detection"
-check "get returns the right label" \
-    "$(python3 labels.py get "$(id_of 0)" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" \
-    "Invoice"
-err "get by name is rejected" -- get Invoice
-err "get with an unknown id" -- get deadbeef
+check "derived references survive" \
+    "$(python3 labels.py get "LargePayment" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["required_labels"]))')" \
+    "LargeAmount"
+check "list does not rewrite the store" "$(grep -c '"name"' labels.json)" "6"
+ok "the next write persists the migration" -- update "Invoices" --instruction "Invoices only."
+check "no name on disk" "$(grep -c '"name"' labels.json)" "0"
+check "no id on disk" "$(grep -c '"id"' labels.json)" "0"
+check "instructions survived" "$(field "LargePayment" instruction)" "Large payment."
+ok "renaming the referenced label migrates the dependency" -- update "LargeAmount" \
+    --label "Large amount"
+check "the dependency points at the new name" \
+    "$(field "LargePayment" required_labels)" "Large amount"
+ok "and the derived label itself" -- update "LargePayment" --label "Large payment needs attention"
+check "its references are unchanged by its own rename" \
+    "$(field "Large payment needs attention" required_labels)" "Large amount"
+check "recommended references too" \
+    "$(field "Large payment needs attention" recommended_labels)" "Invoices"
+check "nothing was lost" \
+    "$(python3 -c "import json;print(len(json.load(open('labels.json'))))")" "6"
 
 echo
-echo "--- update preserves or validates the type ---"
-ok "update instruction only" -- update "$(id_of 0)" --instruction "An invoice or bill."
-check "type preserved through update" "$(field_of 0 type)" "detection"
-ok "update the type explicitly" -- update "$(id_of 0)" --type detection
-check "type still detection" "$(field_of 0 type)" "detection"
-err "update to an unknown type" -- update "$(id_of 0)" --type bucket
-check "store unchanged after a rejected update" "$(field_of 0 type)" "detection"
-ok "update accepts --type alone as a change" -- update "$(id_of 0)" --type Detection
-err "detection cannot become derived" -- update "$(id_of 1)" --type derived
-check "the rejected label is still detection" "$(field_of 1 type)" "detection"
-check "and keeps its detection shape" \
-    "$(python3 -c "import json;print(','.join(json.load(open('labels.json'))[1]))")" \
-    "id,name,label,type,instruction"
+echo "--- validation ---"
+err "empty label" -- create --label "   " --instruction "x"
+err "empty instruction" -- create --label "Something" --instruction ""
+err "IL/ prefix" -- create --label "IL/Something" --instruction "x"
+err "il/ prefix, lowercase" -- create --label "il/something" --instruction "x"
+err "leading slash" -- create --label "/Something" --instruction "x"
+err "trailing slash" -- create --label "Something/" --instruction "x"
+err "double slash" -- create --label "Some//thing" --instruction "x"
+err "the reserved Processed" -- create --label "Processed" --instruction "x"
+err "the reserved NoMatch" -- create --label "nomatch" --instruction "x"
+ok "look-alikes are fine" -- create --label "No match found" --instruction "x"
+ok "and so is Processing" -- create --label "Processing" --instruction "x"
+ok "leading and trailing whitespace is trimmed" -- create --label "  Trimmed  " --instruction "x"
+check "stored without the padding" "$(field "Trimmed" label)" "Trimmed"
+ok "inner whitespace is collapsed" -- create --label "Two    words" --instruction "x"
+check "stored with single spaces" "$(field "Two words" label)" "Two words"
+err "a duplicate differing only in whitespace" -- create --label "Two  words" --instruction "x"
+err "unknown type" -- create --label "Bucketed" --type bucket --instruction "x"
+err "nothing to update" -- update "Processing"
+err "update an unknown label" -- update "Nothing here" --instruction "x"
+err "delete an unknown label" -- delete "Nothing here"
+ok "cleanup no match found" -- delete "No match found"
+ok "cleanup processing" -- delete "Processing"
+ok "cleanup trimmed" -- delete "Trimmed"
+ok "cleanup two words" -- delete "Two words"
 
 echo
-echo "--- unknown types are rejected ---"
-err "create --type bucket" -- create --name "B" --label "B" --type bucket --instruction "x"
-err "create --type empty" -- create --name "E" --label "E" --type "" --instruction "x"
-err "create --type nonsense" -- create --name "N" --label "N" --type "detektion" --instruction "x"
+echo "--- 15. type immutability and reserved behaviour are unchanged ---"
+err "detection cannot become derived" -- update "Invoices" --type derived
+check "still detection" "$(field "Invoices" type)" "detection"
+err "derived cannot become detection" -- update "Large payment needs attention" --type detection
+check "still derived" "$(field "Large payment needs attention" type)" "derived"
+ok "restating the same type is allowed" -- update "Invoices" --type detection
+ok "in any casing" -- update "Invoices" --type "Detection"
 check "supported types are exactly detection, derived" \
     "$(python3 -c 'import labels;print(",".join(sorted(labels.LABEL_TYPES)))')" "derived,detection"
 
 echo
-echo "--- derived labels: create ---"
-ok "create a derived label" -- create --name "LargePayment" --label "LargePayment" \
-    --type derived --instruction "A large payment that needs attention." \
-    --required-label "Invoice" --recommended-label "News"
-check "type is derived" "$(field_of 2 type)" "derived"
-check "required_labels stored" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['required_labels'])")" \
-    "['Invoice']"
-check "recommended_labels stored" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['recommended_labels'])")" \
-    "['News']"
-check "derived field order" \
-    "$(python3 -c "import json;print(','.join(json.load(open('labels.json'))[2]))")" \
-    "id,name,label,type,instruction,required_labels,recommended_labels"
-check "no extra fields beyond the schema" \
-    "$(python3 -c "import json;print(len(json.load(open('labels.json'))[2]))")" "7"
-ok "repeatable flags accumulate" -- create --name "Multi" --label "Multi" --type derived \
-    --instruction "x" --required-label "Invoice" --required-label "News"
-check "both references kept, in order" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[3]['required_labels'])")" \
-    "['Invoice', 'News']"
-ok "a derived label may reference nothing" -- create --name "Standalone" --label "Standalone" \
-    --type derived --instruction "Interprets the email alone."
-check "empty reference lists persist as []" \
-    "$(python3 -c "import json;e=json.load(open('labels.json'))[4];print(e['required_labels'],e['recommended_labels'])")" \
-    "[] []"
-check "list exposes derived labels with their references" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(json.load(sys.stdin)[2]["required_labels"][0])')" \
-    "Invoice"
-check "get exposes the derived type" \
-    "$(python3 labels.py get "$(id_of 2)" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" \
-    "derived"
-ok "cleanup Standalone" -- delete "$(id_of 4)"
-ok "cleanup Multi" -- delete "$(id_of 3)"
-
-echo
-echo "--- derived labels: reference validation ---"
-err "unknown required reference" -- create --name "U1" --label "U1" --type derived \
-    --instruction "x" --required-label "DoesNotExist"
-err "unknown recommended reference" -- create --name "U2" --label "U2" --type derived \
-    --instruction "x" --recommended-label "DoesNotExist"
-err "a derived label may not reference a derived label" -- create --name "U3" --label "U3" \
-    --type derived --instruction "x" --required-label "LargePayment"
-err "detection labels reject --required-label" -- create --name "U4" --label "U4" \
-    --instruction "x" --required-label "Invoice"
-err "detection labels reject --recommended-label" -- create --name "U5" --label "U5" \
-    --instruction "x" --recommended-label "Invoice"
-err "derived label still needs an instruction" -- create --name "U6" --label "U6" \
-    --type derived --instruction "" --required-label "Invoice"
-err "derived label still rejects an IL/ prefix" -- create --name "U7" --label "IL/U7" \
-    --type derived --instruction "x"
-err "derived label still rejects a reserved label" -- create --name "U8" --label "NoMatch" \
-    --type derived --instruction "x"
-ok "references resolve case-insensitively" -- create --name "Cased" --label "Cased" \
-    --type derived --instruction "x" --required-label "invoice"
-check "reference stored with the target's spelling" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[3]['required_labels'])")" \
-    "['Invoice']"
-ok "duplicate references collapse" -- update "$(id_of 3)" --required-label "Invoice" \
-    --required-label "invoice"
-check "duplicates removed" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[3]['required_labels'])")" \
-    "['Invoice']"
-ok "cleanup Cased" -- delete "$(id_of 3)"
-
-echo
-echo "--- derived labels: update ---"
-ok "update the instruction" -- update "$(id_of 2)" --instruction "A large payment needing action."
-check "type preserved" "$(field_of 2 type)" "derived"
-check "references preserved" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['required_labels'])")" \
-    "['Invoice']"
-ok "replace the required list" -- update "$(id_of 2)" --required-label "News"
-check "list replaced, not appended" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['required_labels'])")" \
-    "['News']"
-ok "clear a list with an empty value" -- update "$(id_of 2)" --required-label ""
-check "list cleared" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['required_labels'])")" "[]"
-err "update to an unknown reference" -- update "$(id_of 2)" --required-label "DoesNotExist"
-check "store unchanged after a rejected update" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['required_labels'])")" "[]"
-ok "restore the reference" -- update "$(id_of 2)" --required-label "Invoice"
-
-echo
-echo "--- label types are immutable ---"
-err "derived cannot become detection" -- update "$(id_of 2)" --type detection
-check "the derived label is untouched" "$(field_of 2 type)" "derived"
-check "its references survive the rejection" \
-    "$(python3 -c "import json;print(json.load(open('labels.json'))[2]['required_labels'])")" \
-    "['Invoice']"
-err "derived cannot become an unknown type either" -- update "$(id_of 2)" --type bucket
-ok "restating the same type is allowed" -- update "$(id_of 2)" --type derived
-ok "so is restating it in another casing" -- update "$(id_of 2)" --type "Derived"
-check "still derived" "$(field_of 2 type)" "derived"
-
-echo
-echo "--- referenced detection labels cannot be deleted ---"
-err "delete a required detection label" -- delete "$(id_of 0)"
-check "the referenced label is still there" "$(field_of 0 name)" "Invoice"
-check "the store still holds three labels" \
-    "$(python3 -c "import json;print(len(json.load(open('labels.json'))))")" "3"
-ok "add a recommended reference" -- update "$(id_of 2)" --recommended-label "News"
-err "delete a recommended detection label" -- delete "$(id_of 1)"
-check "the recommended label is still there" "$(field_of 1 name)" "News"
-ok "drop the recommended reference again" -- update "$(id_of 2)" --recommended-label ""
-ok "an unreferenced detection label can still be deleted" -- create --name "Loose" \
-    --label "Loose" --instruction "Not referenced by anything."
-ok "deleting it works" -- delete "$(id_of -1)"
-ok "a derived label itself is always deletable" -- create --name "Temp" --label "Temp" \
-    --type derived --instruction "x" --required-label "Invoice"
-ok "deleting the derived label works" -- delete "$(id_of -1)"
-
-# A throwaway pair, so removing a reference can be shown to unblock the delete
-# without disturbing the fixtures the later groups rely on.
-ok "create a throwaway detection label" -- create --name "Fleeting" --label "Fleeting" \
-    --instruction "Temporary."
-ok "create a derived label requiring it" -- create --name "Holder" --label "Holder" \
-    --type derived --instruction "x" --required-label "Fleeting"
-err "the throwaway is now protected" -- delete "$(id_of 3)"
-ok "dropping the reference unblocks it" -- update "$(id_of 4)" --required-label ""
-ok "now the throwaway deletes" -- delete "$(id_of 3)"
-ok "cleanup Holder" -- delete "$(id_of 3)"
-check "the original three fixtures are intact" \
-    "$(python3 -c "import json;print(','.join(r['name'] for r in json.load(open('labels.json'))))")" \
-    "Invoice,News,LargePayment"
-
-echo
-echo "--- detection labels are unaffected by the derived type ---"
-check "detection labels have no reference fields" \
-    "$(python3 -c "import json;print(','.join(json.load(open('labels.json'))[0]))")" \
-    "id,name,label,type,instruction"
-check "detection label field count is still 5" \
-    "$(python3 -c "import json;print(len(json.load(open('labels.json'))[0]))")" "5"
-ok "detection create is unchanged" -- create --name "Plain" --label "Plain" \
-    --instruction "Still just an instruction."
-check "new detection label has no lists" \
-    "$(python3 -c "import json;print(','.join(json.load(open('labels.json'))[3]))")" \
-    "id,name,label,type,instruction"
-ok "cleanup Plain" -- delete "$(id_of 3)"
-check "a derived label does not become a detection label on update" "$(field_of 2 type)" "derived"
-
-echo
-echo "--- processing order: detection, then IL/NoMatch, then derived, then IL/Processed ---"
-check "detection is the default type" \
-    "$(python3 -c 'import labels;print(labels.DEFAULT_TYPE)')" "detection"
-check "only derived declares references" \
-    "$(python3 -c 'import labels;print(",".join(sorted(t for t,s in labels.LABEL_TYPES.items() if s["references"])))')" \
-    "derived"
-# The processing order lives in SKILL.md, so assert the documented sequence there.
+echo "--- documented behaviour ---"
 order_check() {  # order_check <marker> ... -> True when each follows the previous one
     # Whitespace is collapsed on both sides, so markers survive line rewrapping.
     SKILL="$SCRIPT_DIR/SKILL.md" python3 - "$@" <<'PY'
@@ -279,239 +343,79 @@ for marker in sys.argv[1:]:
 print(True)
 PY
 }
+
 check "process: detection -> IL/NoMatch -> derived -> IL/Processed" \
-    "$(order_check \
-        '### process' \
-        '**Detection stage.**' \
-        'apply `IL/NoMatch`' \
-        '**Derived stage.**' \
-        'Apply `IL/Processed` last')" \
-    "True"
+    "$(order_check '### process' '**Detection stage.**' 'apply `IL/NoMatch`' \
+        '**Derived stage.**' 'Apply `IL/Processed` last')" "True"
 check "reprocess: detection -> IL/NoMatch -> derived -> IL/Processed" \
-    "$(order_check \
-        '### reprocess' \
-        '**Detection stage.**' \
-        'apply `IL/NoMatch`' \
-        '**Derived stage.**' \
-        'Apply `IL/Processed` last')" \
-    "True"
+    "$(order_check '### reprocess' '**Detection stage.**' 'apply `IL/NoMatch`' \
+        '**Derived stage.**' 'Apply `IL/Processed` last')" "True"
 check "the derived prompt lists its four inputs in order" \
-    "$(order_check \
-        '## The derived-label prompt' \
-        '**the email**' \
-        '**the detection labels that matched**' \
-        '**the evidence**' \
-        "derived label's instruction")" \
+    "$(order_check '## The derived-label prompt' '**the email**' \
+        '**the detection labels that matched**' '**the evidence**' "derived label's instruction")" \
     "True"
 check "the derived prompt uses the Email / Detection Results / Task layout" \
-    "$(order_check \
-        '## The derived-label prompt' \
-        '```text' \
-        'Email' \
-        'Detection Results' \
-        'Evidence:' \
-        'Task' \
-        'Determine whether the following Derived Label applies.' \
-        'Label:' \
-        'Instruction:' \
-        'Answer yes or no and explain briefly.' \
-        '```')" \
-    "True"
+    "$(order_check '## The derived-label prompt' '```text' 'Email' 'Detection Results' \
+        'Evidence:' 'Task' 'Determine whether the following Derived Label applies.' \
+        'Label:' 'Instruction:' 'Answer yes or no and explain briefly.' '```')" "True"
 check "the prompt has no generic Question section" \
     "$(grep -c '^Question$' "$SCRIPT_DIR/SKILL.md")" "0"
 
 echo
-echo "--- the skill documents how to model a label from a description ---"
-check "modelling comes before the CLI guidance list" \
-    "$(order_check \
-        '### Modelling what the user asked for' \
-        'Never ask' \
-        'directly in the email' \
-        'interpretation of things already recognised' \
-        'Run `list` first' \
-        'Create the supporting detection labels first' \
-        '`required_labels` is an AND gate' \
-        '`recommended_labels` is context')" \
-    "True"
-check "all three worked examples are present, in order" \
-    "$(order_check \
-        'TravelDisruption        derived' \
-        'LargePaymentNeedsAttention  derived' \
-        'CommercialOpportunity       derived')" \
-    "True"
-check "the explain-then-create rule is documented" \
-    "$(order_check \
-        '#### Say the model out loud when it is more than one label' \
-        'Do not wait for approval' \
-        'When a single detection label is all it takes')" \
-    "True"
+echo "--- 14. agent guidance prefers readable labels with spaces ---"
+check "the label is documented as the only identifier" \
+    "$(order_check '## Labels are identified by their text' 'the only identifier' \
+        'no separate name' 'no technical id' 'may contain spaces')" "True"
+check "readable phrases are preferred over camel case" \
+    "$(order_check '## Labels are identified by their text' 'Delivery arriving soon' \
+        'not `DeliveryArrivingSoon`' 'acronym')" "True"
+check "renaming is documented as rewriting references" \
+    "$(order_check '## Labels are identified by their text' 'Renaming' 'every reference')" "True"
+check "case-insensitive uniqueness is documented" \
+    "$(order_check '## Labels are identified by their text' 'ignoring case')" "True"
+check "the modelling examples read as phrases" \
+    "$(order_check '### Modelling what the user asked for' 'Flight cancellation' 'Flight delay' \
+        'Travel disruption' 'Large payment needs attention' 'Commercial opportunity')" "True"
+check "reuse before creating is documented" \
+    "$(order_check '### Modelling what the user asked for' 'Run `list` first' 'Reuse')" "True"
+check "camel case appears only as the counter-example" \
+    "$(grep -cE '\bDeliveryArrivingSoon\b' "$SCRIPT_DIR/SKILL.md")" "1"
+check "and that one is shown as what not to write" \
+    "$(order_check '`Delivery arriving soon`, not `DeliveryArrivingSoon`')" "True"
+check "no other camel-case label examples remain" \
+    "$(grep -cE '\b(LargePaymentNeedsAttention|FlightCancellation|FlightDelay|TravelDisruption|LargeAmount|InboundEnquiry|CommercialOpportunity)\b' "$SCRIPT_DIR/SKILL.md")" \
+    "0"
+check "no --name remains in the skill" \
+    "$(grep -c -- '--name' "$SCRIPT_DIR/SKILL.md")" "0"
+check "the example store has no name field" \
+    "$(grep -c '"name"' "$SCRIPT_DIR/labels.example.json")" "0"
+check "the example store has no id field" \
+    "$(grep -c '"id"' "$SCRIPT_DIR/labels.example.json")" "0"
+check "the example store uses readable labels" \
+    "$(grep -c 'Large payment needs attention' "$SCRIPT_DIR/labels.example.json")" "1"
 
 echo
 echo "--- labels are evaluated timelessly ---"
 check "the principle has its own section, stated as a rule" \
-    "$(order_check \
-        '## Labels are timeless' \
+    "$(order_check '## Labels are timeless' \
         'as if you were reading the email at the moment it was written' \
         'The current date and the current time never influence whether a label applies' \
-        'a minute after it lands or five years later' \
-        'never against now')" \
-    "True"
+        'a minute after it lands or five years later' 'never against now')" "True"
 check "the worked example is present" \
-    "$(order_check \
-        '## Labels are timeless' \
-        'Your package will arrive tomorrow.' \
-        'Imminent' \
-        'Payment due tomorrow' \
-        'Meeting starts in one hour' \
-        'Flight departs today')" \
-    "True"
+    "$(order_check '## Labels are timeless' 'Your package will arrive tomorrow.' 'Imminent' \
+        'Payment due tomorrow' 'Meeting starts in one hour' 'Flight departs today')" "True"
 check "current relevance is named as a separate, later stage" \
-    "$(order_check \
-        '## Labels are timeless' \
-        'NeedsAttentionToday' \
-        'Expired' \
-        'prioritisation, not labelling' \
-        'Detection labels and derived labels never make it')" \
-    "True"
+    "$(order_check '## Labels are timeless' 'prioritisation, not labelling' \
+        'Detection labels and derived labels never make it')" "True"
 check "selection is distinguished from evaluation" \
-    "$(order_check \
-        '## Labels are timeless' \
-        'choosing which messages to look at' \
-        'selection, not evaluation')" \
-    "True"
+    "$(order_check '## Labels are timeless' 'choosing which messages to look at' \
+        'selection, not evaluation')" "True"
 check "the processing rules restate it where evaluation happens" \
-    "$(order_check \
-        'Rules for both commands' \
-        'Judge every message as of the day it was written' \
-        'Neither stage consults the current date')" \
-    "True"
-check "the modelling section defers time-relative concepts" \
-    "$(order_check \
-        '### Modelling what the user asked for' \
-        'Model the timeless meaning, not the current relevance' \
-        'cannot be a label at all')" \
-    "True"
-check "the derived prompt reads dates as facts of the email" \
-    "$(order_check \
-        '## The derived-label prompt' \
-        'as they stood when the email was written' \
-        "not something to compare against today's date")" \
-    "True"
+    "$(order_check 'Rules for both commands' 'Judge every message as of the day it was written' \
+        'Neither stage consults the current date')" "True"
 check "no guidance tells the agent to compare against the current date" \
     "$(grep -ciE "compare .{0,20}(against|to) (today|the current (date|time))|based on (today|the current date)|if (it|the email) is still" "$SCRIPT_DIR/SKILL.md")" \
     "0"
-check "required_labels gate the derived stage" \
-    "$(order_check '**Derived stage.**' 'required_labels' 'did not all match')" "True"
-
-echo
-echo "--- labels are stored without the IL/ prefix ---"
-check "persisted JSON contains no IL/" "$(grep -c 'IL/' labels.json)" "0"
-ok "nested logical labels are allowed" -- create --name "Conn" --label "Social/Connection" \
-    --instruction "A connection request."
-check "nested label persisted as given" "$(field_of -1 label)" "Social/Connection"
-ok "cleanup nested" -- delete "$(id_of -1)"
-
-echo
-echo "--- logical labels resolve to Gmail labels ---"
-check "Invoice resolves" \
-    "$(python3 -c 'import labels;print(labels.gmail_label("Invoice"))')" "IL/Invoice"
-check "nested resolves" \
-    "$(python3 -c 'import labels;print(labels.gmail_label("Social/Connection"))')" \
-    "IL/Social/Connection"
-check "reserved logical labels resolve to the system labels" \
-    "$(python3 -c 'import labels;print(",".join(sorted(labels.gmail_label(x) for x in labels.RESERVED_LABELS)))')" \
-    "IL/NoMatch,IL/Processed"
-
-echo
-echo "--- labels beginning with IL/ are rejected ---"
-err "create IL/Invoice" -- create --name "A" --label "IL/Invoice" --instruction "x"
-err "create il/invoice (case)" -- create --name "A" --label "il/invoice" --instruction "x"
-err "create IL/ alone" -- create --name "A" --label "IL/" --instruction "x"
-err "update to IL/Invoice" -- update "$(id_of 0)" --label "IL/Invoice"
-ok "a label merely containing IL is fine" -- create --name "Build" --label "CI-IL-Build" \
-    --instruction "x"
-ok "cleanup" -- delete "$(id_of -1)"
-
-echo
-echo "--- reserved logical labels are rejected, case-insensitively ---"
-err "create Processed" -- create --name "P" --label "Processed" --instruction "x"
-err "create NoMatch" -- create --name "N" --label "NoMatch" --instruction "x"
-err "create processed (case)" -- create --name "P" --label "processed" --instruction "x"
-err "create NOMATCH (case)" -- create --name "N" --label "NOMATCH" --instruction "x"
-err "update to Processed" -- update "$(id_of 0)" --label "Processed"
-err "update to nomatch (case)" -- update "$(id_of 0)" --label "nomatch"
-ok "look-alikes are still allowed" -- create --name "Processing" --label "Processing" \
-    --instruction "x"
-ok "cleanup look-alike" -- delete "$(id_of -1)"
-
-echo
-echo "--- malformed logical labels are rejected ---"
-err "leading slash" -- create --name "A" --label "/Invoice" --instruction "x"
-err "trailing slash" -- create --name "A" --label "Invoice/" --instruction "x"
-err "double slash" -- create --name "A" --label "Social//Connection" --instruction "x"
-
-echo
-echo "--- migration: older stores load as detection labels ---"
-cat > labels.json <<'JSON'
-[
-  {"id": "aaaa1111", "name": "Invoices", "label": "Invoices", "instruction": "Invoices."},
-  {"id": "bbbb2222", "name": "Social", "label": "IL/Social", "instruction": "Social mail."},
-  {"id": "cccc3333", "name": "Login", "label": "il/Login", "instruction": "Sign-in codes."},
-  {"id": "dddd4444", "name": "Deep", "label": "IL/IL/Odd", "instruction": "Doubly prefixed."}
-]
-JSON
-loaded() { python3 labels.py list | python3 -c "import json,sys;print(json.load(sys.stdin)[$1]['$2'])"; }
-check "typeless entry loads as detection" "$(loaded 0 type)" "detection"
-check "every loaded entry is a detection label" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(len({r["type"] for r in json.load(sys.stdin)}) == 1)')" \
-    "True"
-check "prefixed label normalised on load" "$(loaded 1 label)" "Social"
-check "lowercase prefix normalised on load" "$(loaded 2 label)" "Login"
-check "exactly one prefix removed" "$(loaded 3 label)" "IL/Odd"
-check "ids preserved in order" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(",".join(r["id"] for r in json.load(sys.stdin)))')" \
-    "aaaa1111,bbbb2222,cccc3333,dddd4444"
-check "names preserved" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(",".join(r["name"] for r in json.load(sys.stdin)))')" \
-    "Invoices,Social,Login,Deep"
-check "instructions preserved" "$(loaded 0 instruction)" "Invoices."
-check "list does not rewrite the store" "$(grep -c '"IL/Social"' labels.json)" "1"
-ok "next write persists the migration" -- update cccc3333 --instruction "Sign-in codes only."
-check "type persisted by save" "$(field_of 0 type)" "detection"
-check "all four entries typed on disk" \
-    "$(python3 -c "import json;print(sum(1 for r in json.load(open('labels.json')) if r['type']=='detection'))")" \
-    "4"
-check "no IL/ left on disk" "$(grep -c 'IL/Social' labels.json)" "0"
-check "order preserved on disk" \
-    "$(python3 -c "import json;print(','.join(r['id'] for r in json.load(open('labels.json'))))")" \
-    "aaaa1111,bbbb2222,cccc3333,dddd4444"
-
-echo
-echo "--- save preserves the type ---"
-python3 -c "import labels;labels.save_labels(labels.load_labels())"
-check "load -> save keeps every type" \
-    "$(python3 -c "import json;print(sorted({r['type'] for r in json.load(open('labels.json'))}))")" \
-    "['detection']"
-check "load -> save keeps the count" \
-    "$(python3 -c "import json;print(len(json.load(open('labels.json'))))")" "4"
-
-echo
-echo "--- existing CRUD behaviour is intact ---"
-rm -f labels.json
-ok "create first" -- create --name "Invoice" --label "Invoice" --instruction "An invoice."
-ok "create second" -- create --name "News" --label "News" --instruction "Newsletters."
-ID=$(id_of 1)
-ok "update by id" -- update "$ID" --label "Newsletter"
-check "update applied" "$(field_of 1 label)" "Newsletter"
-ok "delete by id" -- delete "$ID"
-err "update by name is rejected" -- update News --instruction "x"
-err "delete by name is rejected" -- delete News
-err "unknown id" -- delete deadbeef
-err "empty name" -- create --name " " --label "X" --instruction "x"
-err "empty label" -- create --name "X" --label " " --instruction "x"
-err "empty instruction" -- create --name "X" --label "X" --instruction ""
-err "duplicate name" -- create --name "invoice" --label "Dup" --instruction "x"
-err "nothing to update" -- update "$(id_of 0)"
 
 echo
 printf '%s passed, %s failed\n' "$pass" "$fail"
