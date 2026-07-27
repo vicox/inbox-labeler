@@ -19,15 +19,27 @@ and how Claude should decide whether an email matches.
 
 ```
 .claude/skills/inbox-labeler/
-├── SKILL.md              instructions Claude follows
-├── label_requests.py     the CRUD implementation (Python 3 stdlib, no dependencies)
-└── label-requests.json   the store; created automatically if missing
+├── SKILL.md                      instructions Claude follows
+├── label_requests.py             the CRUD implementation (Python 3 stdlib, no dependencies)
+├── label-requests.example.json   documentation only, never read at runtime
+└── label-requests.json           the store — local, gitignored, created on first use
 README.md
-docs/working/             the original build instruction
+docs/working/                     the original build instruction
 ```
 
 Everything the skill needs lives in its own directory. Labels always live under the
 `IL/` namespace so Inbox Labeler never touches labels it did not create.
+
+## Your label requests stay local
+
+`label-requests.json` is user-specific state and is **not** committed — it is listed in
+`.gitignore`. The repository holds only source, documentation and the example file.
+
+Nothing needs to be set up: the first `list` or `create` writes an empty
+`label-requests.json` if none exists. `label-requests.example.json` is there to show the
+file's shape and to give a feel for useful instructions; it is never read at runtime, and
+deleting it changes nothing. Copy it over your store only if you want those examples as a
+starting point.
 
 ## How the skill is loaded
 
@@ -65,15 +77,19 @@ they are connected; nothing runs on a schedule — you trigger it.
 
 ## Processing state
 
-Inbox processing tracks its own state with the Gmail label `IL/Processed`:
+Inbox processing works on individual **messages**, not threads, and tracks its own state
+with the Gmail label `IL/Processed`:
 
-- candidate messages are inbox messages **without** `IL/Processed`
-- every label request is evaluated against each of them
+- a message is in scope when it is in the inbox, unread, and has no `IL/Processed`
+- the complete result set is processed — pagination is followed until there is no next
+  page, with no cap and no confirmation prompt for large runs
+- every label request is evaluated against every in-scope message
 - all matching labels are applied
-- `IL/Processed` is applied last, only after evaluation succeeded — so an interrupted or
-  failed run leaves the message to be picked up again
+- `IL/Processed` is applied last, only after evaluation against all requests succeeded — so
+  an interrupted or failed run leaves the message to be picked up again
 
-Read/unread status is not used as processing state, and read status is never changed.
+Unread is only a scope filter: the unread state is never changed, and it is never used as
+the processing state.
 
 ## Run it directly
 

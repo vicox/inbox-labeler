@@ -1,1 +1,4 @@
 .claude/settings.local.json
+
+# user-specific label requests; created automatically on first use
+.claude/skills/inbox-labeler/label-requests.json
