@@ -41,6 +41,24 @@ it is a connection request, and the user treats it as important. If the user kee
 requests for all three aspects, the message carries `IL/Social`, `IL/Connection` and
 `IL/Important` together.
 
+## System labels
+
+Inbox Labeler owns two labels of its own. They are internal state, not aspects of a message:
+
+| Label | Meaning |
+| --- | --- |
+| `IL/Processed` | Inbox Labeler has finished evaluating this message. |
+| `IL/NoMatch` | None of the current label requests matched this message. |
+
+`IL/Processed` records **processing state** — that the work happened. `IL/NoMatch` records
+the **outcome** of that work — that the evaluation produced no matches. They serve different
+purposes and are applied independently of one another.
+
+Every other `IL/` label comes from a label request and describes something about the message
+itself; those are the **business labels**. Both system labels are reserved and the CLI
+rejects them as a `label` value on create and on update. If a user asks for one of them,
+explain that the name is taken by Inbox Labeler's own state and agree on a different label.
+
 ## Storage
 
 Label requests are stored in `label-requests.json` in this skill's directory. The file is
@@ -88,6 +106,9 @@ Guidance:
   The breadth is theirs to choose, so do not push toward finer or coarser requests.
 - If the user gives a label without the `IL/` prefix, prepend it (`Invoices` → `IL/Invoices`).
   The CLI rejects labels outside that namespace.
+- `IL/Processed` and `IL/NoMatch` are reserved system labels; the CLI rejects them on create
+  and on update. If a user asks for one, explain that Inbox Labeler uses it for its own state
+  and agree on a different label rather than retrying.
 - Before deleting, confirm which request is meant if the reference is ambiguous.
 - After a successful change, report the resulting label request back to the user.
 
@@ -113,13 +134,15 @@ Labeler"). There is no scheduler and nothing runs in the background.
 A **message** is the unit of work — never a thread. A message is in scope when it is
 all three of: in the inbox, unread, and without `IL/Processed`.
 
-`IL/Processed` is the processing state: a message carries it once Inbox Labeler has
-finished evaluating it. Unread is only a scope filter — **never change the unread state**
-(no marking as read) and never treat unread as the processing state.
+Both system labels are written during processing: `IL/Processed` records that the message was
+evaluated, and `IL/NoMatch` records that the evaluation produced no matches. Unread is only a
+scope filter — **never change the unread state** (no marking as read) and never treat unread
+as the processing state.
 
 1. Run `python3 label_requests.py list`. If it is empty, say so and stop.
-2. Run `list_labels` and note the ids of `IL/Processed` and of every request's label.
-   Create any that are missing with `create_label` (the `IL` parent is created automatically).
+2. Run `list_labels` and note the ids of `IL/Processed`, `IL/NoMatch` and every request's
+   label. Create any that are missing with `create_label` (the `IL` parent is created
+   automatically).
 3. Find candidate threads with `search_threads`, query
    `in:inbox is:unread -label:<IL/Processed id>` — pass the label *id*, not the display
    name. If you just created `IL/Processed`, `in:inbox is:unread` is equivalent. Use
@@ -137,13 +160,20 @@ finished evaluating it. Unread is only a scope filter — **never change the unr
    one independently, keeping the ones whose aspect is present. Subject, sender and snippet
    are usually enough; use the full body from `get_thread` when they are not. The result is
    the complete set of triggered label requests — empty, one, several, or all.
-7. Apply that set with `label_message`: the label of every triggered request, then
-   `IL/Processed` last. Add `IL/Processed` once the message has been evaluated against every
-   label request and every triggered label has been applied; if evaluation is incomplete or a
-   labelling call fails, leave it off so the message is picked up again on the next run.
-8. Report a short summary: how many messages were processed, which message got which labels
-   and why, which triggered nothing (and are now processed), and anything you were unsure
-   about instead of guessing silently.
+7. Apply the outcome with `label_message`, which branch depending on whether the set is
+   empty:
+   - **At least one label request triggered** — apply the business label of every triggered
+     request, then `IL/Processed`. If the message still carries `IL/NoMatch` from an earlier
+     run, remove it with `unlabel_message`: the message has matches now, so that outcome no
+     longer holds.
+   - **No label request triggered** — apply `IL/NoMatch`, then `IL/Processed`.
+   In both branches `IL/Processed` goes on last, once the message has been evaluated against
+   every label request and its outcome labels have been applied. If evaluation is incomplete
+   or a labelling call fails, leave `IL/Processed` off so the message is picked up again on
+   the next run.
+8. Report a short summary: how many messages were processed, which message got which business
+   labels and why, which got `IL/NoMatch`, and anything you were unsure about instead of
+   guessing silently.
 
 Rules while processing:
 
@@ -151,7 +181,11 @@ Rules while processing:
   that message, and each one that triggers contributes its label. A message that triggers six
   requests gets six labels; how many labels a message ends up with is simply how many of the
   user's label requests found their aspect in it.
-- Only ever add `IL/` labels. Do not remove labels, archive, mark as read, delete, or
+- **`IL/NoMatch` and business labels never coexist.** A processed message carries either at
+  least one business label or `IL/NoMatch`, never both — the outcome is one or the other.
+- Only ever add `IL/` labels, with a single exception: `IL/NoMatch` may be removed from a
+  message that now has matches. That is the only label Inbox Labeler ever takes off a
+  message. Do not remove anything else, and do not archive, mark as read, delete, or
   reply — labelling is the entire job.
 - Work through the entire result set, however large, and label each message with everything
   it triggered. Neither a long list of messages nor a long list of labels on one message

@@ -24,6 +24,13 @@ from pathlib import Path
 STORE = Path(__file__).resolve().parent / "label-requests.json"
 LABEL_NAMESPACE = "IL/"
 
+# Inbox Labeler's own labels: processing state and evaluation outcome. A label
+# request may never write one of these, so they are rejected as `label` values.
+RESERVED_LABELS = {
+    "IL/Processed": "Inbox Labeler's processing state",
+    "IL/NoMatch": "Inbox Labeler's evaluation outcome",
+}
+
 
 class ValidationError(Exception):
     pass
@@ -78,6 +85,12 @@ def validate(name, label, instruction, label_requests, own_id=None):
         raise ValidationError(
             "label must use the %s namespace, e.g. %sNewsletter" % (LABEL_NAMESPACE, LABEL_NAMESPACE)
         )
+    for reserved, purpose in RESERVED_LABELS.items():
+        if label.lower() == reserved.lower():
+            raise ValidationError(
+                "%s is reserved for %s and cannot be used as a label request's label"
+                % (reserved, purpose)
+            )
     if not instruction:
         raise ValidationError("instruction must not be empty")
 
@@ -145,7 +158,11 @@ def main(argv=None):
 
     create = sub.add_parser("create", help="create a label request")
     create.add_argument("--name", required=True)
-    create.add_argument("--label", required=True, help="Gmail label, must start with IL/")
+    create.add_argument(
+        "--label",
+        required=True,
+        help="Gmail label, must start with IL/ and must not be a reserved system label",
+    )
     create.add_argument("--instruction", required=True, help="how Claude decides whether an email matches")
 
     update = sub.add_parser("update", help="update a label request")

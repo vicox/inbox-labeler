@@ -60,6 +60,30 @@ docs/working/                     the original build instruction
 Everything the skill needs lives in its own directory. Labels always live under the
 `IL/` namespace so Inbox Labeler never touches labels it did not create.
 
+## System labels
+
+Two labels in that namespace belong to Inbox Labeler itself rather than to any label request:
+
+| Label | Meaning |
+| --- | --- |
+| `IL/Processed` | Inbox Labeler has finished evaluating this message. |
+| `IL/NoMatch` | None of the current label requests matched this message. |
+
+They serve different purposes. `IL/Processed` records **processing state** — that the work
+happened. `IL/NoMatch` records the **outcome** — that the evaluation found nothing. A message
+that was processed and matched nothing carries both; a message that matched something carries
+`IL/Processed` alongside its business labels. `IL/NoMatch` and business labels never coexist
+on a message — the outcome is one or the other.
+
+Every other `IL/` label comes from a label request and says something about the message
+itself — those are the **business labels**. The two system labels are reserved, and
+`label_requests.py` rejects them as a `label` value on both create and update.
+
+`IL/NoMatch` is what makes an empty result visible. Without it, a message that matched
+nothing looks exactly like a message that was never processed once you stop looking at
+`IL/Processed` — with it, you can search `label:IL/NoMatch` to see what your current label
+requests are missing, which is the fastest way to spot a gap worth a new label request.
+
 ## Your label requests stay local
 
 `label-requests.json` is user-specific state and is **not** committed — it is listed in
@@ -105,10 +129,10 @@ Then say things like "add a label request for invoices", "list my label requests
 "process my inbox with Inbox Labeler". Inbox processing uses Claude's Gmail tools when
 they are connected; nothing runs on a schedule — you trigger it.
 
-## Processing state
+## How processing works
 
-Inbox processing works on individual **messages**, not threads, and tracks its own state
-with the Gmail label `IL/Processed`:
+Inbox processing works on individual **messages**, not threads, and records both its state
+and its outcome with the two system labels:
 
 - a message is in scope when it is in the inbox, unread, and has no `IL/Processed`
 - the complete result set is processed — pagination is followed until there is no next
@@ -117,9 +141,18 @@ with the Gmail label `IL/Processed`:
   independently
 - the result per message is the complete set of triggered label requests, and every one of
   their labels is applied
-- `IL/Processed` is applied last, once every label request has been evaluated and every
-  triggered label applied — so an interrupted or failed run leaves the message to be picked
-  up again
+
+What happens then depends on whether anything triggered:
+
+| Outcome | Labels applied |
+| --- | --- |
+| at least one label request triggered | every triggered business label, then `IL/Processed`; `IL/NoMatch` is removed if an earlier run left it there |
+| nothing triggered | `IL/NoMatch`, then `IL/Processed` |
+
+`IL/Processed` always goes on last, once every label request has been evaluated and the
+outcome labels are in place — so an interrupted or failed run leaves the message to be picked
+up again. `IL/NoMatch` is the only label Inbox Labeler ever removes, and only from a message
+that has matches now.
 
 Unread is only a scope filter: the unread state is never changed, and it is never used as
 the processing state.
@@ -142,14 +175,14 @@ the id belonging to a name. Every command prints JSON; on a validation failure i
 
 ## Test it
 
-There is no test framework — check the behaviour from the shell:
+There is no test framework — check the behaviour from the shell. Run it in a scratch copy so
+your own store stays untouched:
 
 ```bash
-cd .claude/skills/inbox-labeler
+mkdir -p /tmp/il-test && cp .claude/skills/inbox-labeler/label_requests.py /tmp/il-test/
+cd /tmp/il-test
 
-# starts from a clean store
-rm -f label-requests.json
-python3 label_requests.py list                                   # [] and recreates the file
+python3 label_requests.py list                                   # [] and creates the file
 
 python3 label_requests.py create --name "Invoices" --label "IL/Invoices" --instruction "Invoices."
 python3 label_requests.py create --name "News" --label "IL/News" --instruction "Newsletters."
@@ -167,6 +200,18 @@ python3 label_requests.py create --name "invoices" --label "IL/Dup" --instructio
 python3 label_requests.py delete Invoices                                          # name, not an id
 python3 label_requests.py delete deadbeef                                          # unknown id
 python3 label_requests.py update "$ID"                                            # nothing to update
+
+# reserved system labels are rejected on create and on update, in any casing
+python3 label_requests.py create --name "P" --label "IL/Processed" --instruction "x"
+python3 label_requests.py create --name "N" --label "IL/NoMatch"   --instruction "x"
+python3 label_requests.py create --name "P" --label "IL/processed" --instruction "x"
+ID2=$(python3 -c "import json;print(json.load(open('label-requests.json'))[0]['id'])")
+python3 label_requests.py update "$ID2" --label "IL/Processed"
+python3 label_requests.py update "$ID2" --label "IL/NoMatch"
+
+# labels that merely resemble the reserved ones are fine
+python3 label_requests.py create --name "Q" --label "IL/Processing" --instruction "x"
+python3 label_requests.py create --name "R" --label "IL/NoMatches"  --instruction "x"
 ```
 
 ## Scope
