@@ -3,8 +3,8 @@
 A Claude Agent Skill for keeping persistent **label requests** and applying them to
 Gmail inbox mail on demand.
 
-A label request names one aspect of a message, the question that detects it, and the Gmail
-label that shows the answer.
+A label request names the aspect of a message it detects, how to detect it, and the Gmail
+label to apply when that aspect is present.
 
 ```json
 {
@@ -15,47 +15,35 @@ label that shows the answer.
 }
 ```
 
-## One job per label request
+## What a label request is
 
-A label request has exactly one job:
+> A user-defined way to detect an aspect of a message that is interesting to the user.
 
-> **Detect one specific aspect of a message.**
+That aspect can be as broad or as narrow as you like. `IL/Social` for everything from a
+social platform is a perfectly good label request; so is `IL/Connection` for connection
+requests specifically. You can have both. Your choice of label requests *is* the model —
+Inbox Labeler has no opinion on how fine-grained they should be.
 
-It asks exactly one question about the message, and its Gmail label is the visible answer.
-This is the central design principle of Inbox Labeler:
+What matters is how label requests behave together:
 
-- **One responsibility each.** One label request, one aspect, one question, one label.
-- **Independent evaluation.** Each label request is evaluated on its own. Its answer
-  depends on two things only: the message, and its own instruction.
-- **Every trigger produces a label.** Each label request whose aspect is present
-  contributes its label to the message.
+- **Independent.** Each label request is evaluated on its own. Whether it triggers depends
+  on two things only: the message, and its own instruction.
 - **Any number may trigger.** A message triggers as many label requests as have their
   aspect present — none, one, several, or all of them.
-- **The result is a set.** For a given message the outcome is the complete set of triggered
-  label requests, and the labels applied are exactly that set.
+- **Every trigger produces a label.** Each label request whose aspect is present
+  contributes its Gmail label to the message.
+- **Additive, not alternatives.** For a given message the outcome is the complete set of
+  triggered label requests, and the labels applied are exactly that set.
 
 A LinkedIn connection request, for example, carries several aspects at once: it is social
-mail, it is a connection request, and you treat it as important. Three label requests ask
-those three questions, all three answer yes, so the message carries `IL/Social`,
-`IL/Connection` and `IL/Important`.
+mail, it is a connection request, and you treat it as important. If you keep label requests
+for all three aspects, the message carries `IL/Social`, `IL/Connection` and `IL/Important`
+together.
 
-## Keep label requests small
-
-Aim for many small, focused label requests rather than a few large ones. When you want
-another aspect detected, add a label request for it instead of making an existing one carry
-more meaning. Prefer three sharp questions:
-
-- `IL/Invoice` — the message is an invoice
-- `IL/Stripe` — the message comes from Stripe
-- `IL/Reminder` — the message is a reminder about something due
-
-over one request trying to encode all three concerns. A Stripe invoice reminder then
-triggers all three and carries all three labels, and each label stays meaningful on its own:
-`IL/Stripe` still finds everything from Stripe, whether or not it is an invoice.
-
-Aspects that usually appear together still deserve separate requests — each one answers its
-own question, and each adds its own label. Two requests are the same request only when they
-ask the same question, i.e. the same purpose and essentially the same instruction.
+The same holds at any breadth. Someone with `IL/Invoice`, `IL/Stripe` and `IL/Reminder` sees
+all three land on a Stripe invoice reminder. Someone who prefers a single `IL/Billing`
+request covering the same ground gets that one label instead. Both work the same way: every
+label request that triggers adds its label, and none of them displaces another.
 
 ## Layout
 
@@ -125,7 +113,7 @@ with the Gmail label `IL/Processed`:
 - a message is in scope when it is in the inbox, unread, and has no `IL/Processed`
 - the complete result set is processed — pagination is followed until there is no next
   page, with no cap and no confirmation prompt for large runs
-- every message goes through the full list of label requests, each one answered
+- every message goes through the full list of label requests, each one decided
   independently
 - the result per message is the complete set of triggered label requests, and every one of
   their labels is applied

@@ -6,41 +6,40 @@ description: Manage persistent Gmail label requests (name + IL/ label + matching
 # Inbox Labeler
 
 Inbox Labeler keeps a list of **label requests**. Each one names the aspect of a message
-it detects and the Gmail label that shows the answer:
+it detects and the Gmail label to apply when that aspect is present:
 
 | Field | Meaning |
 | --- | --- |
 | `id` | stable identifier, generated on create — the only handle for updates and deletes |
 | `name` | short human name for the aspect, e.g. `Invoices` |
 | `label` | Gmail label applied when the aspect is present, always inside the `IL/` namespace, e.g. `IL/Invoices` |
-| `instruction` | the one question you answer about a message, in natural language |
+| `instruction` | how you decide whether that aspect is present in a message, in natural language |
 
-## One job per label request
+## What a label request is
 
-A label request has exactly one job:
+> A user-defined way to detect an aspect of a message that is interesting to the user.
 
-> **Detect one specific aspect of a message.**
+The aspect may be broad or narrow — that is entirely the user's choice, and both are equally
+valid. `IL/Social` covering everything from a social platform is a good label request; so is
+`IL/Connection` for connection requests alone; so is a user keeping both. The set of label
+requests the user has defined *is* the model. Have no opinion about how fine-grained it
+should be.
 
-It asks exactly one question about the message, and its Gmail label is the visible answer.
-This is the central design principle of Inbox Labeler:
+What the design does fix is how label requests behave together:
 
-- **One responsibility each.** One label request, one aspect, one question, one label.
-- **Independent evaluation.** Each label request is evaluated on its own. Its answer
-  depends on two things only: the message, and its own instruction.
-- **Every trigger produces a label.** Each label request whose aspect is present
-  contributes its label to the message.
+- **Independent.** Evaluate each label request on its own. Whether it triggers depends on
+  two things only: the message, and its own instruction.
 - **Any number may trigger.** A message triggers as many label requests as have their
   aspect present — none, one, several, or all of them.
-- **The result is a set.** For a given message the outcome is the complete set of triggered
-  label requests, and the labels applied are exactly that set.
+- **Every trigger produces a label.** Each label request whose aspect is present
+  contributes its label to the message.
+- **Additive, not alternatives.** For a given message the outcome is the complete set of
+  triggered label requests, and the labels applied are exactly that set.
 
 Example: a LinkedIn connection request carries several aspects at once. It is social mail,
-it is a connection request, and the user treats it as important. Three label requests ask
-those three questions, all three answer yes, so the message carries `IL/Social`,
-`IL/Connection` and `IL/Important`.
-
-When another aspect of a message is worth seeing, that is a new label request — each one
-stays focused on the single question it was created to answer.
+it is a connection request, and the user treats it as important. If the user keeps label
+requests for all three aspects, the message carries `IL/Social`, `IL/Connection` and
+`IL/Important` together.
 
 ## Storage
 
@@ -79,36 +78,28 @@ Every command prints JSON; on failure it prints `{"error": "..."}` and exits non
 
 Guidance:
 
-- Ask for anything missing rather than inventing it. A precise instruction names the one
-  aspect being detected, so the request has a clear question to answer. Wording that
-  sharpens that one aspect belongs in the instruction ("invoices, but not payment
-  reminders"). Each request describes its own aspect and leaves the other requests to
-  describe theirs.
-- Give each new request a single question to answer. When the user describes two aspects in
-  one breath, offer to create two label requests, one per aspect.
+- Ask for anything missing rather than inventing it. A precise instruction describes the
+  aspect being detected clearly enough to decide on a real message — at whatever breadth the
+  user intends. Wording that sharpens that aspect belongs in the instruction ("invoices, but
+  not payment reminders"); each request describes its own aspect and leaves the other
+  requests to describe theirs.
+- Take the aspect as the user frames it. If they describe something broad, keep it broad; if
+  they describe several things they want as separate labels, create one request per label.
+  The breadth is theirs to choose, so do not push toward finer or coarser requests.
 - If the user gives a label without the `IL/` prefix, prepend it (`Invoices` → `IL/Invoices`).
   The CLI rejects labels outside that namespace.
 - Before deleting, confirm which request is meant if the reference is ambiguous.
 - After a successful change, report the resulting label request back to the user.
 
-### Many small label requests
+### Adding a label request to an existing set
 
-Aim for a collection of small, focused label requests rather than a few large ones. Each
-one detects a single aspect, so aspects that often appear together still get their own
-request:
+When the user wants another aspect detected, create a label request for it. Existing requests
+keep their instructions unchanged and the new one takes its place beside them — because
+labelling is additive, adding a request never requires adjusting the others.
 
-- `IL/Invoice` — the message is an invoice
-- `IL/Stripe` — the message comes from Stripe
-- `IL/Reminder` — the message is a reminder about something due
-
-A Stripe invoice reminder triggers all three and carries all three labels. That is the
-design working as intended: three questions, three independent answers, three labels.
-
-So when the user wants a new aspect detected, create a new label request for it. Existing
-requests keep their own question unchanged, and the new one adds its own answer alongside
-them. Two requests are the same request only when they ask the same question — the same
-purpose and essentially the same instruction. Requests that frequently land on the same mail
-while detecting different aspects are each doing their own job, and both belong in the list.
+Requests that frequently land on the same mail while detecting different aspects are each
+doing their own job, and both belong in the list. Two requests are the same request only when
+they detect the same aspect — the same purpose and essentially the same instruction.
 
 Names are unique (case-insensitive), so a create can fail on a name collision. That is a
 naming clash about the `name` field alone: offer a different name, or ask whether the
@@ -142,10 +133,10 @@ finished evaluating it. Unread is only a scope filter — **never change the unr
    inbox, unread, and lack the `IL/Processed` id in `labelIds`. Gmail returns a whole thread
    when any one of its messages matches, so a result can mix in-scope and out-of-scope
    messages — check every message and skip the ones that do not qualify.
-6. For each in-scope message, work through the whole list of label requests and answer each
-   one's question independently, keeping the ones that answer yes. Subject, sender and
-   snippet are usually enough; use the full body from `get_thread` when they are not. The
-   result is the complete set of triggered label requests — empty, one, several, or all.
+6. For each in-scope message, work through the whole list of label requests and decide each
+   one independently, keeping the ones whose aspect is present. Subject, sender and snippet
+   are usually enough; use the full body from `get_thread` when they are not. The result is
+   the complete set of triggered label requests — empty, one, several, or all.
 7. Apply that set with `label_message`: the label of every triggered request, then
    `IL/Processed` last. Add `IL/Processed` once the message has been evaluated against every
    label request and every triggered label has been applied; if evaluation is incomplete or a
@@ -156,10 +147,10 @@ finished evaluating it. Unread is only a scope filter — **never change the unr
 
 Rules while processing:
 
-- **Every message goes through the full list.** Each label request gets its own answer for
-  that message, and each yes contributes its label. A message that triggers six requests
-  gets six labels; the count of labels a message ends up with is simply the number of
-  aspects it has.
+- **Every message goes through the full list.** Each label request gets its own decision for
+  that message, and each one that triggers contributes its label. A message that triggers six
+  requests gets six labels; how many labels a message ends up with is simply how many of the
+  user's label requests found their aspect in it.
 - Only ever add `IL/` labels. Do not remove labels, archive, mark as read, delete, or
   reply — labelling is the entire job.
 - Work through the entire result set, however large, and label each message with everything
