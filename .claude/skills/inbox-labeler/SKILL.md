@@ -13,8 +13,10 @@ Gmail label to apply when that aspect is present:
 | `id` | stable identifier, generated on create — the only handle for get, update and delete |
 | `name` | short human name for the aspect, e.g. `Invoice` |
 | `label` | **logical** label, stored without a prefix, e.g. `Invoice` — resolves to the Gmail label `IL/Invoice` |
-| `type` | how the label decides whether it applies. Today always `detection` |
+| `type` | how the label decides whether it applies: `detection` or `derived` |
 | `instruction` | how you decide whether that aspect is present in a message, in natural language |
+| `required_labels` | *derived only* — detection labels that must all have matched before this label is evaluated |
+| `recommended_labels` | *derived only* — detection labels offered as context when they matched |
 
 `label` holds the logical label only. `IL/` is Inbox Labeler's Gmail namespace — plumbing,
 not part of a label's identity — so it never appears in stored configuration and is added
@@ -24,18 +26,55 @@ remove one, compare one against a message's labels, or name one in output.
 
 ## Label types
 
-`type` is the label's kind. **`detection` is the only type that exists today**, and every
-stored label has it.
+`type` is the label's kind. There are two, and both produce a Gmail label the same way — the
+only difference is how they decide.
 
-| Type | What it does |
+| Type | Question it answers |
 | --- | --- |
-| `detection` | inspects an email directly and decides whether its Gmail label applies |
+| `detection` | *What can I directly observe in this email?* |
+| `derived` | *Given the email and the detection labels that matched, what does this mean?* |
 
-A label with `type: detection` is a **detection label**. Everything below describes detection
-labels, because they are all there is. The field exists so other kinds — a `derived` type is
-the expected next one — can be added later without changing how labels are stored or managed.
-Until such a type exists, treat any label the user describes as a detection label, and do not
-invent types: the CLI rejects anything other than `detection`.
+**Detection labels recognise facts. Derived labels interpret those facts.**
+
+A detection label reads the email and decides. `Invoice`, `Newsletter`, `Login`,
+`LargeAmount` are detection labels.
+
+A derived label does **not** rediscover the email from scratch. It reads the email *together
+with the detection labels that already matched* and decides what that combination means:
+
+```text
+Email
+  ↓
+Detection labels:  Invoice, LargeAmount
+  ↓
+Derived label:     LargePaymentNeedsAttention
+```
+
+```text
+Email
+  ↓
+Detection labels:  TravelBooking, FlightCancellation
+  ↓
+Derived label:     TravelDisruption
+```
+
+The email is still available when a derived label is evaluated. The detection labels are
+structured context that makes the decision easier and more consistent — use them as given
+facts rather than re-deriving them.
+
+A derived label names the detection labels it builds on:
+
+- **`required_labels`** — every one of them must have matched, or the derived label is not
+  evaluated at all for that message. This is the gate.
+- **`recommended_labels`** — helpful context. Include them in the prompt when they matched;
+  when they did not, evaluate the derived label anyway.
+
+Both hold **logical labels** (`LargeAmount`, not `IL/LargeAmount`), both may be empty, and both
+may only point at detection labels. A derived label with no `required_labels` is evaluated for
+every message. Derived labels never reference other derived labels — there is no chaining, and
+the CLI rejects it.
+
+The CLI rejects any type other than `detection` and `derived`. Do not invent a third.
 
 ## What a label is
 
@@ -73,21 +112,29 @@ Every kind of Gmail label Inbox Labeler works with lives inside it:
 
 | Kind | Origin | Logical label | Gmail label |
 | --- | --- | --- | --- |
-| **business labels** | the `label` of a detection label | `Invoice`, `Social` | `IL/Invoice`, `IL/Social` |
-| **case labels** | future label kind, not part of this version | — | — |
+| **business labels** | the `label` of a detection or derived label | `Invoice`, `LargePaymentNeedsAttention` | `IL/Invoice`, `IL/LargePaymentNeedsAttention` |
 | **bucket labels** | future label kind, not part of this version | — | — |
 | **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
+
+Both label types produce business labels; nothing in Gmail distinguishes a derived label's
+output from a detection label's.
 
 The two system labels:
 
 | Gmail label | Meaning |
 | --- | --- |
 | `IL/Processed` | Inbox Labeler has finished evaluating this message. |
-| `IL/NoMatch` | None of the current labels matched this message. |
+| `IL/NoMatch` | No **detection** label matched this message. |
 
 `IL/Processed` records **processing state** — that the work happened. `IL/NoMatch` records
-the **outcome** of that work — that the evaluation produced no matches. They serve different
-purposes and are applied independently of one another.
+the **outcome** of detection — that no detection label matched. They serve different purposes
+and are applied independently of one another.
+
+`IL/NoMatch` is about detection only, and is decided before derived labels are evaluated. So a
+message can carry `IL/NoMatch` together with a derived business label, in the one case where
+that is possible: a derived label with no `required_labels` triggering on a message no detection
+label matched. That is rare and it is correct — detection found nothing, interpretation found
+something.
 
 Because these two occupy `IL/Processed` and `IL/NoMatch`, the logical labels `Processed` and
 `NoMatch` are reserved: the CLI rejects them on create and on update, case-insensitively. If a
@@ -117,11 +164,20 @@ python3 labels.py list
 # show one label
 python3 labels.py get 8da8071c
 
-# create a label — --type defaults to detection, the only type today
+# create a detection label — --type defaults to detection
 python3 labels.py create \
   --name "Invoice" \
   --label "Invoice" \
   --instruction "The message is an invoice or bill for a purchase or service."
+
+# create a derived label — repeat the reference flags for several labels
+python3 labels.py create \
+  --name "LargePaymentNeedsAttention" \
+  --label "LargePaymentNeedsAttention" \
+  --type derived \
+  --instruction "A payment this large should be looked at before it is due." \
+  --required-label "LargeAmount" \
+  --recommended-label "Invoice"
 
 # update a label — pass only the fields that change
 python3 labels.py update 8da8071c --instruction "Invoices and receipts, but not payment reminders."
@@ -155,8 +211,21 @@ Guidance:
   Labeler's own `IL/Processed` and `IL/NoMatch`. The CLI rejects them on create and on update,
   in any casing. If a user asks for one, explain that Inbox Labeler uses it for its own state
   and agree on a different label rather than retrying.
-- Leave `--type` alone unless the user names a type. It defaults to `detection` and appears in
-  the output either way, so the kind is never hidden.
+- Leave `--type` alone unless the label interprets other labels. It defaults to `detection` and
+  appears in the output either way, so the kind is never hidden. Reach for `--type derived`
+  when the user describes a conclusion drawn *from* other labels ("when it's an invoice and
+  the amount is large, flag it") rather than something observable in the mail itself.
+- `--required-label` and `--recommended-label` are repeatable and take logical labels. On
+  update they replace the stored list rather than adding to it; passing an empty value clears
+  it. Both reject anything that is not an existing detection label, so create the detection
+  labels first.
+- **A label's type is immutable.** `update` refuses to turn a detection label into a derived one
+  or the other way round. If the user wants the other kind, create a new label — and ask before
+  deleting the old one, since its Gmail label disappears from their mail on the next reprocess.
+- **A detection label cannot be deleted while a derived label references it.** `delete` refuses
+  and names the derived labels involved. Nothing is cleaned up automatically: either update
+  those derived labels to drop the reference, or delete them first. Tell the user which choice
+  they are making rather than picking for them.
 - Before deleting, confirm which label is meant if the reference is ambiguous.
 - After a successful change, report the resulting label back to the user.
 
@@ -184,7 +253,19 @@ background. Two commands exist:
 | "process my inbox" | **process** | unread inbox messages **without** `IL/Processed` — new mail only |
 | "reprocess my inbox" | **reprocess** | **every** unread inbox message, including those already processed |
 
-Only detection labels participate in processing, which today means all of them.
+Both commands run the same two stages per message — **detection first, then derived**:
+
+```text
+Email
+  ↓
+Detection labels
+  ↓
+IL/NoMatch          (when no detection label matched)
+  ↓
+Derived labels
+  ↓
+IL/Processed        (last, always)
+```
 
 `process` is the everyday run: it looks at mail Inbox Labeler has not seen yet and leaves
 already-processed messages alone. `reprocess` re-evaluates everything against the current set
@@ -220,24 +301,27 @@ change the unread state** (no marking as read) and never treat unread as the pro
    inbox, unread, and lack the `IL/Processed` id in `labelIds`. Gmail returns a whole thread
    when any one of its messages matches, so a result can mix in-scope and out-of-scope
    messages — check every message and skip the ones that do not qualify.
-6. For each in-scope message, work through the whole list of detection labels and decide each
-   one independently, keeping the ones whose aspect is present. Subject, sender and snippet
-   are usually enough; use the full body from `get_thread` when they are not. The result is
-   the complete set of triggered labels — empty, one, several, or all.
-7. Apply the outcome with `label_message`, which branch depending on whether the set is
-   empty:
-   - **At least one label triggered** — apply the resolved business label of every triggered
-     label, then `IL/Processed`. If the message still carries `IL/NoMatch` from an earlier run,
-     remove it with `unlabel_message`: the message has matches now, so that outcome no longer
-     holds.
-   - **No label triggered** — apply `IL/NoMatch`, then `IL/Processed`.
-   In both branches `IL/Processed` goes on last, once the message has been evaluated against
-   every label and its outcome labels have been applied. If evaluation is incomplete or a
-   labelling call fails, leave `IL/Processed` off so the message is picked up again on the
-   next run.
-8. Report a short summary: how many messages were processed, which message got which business
-   labels and why, which got `IL/NoMatch`, and anything you were unsure about instead of
-   guessing silently.
+6. **Detection stage.** For each in-scope message, work through the whole list of detection
+   labels and decide each one independently, keeping the ones whose aspect is present. Subject,
+   sender and snippet are usually enough; use the full body from `get_thread` when they are not.
+   The result is the complete set of triggered detection labels — empty, one, several, or all.
+   Note one short reason per match: that is the **evidence**, and the derived stage needs it.
+7. Apply the detection outcome with `label_message`, which branch depending on whether the set
+   is empty:
+   - **At least one detection label triggered** — apply the resolved business label of every
+     triggered label. If the message still carries `IL/NoMatch` from an earlier run, remove it
+     with `unlabel_message`: detection found matches now, so that outcome no longer holds.
+   - **No detection label triggered** — apply `IL/NoMatch`.
+8. **Derived stage.** Evaluate every derived label against the message, using the detection
+   result as context — see [The derived-label prompt](#the-derived-label-prompt). Apply the
+   resolved business label of each derived label that triggered. Skip a derived label whose
+   `required_labels` did not all match; that is not a failure, it simply does not apply here.
+9. Apply `IL/Processed` last, once both stages finished and every business label is in place.
+   If either stage is incomplete or a labelling call fails, leave `IL/Processed` off so the
+   message is picked up again on the next run.
+10. Report a short summary: how many messages were processed, which message got which business
+    labels and why, which got `IL/NoMatch`, and anything you were unsure about instead of
+    guessing silently. Say which labels came from interpretation when a derived label triggered.
 
 ### reprocess
 
@@ -272,16 +356,19 @@ is being discarded.
    namespace is preserved untouched — Gmail's own labels and anything the user made stay
    exactly as they are. (`labelIds` holds ids, not names, which is why step 2 maps the whole
    namespace: an id you cannot resolve to an `IL/` name is not yours to remove.)
-7. Evaluate the message against every current detection label independently, the same way as
-   `process` step 6. The message now carries no `IL/` labels at all, so judge it purely on its
-   own content — this is a first look, not a review of an earlier decision.
-8. Apply the new business labels with `label_message`: the resolved label of every triggered
-   detection label.
-9. Apply any matching **case labels**, then the resulting **bucket label**. Neither kind exists
-   in this version, so today these steps are no-ops — when they are introduced they slot in
-   here, and step 6 already clears them for free because they live in the namespace.
-10. If no business label matched, apply `IL/NoMatch`.
-11. Apply `IL/Processed` last, once evaluation finished and every outcome label is in place.
+7. **Detection stage.** Evaluate the message against every current detection label
+   independently, the same way as `process` step 6, keeping one line of evidence per match. The
+   message now carries no `IL/` labels at all, so judge it purely on its own content — this is a
+   first look, not a review of an earlier decision.
+8. Apply the detection business labels with `label_message`: the resolved label of every
+   triggered detection label. If no detection label matched, apply `IL/NoMatch`.
+9. **Derived stage.** Evaluate every derived label with the detection result as context, exactly
+   as in `process` step 8, and apply the resolved label of each one that triggered. A derived
+   label whose `required_labels` did not all match is skipped.
+10. Apply any resulting **bucket label**. Bucket labels do not exist in this version, so this
+    step is a no-op today — when they arrive they slot in here, and step 6 already clears them
+    for free because they live in the namespace.
+11. Apply `IL/Processed` last, once both stages finished and every outcome label is in place.
 12. Report a summary: how many messages were re-evaluated, what changed (labels gained, labels
     lost, `IL/NoMatch` set or cleared), what stayed the same, and any message you could not
     complete.
@@ -296,8 +383,63 @@ Failure handling is per message. If a call fails partway through a message, leav
 failure never aborts the run. A message left stripped and without `IL/Processed` is in a safe
 state: the next `process` run picks it up again, because that is precisely its scope.
 
+## The derived-label prompt
+
+When you evaluate a derived label, give yourself exactly four things:
+
+1. **the email** — sender, subject, and enough body to judge
+2. **the detection labels that matched** — only the ones that matched, never the ones that did
+   not
+3. **the evidence** for each of those matches — the one-line reason noted in the detection stage
+4. **the derived label's instruction**
+
+Nothing else. Lay them out in three sections — `Email`, `Detection Results`, `Task`:
+
+```text
+Email
+
+From:    billing@stripe.com
+Subject: Your invoice INV-4021 is due
+Body:    … 1,450.00 EUR due on 12 August …
+
+Detection Results
+
+Invoice
+Evidence: states "invoice INV-4021" with an amount due
+
+LargeAmount
+Evidence: 1,450.00 EUR, over the 100 threshold
+
+Task
+
+Determine whether the following Derived Label applies.
+
+Label:
+LargePaymentNeedsAttention
+
+Instruction:
+A payment this large should be looked at before it is due.
+
+Answer yes or no and explain briefly.
+```
+
+One derived label per prompt, one section per kind of input. `Detection Results` lists only
+labels that matched, each with its evidence; if none matched, the section says so rather than
+listing anything. The brief explanation is the derived label's own evidence — carry it into the
+run summary the same way detection evidence is carried.
+
+Treat the listed detection labels as established facts and reason from them — do not re-check
+whether the email really is an invoice. The email is there for the details the labels do not
+carry, like the due date or who sent it.
+
+Keep each derived label's evaluation independent: one derived label's outcome is never input to
+another. If a derived label needs a fact no detection label provides, the answer is a new
+detection label, not a longer derived instruction.
+
 Rules for both commands:
 
+- **Detection first, derived second, always.** A derived label is never evaluated before the
+  detection stage has finished for that message, because its input is the detection result.
 - **Resolve logical labels once, then stay in Gmail terms.** Every Gmail call and every
   comparison against a message's `labelIds` uses the resolved `IL/…` name, and processing
   output names labels the way the user sees them in Gmail — report `IL/Invoice`, not `Invoice`.
@@ -306,8 +448,8 @@ Rules for both commands:
   that message, and each one that triggers contributes its Gmail label. A message that triggers
   six labels gets six Gmail labels; how many a message ends up with is simply how many of the
   user's labels found their aspect in it.
-- **`IL/NoMatch` and business labels never coexist.** A processed message carries either at
-  least one business label or `IL/NoMatch`, never both — the outcome is one or the other.
+- **`IL/NoMatch` reflects the detection stage.** A processed message carries either at least
+  one detection business label or `IL/NoMatch`, never both. Derived labels do not affect it.
 - **`IL/Processed` is always last and always earned.** Never leave it on a message whose
   evaluation did not complete successfully, in either command.
 - **Removal is confined to the `IL/` namespace.** Inside it, anything may be removed —

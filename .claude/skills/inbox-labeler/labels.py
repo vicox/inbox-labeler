@@ -5,10 +5,11 @@ A label is {id, name, label, type, instruction} and lives in labels.json next
 to this script. Every command prints JSON to stdout and exits non-zero with
 {"error": ...} when something is wrong.
 
-`type` says how a label decides whether it applies. Today the only type is
-`detection`: a detection label inspects an email directly. Another type is
-added by adding an entry to LABEL_TYPES below — the operations in this file do
-not change.
+`type` says how a label decides whether it applies. A `detection` label
+inspects an email directly. A `derived` label interprets the email together
+with the detection labels that matched it, and names those in its
+`required_labels` and `recommended_labels`. Another type is added by adding an
+entry to LABEL_TYPES below — the operations in this file do not change.
 
 `label` holds the *logical* label and is stored without a prefix ("Invoices").
 `IL/` is Inbox Labeler's Gmail namespace — infrastructure, not part of a
@@ -18,8 +19,10 @@ label resolves to `IL/Invoices`. See gmail_label().
 Usage:
     labels.py list
     labels.py get ID
-    labels.py create --name NAME --label LABEL --instruction TEXT [--type detection]
+    labels.py create --name NAME --label LABEL --instruction TEXT [--type TYPE]
+                     [--required-label LABEL ...] [--recommended-label LABEL ...]
     labels.py update ID [--name NAME] [--label LABEL] [--instruction TEXT] [--type TYPE]
+                     [--required-label LABEL ...] [--recommended-label LABEL ...]
     labels.py delete ID
 
 get, update and delete take the label id only — never the name. Use list to
@@ -49,16 +52,27 @@ RESERVED_LABELS = {
 COMMON_FIELDS = ("name", "label", "type")
 
 # The label types Inbox Labeler understands. `fields` are the type's own
-# required text fields, on top of COMMON_FIELDS. Adding a type — `derived`,
-# say — means adding an entry here, and a check in validate() only if it needs
-# more than non-empty text fields. The CRUD operations stay as they are.
+# required text fields, on top of COMMON_FIELDS; `references` are its lists of
+# logical labels pointing at other labels. Adding a type means adding an entry
+# here — the CRUD operations stay as they are.
 LABEL_TYPES = {
     "detection": {
         "summary": "inspects an email directly and decides whether its Gmail label applies",
         "fields": ("instruction",),
+        "references": (),
+    },
+    "derived": {
+        "summary": "interprets an email together with the detection labels that matched it",
+        "fields": ("instruction",),
+        "references": ("required_labels", "recommended_labels"),
     },
 }
 DEFAULT_TYPE = "detection"
+
+# Every reference field any type declares, for validating the ones that do not.
+REFERENCE_FIELDS = tuple(
+    field for spec in LABEL_TYPES.values() for field in spec.get("references", ())
+)
 
 
 class ValidationError(Exception):
@@ -85,8 +99,9 @@ def strip_namespace(label):
 
 def ordered(entry):
     """Return the label's fields in canonical order: id, name, label, type, …"""
+    spec = LABEL_TYPES.get(entry.get("type"), {})
     order = ["id"] + list(COMMON_FIELDS)
-    order += list(LABEL_TYPES.get(entry.get("type"), {}).get("fields", ()))
+    order += list(spec.get("fields", ())) + list(spec.get("references", ()))
     result = {field: entry[field] for field in order if field in entry}
     result.update({field: value for field, value in entry.items() if field not in result})
     return result
@@ -116,6 +131,8 @@ def load_labels():
             entry["label"] = strip_namespace(entry["label"].strip())
         if not entry.get("type"):
             entry["type"] = DEFAULT_TYPE
+        for field in LABEL_TYPES.get(entry["type"], {}).get("references", ()):
+            entry.setdefault(field, [])
         data[index] = ordered(entry)
     return data
 
@@ -138,6 +155,39 @@ def find(labels, label_id):
 # --- validation ------------------------------------------------------------
 
 
+def resolve_references(values, existing, own_id, field):
+    """Check that every referenced logical label exists, and is a detection label.
+
+    Returns the references spelled the way the labels they point at are spelled.
+    """
+    resolved = []
+    for value in values or []:
+        wanted = (value or "").strip()
+        if not wanted:
+            continue
+        target = None
+        for other in existing:
+            if other.get("id") != own_id and other.get("label", "").lower() == wanted.lower():
+                target = other
+                break
+        if target is None:
+            known = ", ".join(
+                sorted(o.get("label", "") for o in existing if o.get("type") == "detection")
+            )
+            raise ValidationError(
+                "%s references %r, which is not an existing label — detection labels: %s"
+                % (field, wanted, known or "none yet")
+            )
+        if target.get("type") != DEFAULT_TYPE:
+            raise ValidationError(
+                "%s may only reference detection labels, and %r is a %s label"
+                % (field, target.get("label"), target.get("type"))
+            )
+        if target["label"] not in resolved:
+            resolved.append(target["label"])
+    return resolved
+
+
 def validate(entry, existing, own_id=None):
     """Validate a complete label. Returns a cleaned copy in canonical order."""
     cleaned = {field: (entry.get(field) or "").strip() for field in COMMON_FIELDS}
@@ -152,6 +202,13 @@ def validate(entry, existing, own_id=None):
         raise ValidationError(
             "unknown label type %r — supported types: %s"
             % (label_type, ", ".join(sorted(LABEL_TYPES)))
+        )
+
+    stored = next((o for o in existing if o.get("id") == own_id), None) if own_id else None
+    if stored and stored.get("type") and stored["type"] != label_type:
+        raise ValidationError(
+            'a label\'s type is immutable: "%s" is a %s label and cannot become %s — '
+            "create a new label instead" % (stored.get("name"), stored["type"], label_type)
         )
 
     if not cleaned["name"]:
@@ -184,6 +241,18 @@ def validate(entry, existing, own_id=None):
             raise ValidationError("%s must not be empty for a %s label" % (field, label_type))
         cleaned[field] = value
 
+    references = LABEL_TYPES[label_type].get("references", ())
+    for field in REFERENCE_FIELDS:
+        if field in references:
+            cleaned[field] = resolve_references(entry.get(field), existing, own_id, field)
+        elif entry.get(field):
+            supported = ", ".join(
+                sorted(t for t, s in LABEL_TYPES.items() if field in s.get("references", ()))
+            )
+            raise ValidationError(
+                "%s applies to %s labels, not to a %s label" % (field, supported, label_type)
+            )
+
     for other in existing:
         if other.get("id") != own_id and other.get("name", "").lower() == cleaned["name"].lower():
             raise ValidationError("a label named %r already exists" % other["name"])
@@ -202,10 +271,24 @@ def get_label(label_id):
     return find(load_labels(), label_id)
 
 
-def create_label(name, label, instruction, label_type=DEFAULT_TYPE):
+def create_label(
+    name,
+    label,
+    instruction,
+    label_type=DEFAULT_TYPE,
+    required_labels=None,
+    recommended_labels=None,
+):
     labels = load_labels()
     cleaned = validate(
-        {"name": name, "label": label, "type": label_type, "instruction": instruction},
+        {
+            "name": name,
+            "label": label,
+            "type": label_type,
+            "instruction": instruction,
+            "required_labels": required_labels,
+            "recommended_labels": recommended_labels,
+        },
         labels,
     )
     entry = ordered(dict(cleaned, id=uuid.uuid4().hex[:8]))
@@ -214,11 +297,27 @@ def create_label(name, label, instruction, label_type=DEFAULT_TYPE):
     return entry
 
 
-def update_label(label_id, name=None, label=None, instruction=None, label_type=None):
-    changes = {"name": name, "label": label, "instruction": instruction, "type": label_type}
+def update_label(
+    label_id,
+    name=None,
+    label=None,
+    instruction=None,
+    label_type=None,
+    required_labels=None,
+    recommended_labels=None,
+):
+    changes = {
+        "name": name,
+        "label": label,
+        "instruction": instruction,
+        "type": label_type,
+        "required_labels": required_labels,
+        "recommended_labels": recommended_labels,
+    }
     if all(value is None for value in changes.values()):
         raise ValidationError(
-            "nothing to update: pass --name, --label, --type or --instruction"
+            "nothing to update: pass --name, --label, --type, --instruction, "
+            "--required-label or --recommended-label"
         )
     labels = load_labels()
     entry = find(labels, label_id)
@@ -232,9 +331,38 @@ def update_label(label_id, name=None, label=None, instruction=None, label_type=N
     return entry
 
 
+def referencing_labels(labels, entry):
+    """Labels whose reference lists point at this label's logical label."""
+    wanted = entry.get("label", "").lower()
+    found = []
+    for other in labels:
+        if other.get("id") == entry.get("id"):
+            continue
+        fields = LABEL_TYPES.get(other.get("type"), {}).get("references", ())
+        if any(
+            ref.lower() == wanted for field in fields for ref in other.get(field, [])
+        ):
+            found.append(other)
+    return found
+
+
 def delete_label(label_id):
     labels = load_labels()
     entry = find(labels, label_id)
+    blocking = referencing_labels(labels, entry)
+    if blocking:
+        kinds = "/".join(sorted({o.get("type", "") for o in blocking}))
+        raise ValidationError(
+            'cannot delete %s label "%s": it is referenced by %s label%s %s — '
+            "remove the reference first"
+            % (
+                entry.get("type"),
+                entry.get("label"),
+                kinds,
+                "" if len(blocking) == 1 else "s",
+                ", ".join('"%s"' % o.get("name") for o in blocking),
+            )
+        )
     labels.remove(entry)
     save_labels(labels)
     return entry
@@ -257,6 +385,14 @@ def main(argv=None):
         ", ".join(sorted(LABEL_TYPES)),
     )
 
+    required_help = (
+        "derived labels only: a detection label that must have matched before this label is "
+        "evaluated (repeatable)"
+    )
+    recommended_help = (
+        "derived labels only: a detection label to offer as context when it matched (repeatable)"
+    )
+
     create = sub.add_parser("create", help="create a label")
     create.add_argument("--name", required=True)
     create.add_argument(
@@ -268,6 +404,14 @@ def main(argv=None):
         "--instruction", required=True, help="how Claude decides whether the label applies"
     )
     create.add_argument("--type", default=DEFAULT_TYPE, help=type_help)
+    create.add_argument(
+        "--required-label", action="append", dest="required_labels", metavar="LABEL",
+        help=required_help,
+    )
+    create.add_argument(
+        "--recommended-label", action="append", dest="recommended_labels", metavar="LABEL",
+        help=recommended_help,
+    )
 
     update = sub.add_parser("update", help="update a label")
     update.add_argument("id", help="label id (not the name)")
@@ -275,6 +419,14 @@ def main(argv=None):
     update.add_argument("--label", help="logical label without the IL/ prefix")
     update.add_argument("--instruction")
     update.add_argument("--type", help=type_help)
+    update.add_argument(
+        "--required-label", action="append", dest="required_labels", metavar="LABEL",
+        help=required_help + "; replaces the stored list",
+    )
+    update.add_argument(
+        "--recommended-label", action="append", dest="recommended_labels", metavar="LABEL",
+        help=recommended_help + "; replaces the stored list",
+    )
 
     delete = sub.add_parser("delete", help="delete a label")
     delete.add_argument("id", help="label id (not the name)")
@@ -287,9 +439,24 @@ def main(argv=None):
         elif args.command == "get":
             result = get_label(args.id)
         elif args.command == "create":
-            result = create_label(args.name, args.label, args.instruction, args.type)
+            result = create_label(
+                args.name,
+                args.label,
+                args.instruction,
+                args.type,
+                args.required_labels,
+                args.recommended_labels,
+            )
         elif args.command == "update":
-            result = update_label(args.id, args.name, args.label, args.instruction, args.type)
+            result = update_label(
+                args.id,
+                args.name,
+                args.label,
+                args.instruction,
+                args.type,
+                args.required_labels,
+                args.recommended_labels,
+            )
         else:
             result = delete_label(args.id)
     except ValidationError as exc:

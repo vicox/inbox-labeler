@@ -22,17 +22,69 @@ talking to Gmail: the logical label `Invoice` becomes the Gmail label **`IL/Invo
 
 ## Label types
 
-`type` says how a label decides whether it applies. **`detection` is the only type today**,
-and every stored label has it:
+`type` says how a label decides whether it applies. There are two, and both produce a Gmail
+label the same way — only the decision differs:
 
-| Type | What it does |
+| Type | Question it answers |
 | --- | --- |
-| `detection` | inspects an email directly and decides whether its Gmail label applies |
+| `detection` | *What can I directly observe in this email?* |
+| `derived` | *Given the email and the detection labels that matched, what does this mean?* |
 
-A label with `type: detection` is a **detection label**, and everything below describes them,
-because they are all there is. The field exists so other kinds — `derived` is the expected
-next one — can be added later without changing how labels are stored or managed. Nothing
-derived is implemented; the CLI rejects any type but `detection`.
+**Detection labels recognise facts. Derived labels interpret those facts.**
+
+`Invoice`, `Newsletter`, `Login` and `LargeAmount` are detection labels: each reads the email
+and decides. A derived label doesn't rediscover the email from scratch — it reads the email
+*together with the detection labels that already matched* and decides what that combination
+means:
+
+```text
+Email
+  ↓
+Detection labels:  Invoice, LargeAmount
+  ↓
+Derived label:     LargePaymentNeedsAttention
+```
+
+```text
+Email
+  ↓
+Detection labels:  TravelBooking, FlightCancellation
+  ↓
+Derived label:     TravelDisruption
+```
+
+A derived label names the detection labels it builds on:
+
+```json
+{
+  "id": "b7c1e290",
+  "name": "LargePaymentNeedsAttention",
+  "label": "LargePaymentNeedsAttention",
+  "type": "derived",
+  "instruction": "A payment this large should be looked at before it is due.",
+  "required_labels": ["LargeAmount"],
+  "recommended_labels": ["Invoice"]
+}
+```
+
+- **`required_labels`** — all of them must have matched, or the derived label isn't evaluated
+  for that message. This is the gate.
+- **`recommended_labels`** — context. Included in the prompt when they matched; when they
+  didn't, the derived label is still evaluated.
+
+Both hold logical labels (`LargeAmount`, not `IL/LargeAmount`), both may be empty, and both may
+only point at detection labels — there is no chaining from one derived label to another. The
+email is still available during evaluation; the detection labels are structured context that
+makes the decision easier and more consistent.
+
+Two rules keep the references honest:
+
+- **A label's type is immutable.** You cannot turn a detection label into a derived one, or the
+  reverse — create a new label instead.
+- **A referenced detection label cannot be deleted.** If a derived label names it in
+  `required_labels` or `recommended_labels`, the delete is rejected and tells you which derived
+  label is in the way. Nothing is rewritten for you: drop the reference or delete the derived
+  label first.
 
 ## What a label is
 
@@ -93,10 +145,12 @@ compares or reports one:
 
 | Kind | Origin | Logical | In Gmail |
 | --- | --- | --- | --- |
-| **business labels** | the `label` of a detection label | `Invoice`, `Social` | `IL/Invoice`, `IL/Social` |
-| **case labels** | future label kind, not in this version | — | — |
+| **business labels** | the `label` of a detection or derived label | `Invoice`, `LargePaymentNeedsAttention` | `IL/Invoice`, `IL/LargePaymentNeedsAttention` |
 | **bucket labels** | future label kind, not in this version | — | — |
 | **system labels** | Inbox Labeler's own state and outcome | `Processed`, `NoMatch` | `IL/Processed`, `IL/NoMatch` |
+
+Nothing in Gmail distinguishes a derived label's output from a detection label's — they are
+both just business labels.
 
 The boundary holds in both directions: **Inbox Labeler never modifies a Gmail label outside
 `IL/`.** Everything out there belongs to Gmail or to you — `INBOX`, `UNREAD`, `STARRED`,
@@ -107,13 +161,14 @@ The boundary holds in both directions: **Inbox Labeler never modifies a Gmail la
 | Gmail label | Meaning |
 | --- | --- |
 | `IL/Processed` | Inbox Labeler has finished evaluating this message. |
-| `IL/NoMatch` | None of the current labels matched this message. |
+| `IL/NoMatch` | No **detection** label matched this message. |
 
 They serve different purposes. `IL/Processed` records **processing state** — that the work
-happened. `IL/NoMatch` records the **outcome** — that the evaluation found nothing. A message
-that was processed and matched nothing carries both; a message that matched something carries
-`IL/Processed` alongside its business labels. `IL/NoMatch` and business labels never coexist
-on a message — the outcome is one or the other.
+happened. `IL/NoMatch` records the **outcome of detection** — that no detection label matched.
+A message that was processed and matched nothing carries both; a message that matched something
+carries `IL/Processed` alongside its business labels. `IL/NoMatch` and detection business labels
+never coexist on a message — the outcome is one or the other. Derived labels don't affect
+`IL/NoMatch`, since it is decided before they are evaluated.
 
 Since these two occupy `IL/Processed` and `IL/NoMatch`, the logical labels `Processed` and
 `NoMatch` are reserved: `labels.py` rejects them on create and on update, in any casing.
@@ -216,20 +271,34 @@ outcome with the two system labels:
 - the complete result set is handled — pagination is followed until there is no next page,
   with no cap and no confirmation prompt for large runs
 - `reprocess` first clears the message's `IL/` labels — all of them, whatever they are
-- every message goes through the full list of detection labels, each one decided independently
-- the result per message is the complete set of triggered labels, and every one of their Gmail
-  labels is applied
+- each message then goes through two stages, in this order:
 
-What happens then depends on whether anything triggered:
+```text
+Email
+  ↓
+Detection labels      each decided independently against the email
+  ↓
+IL/NoMatch            when no detection label matched
+  ↓
+Derived labels        each decided from the email + the detection labels that matched
+  ↓
+IL/Processed          last, always
+```
 
-| Outcome | Gmail labels applied |
+The detection stage behaves exactly as it always has. What it applies depends on whether
+anything triggered:
+
+| Detection outcome | Gmail labels applied |
 | --- | --- |
-| at least one label triggered | every triggered business label, then `IL/Processed`; a stale `IL/NoMatch` is removed |
-| nothing triggered | `IL/NoMatch`, then `IL/Processed` |
+| at least one detection label triggered | every triggered business label; a stale `IL/NoMatch` is removed |
+| nothing triggered | `IL/NoMatch` |
 
-`IL/Processed` always goes on last, once every label has been evaluated and the outcome labels
-are in place — so an interrupted or failed run leaves the message to be picked up again. A
-failure on one message is reported and the run continues with the rest.
+Then the derived stage runs. A derived label whose `required_labels` didn't all match is
+skipped; the rest are evaluated and each one that triggers adds its business label.
+
+`IL/Processed` always goes on last, once both stages have finished and the outcome labels are
+in place — so an interrupted or failed run leaves the message to be picked up again. A failure
+on one message is reported and the run continues with the rest.
 
 Removal is confined to the `IL/` namespace: inside it anything may be cleared, outside it
 nothing is ever added or removed.
@@ -244,8 +313,17 @@ From `.claude/skills/inbox-labeler/`:
 ```bash
 python3 labels.py list
 python3 labels.py get 8da8071c
+
+# a detection label
 python3 labels.py create --name "Invoice" --label "Invoice" \
   --instruction "The message is an invoice or bill for a purchase or service."
+
+# a derived label — the reference flags are repeatable
+python3 labels.py create --name "LargePaymentNeedsAttention" \
+  --label "LargePaymentNeedsAttention" --type derived \
+  --instruction "A payment this large should be looked at before it is due." \
+  --required-label "LargeAmount" --recommended-label "Invoice"
+
 python3 labels.py update 8da8071c --instruction "The message is an invoice, bill or receipt."
 python3 labels.py delete 8da8071c
 ```
@@ -253,8 +331,12 @@ python3 labels.py delete 8da8071c
 `--label` takes the logical label — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
 is rejected, as are the reserved `Processed` and `NoMatch`.
 
-`--type` defaults to `detection`, the only type today, and every command prints the stored
-`type` so the kind of label is always visible. An unknown type is rejected.
+`--type` defaults to `detection`, and every command prints the stored `type` so the kind of
+label is always visible. An unknown type is rejected.
+
+`--required-label` and `--recommended-label` apply to derived labels only and name existing
+detection labels. On update they replace the stored list rather than adding to it; passing an
+empty value clears it.
 
 `get`, `update` and `delete` take the stable `id` only — never the name. Use `list` to look up
 the id belonging to a name. Every command prints JSON; on a validation failure it prints
@@ -269,11 +351,13 @@ directory, so your own labels are never touched:
 .claude/skills/inbox-labeler/test.sh
 ```
 
-It prints one line per check and exits non-zero if any fails. Coverage: store bootstrap,
-`type: detection` on create and through update, `list`/`get` exposing the type, rejection of
-unknown types, labels persisting without the `IL/` prefix, logical→Gmail resolution, rejection
-of `IL/`-prefixed labels, rejection of `Processed` and `NoMatch` in any casing, malformed
-labels, loading an older store, and the pre-existing CRUD and validation behaviour.
+It prints one line per check and exits non-zero if any fails. Coverage: store bootstrap, the
+`type` field on create and through update, `list`/`get` exposing it, rejection of unknown types,
+derived labels (creation, reference validation, updates, and detection labels staying
+untouched), the documented detection→derived processing order, labels persisting without the
+`IL/` prefix, logical→Gmail resolution, rejection of `IL/`-prefixed labels, rejection of
+`Processed` and `NoMatch` in any casing, malformed labels, loading an older store, and the
+pre-existing CRUD and validation behaviour.
 
 Migration is worth knowing about, and there is no command to run for it. A store written by an
 earlier version may have labels like `IL/Invoices` and no `type` at all. Loading it strips

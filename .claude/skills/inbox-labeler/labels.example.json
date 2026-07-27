@@ -1,16 +1,29 @@
 [
   {
     "id": "8da8071c",
-    "name": "Invoices",
-    "label": "Invoices",
+    "name": "Invoice",
+    "label": "Invoice",
     "type": "detection",
-    "instruction": "Emails containing an invoice, receipt or payment confirmation. Not payment reminders."
+    "instruction": "The message is an invoice or bill for a purchase or service."
   },
   {
     "id": "3f4d4d84",
-    "name": "Newsletters",
-    "label": "Newsletters",
+    "name": "LargeAmount",
+    "label": "LargeAmount",
     "type": "detection",
-    "instruction": "Bulk marketing mail and newsletters the user subscribed to. Not transactional mail about an account or order."
+    "instruction": "The message states a monetary amount over 100 in any currency."
+  },
+  {
+    "id": "b7c1e290",
+    "name": "LargePaymentNeedsAttention",
+    "label": "LargePaymentNeedsAttention",
+    "type": "derived",
+    "instruction": "A payment this large should be looked at before it is due.",
+    "required_labels": [
+      "LargeAmount"
+    ],
+    "recommended_labels": [
+      "Invoice"
+    ]
   }
 ]
