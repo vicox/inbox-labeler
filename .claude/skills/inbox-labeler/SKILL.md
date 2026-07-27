@@ -193,6 +193,100 @@ several plausibly do, ask instead of guessing.
 Every command prints JSON — including `type`, so the kind of label is always visible. On
 failure it prints `{"error": "..."}` and exits non-zero.
 
+### Modelling what the user asked for
+
+The user describes a label they want. Working out *how* to model it is your job. Never ask
+which type they want, never make them think about detection versus derived, and never default
+to detection without looking at the concept first.
+
+Start from meaning: **what would have to be true of an email for this label to belong on it?**
+
+- If that can be recognised **directly in the email**, it is a **detection label** —
+  `Invoice`, `Newsletter`, `Login`, `FlightCancellation`, `LargeAmount`.
+- If it is an **interpretation of things already recognised**, it is a **derived label** —
+  `LargePaymentNeedsAttention`, `TravelDisruption`, `CommercialOpportunity`.
+
+Aim for the smallest useful model — as few labels as express the idea, and no fewer. Then:
+
+1. **Run `list` first.** The detection labels that already exist are your vocabulary. Reuse
+   them instead of creating a near-duplicate: if `LargeAmount` is there, do not add `BigAmount`.
+2. **Name the observations the concept rests on.** When the user's label is an interpretation
+   and the observations it needs do not exist yet, those become supporting detection labels.
+3. **Create the supporting detection labels first**, then the derived label. Its references
+   must already exist, and a label's type cannot be changed afterwards — so decide the shape
+   before creating anything.
+
+Choosing between the two reference lists follows from the user's wording:
+
+- **`required_labels` is an AND gate** — every one of them must have matched. Use it for
+  observations that all have to hold.
+- **`recommended_labels` is context** — any subset may be present. Use it when one observation
+  *or* another is enough to make the interpretation worth considering, and let the instruction
+  weigh them.
+
+If an interpretation seems to need another interpretation, the missing piece is a detection
+label — derived labels never reference derived labels.
+
+#### Example: an interpretation over new observations
+
+> Create a label called TravelDisruption for emails where a cancellation or severe delay is
+> likely to disrupt a trip.
+
+"Likely to disrupt a trip" is a judgement, not something you read off the page. The observable
+facts are the cancellation and the delay, and *either* one alone can disrupt a trip — so they
+are recommended, not required:
+
+```text
+FlightCancellation      detection
+FlightDelay             detection
+TravelDisruption        derived   (recommended: FlightCancellation, FlightDelay)
+```
+
+#### Example: an interpretation over observations that must both hold
+
+> Create a label called LargePaymentNeedsAttention for invoices with unusually large amounts
+> that should be reviewed.
+
+Being an invoice and carrying a large amount are two separate observations, and here the user
+wants both:
+
+```text
+Invoice                     detection
+LargeAmount                 detection
+LargePaymentNeedsAttention  derived   (required: Invoice, LargeAmount)
+```
+
+Had they said "large payments, especially invoices", the amount would be the gate and the
+invoice merely context: `required: LargeAmount`, `recommended: Invoice`.
+
+#### Example: reuse instead of rebuilding
+
+> Add CommercialOpportunity for mail that might turn into business.
+
+If `Newsletter` and `Invoice` already exist but nothing recognises an inbound enquiry, add only
+the missing observation and build on what is there:
+
+```text
+InboundEnquiry              detection   (new — the missing observation)
+CommercialOpportunity       derived     (recommended: InboundEnquiry, Newsletter)
+```
+
+#### Say the model out loud when it is more than one label
+
+When the model needs more than one label, describe it in two or three lines, then create it.
+Do not wait for approval unless the user's intent is genuinely unclear:
+
+> I would model this using two detection labels and one derived label:
+>
+> - `FlightCancellation`
+> - `FlightDelay`
+> - `TravelDisruption`
+>
+> This keeps the reusable observations separate from the higher-level interpretation.
+
+When a single detection label is all it takes — "add a label for newsletters" — just create it
+and report the result. No explanation, no options, no questions.
+
 Guidance:
 
 - Ask for anything missing rather than inventing it. A precise instruction describes the
@@ -202,7 +296,10 @@ Guidance:
   describe theirs.
 - Take the aspect as the user frames it. If they describe something broad, keep it broad; if
   they describe several things they want as separate Gmail labels, create one label per Gmail
-  label. The breadth is theirs to choose, so do not push toward finer or coarser labels.
+  label. The breadth is theirs to choose, so do not push toward finer or coarser labels. That
+  is about breadth, not structure: splitting an interpretation into the observations it rests
+  on is modelling, and it never narrows what the user asked for — they still get the label they
+  named, and the supporting detection labels are what make it work.
 - Configure the **logical** label, never the Gmail one. If the user says `IL/Invoices`, store
   `Invoices` — the CLI rejects anything starting with `IL/`, because it adds the namespace
   itself. Talk about labels the way the user does; just strip the prefix before it reaches
@@ -211,10 +308,8 @@ Guidance:
   Labeler's own `IL/Processed` and `IL/NoMatch`. The CLI rejects them on create and on update,
   in any casing. If a user asks for one, explain that Inbox Labeler uses it for its own state
   and agree on a different label rather than retrying.
-- Leave `--type` alone unless the label interprets other labels. It defaults to `detection` and
-  appears in the output either way, so the kind is never hidden. Reach for `--type derived`
-  when the user describes a conclusion drawn *from* other labels ("when it's an invoice and
-  the amount is large, flag it") rather than something observable in the mail itself.
+- `--type` follows from the model you chose above, not from anything the user has to say. It
+  defaults to `detection` and appears in the output either way, so the kind is never hidden.
 - `--required-label` and `--recommended-label` are repeatable and take logical labels. On
   update they replace the stored list rather than adding to it; passing an empty value clears
   it. Both reject anything that is not an existing detection label, so create the detection
@@ -231,9 +326,9 @@ Guidance:
 
 ### Adding a label to an existing set
 
-When the user wants another aspect detected, create a label for it. Existing labels keep their
-instructions unchanged and the new one takes its place beside them — because labelling is
-additive, adding a label never requires adjusting the others.
+When the user wants another aspect detected, model it as above and create it. Existing labels
+keep their instructions unchanged and the new ones take their place beside them — because
+labelling is additive, adding a label never requires adjusting the others.
 
 Labels that frequently land on the same mail while detecting different aspects are each doing
 their own job, and both belong in the list. Two labels are the same label only when they detect

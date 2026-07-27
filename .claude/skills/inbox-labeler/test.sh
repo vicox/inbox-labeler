@@ -318,6 +318,32 @@ check "the derived prompt uses the Email / Detection Results / Task layout" \
     "True"
 check "the prompt has no generic Question section" \
     "$(grep -c '^Question$' "$SCRIPT_DIR/SKILL.md")" "0"
+
+echo
+echo "--- the skill documents how to model a label from a description ---"
+check "modelling comes before the CLI guidance list" \
+    "$(order_check \
+        '### Modelling what the user asked for' \
+        'Never ask' \
+        'directly in the email' \
+        'interpretation of things already recognised' \
+        'Run `list` first' \
+        'Create the supporting detection labels first' \
+        '`required_labels` is an AND gate' \
+        '`recommended_labels` is context')" \
+    "True"
+check "all three worked examples are present, in order" \
+    "$(order_check \
+        'TravelDisruption        derived' \
+        'LargePaymentNeedsAttention  derived' \
+        'CommercialOpportunity       derived')" \
+    "True"
+check "the explain-then-create rule is documented" \
+    "$(order_check \
+        '#### Say the model out loud when it is more than one label' \
+        'Do not wait for approval' \
+        'When a single detection label is all it takes')" \
+    "True"
 check "required_labels gate the derived stage" \
     "$(order_check '**Derived stage.**' 'required_labels' 'did not all match')" "True"
 
