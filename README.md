@@ -3,17 +3,59 @@
 A Claude Agent Skill for keeping persistent **label requests** and applying them to
 Gmail inbox mail on demand.
 
-A label request answers three things: what it is called, which Gmail label to apply,
-and how Claude should decide whether an email matches.
+A label request names one aspect of a message, the question that detects it, and the Gmail
+label that shows the answer.
 
 ```json
 {
   "id": "8da8071c",
-  "name": "Invoices",
-  "label": "IL/Invoices",
-  "instruction": "Emails containing an invoice, receipt or payment confirmation."
+  "name": "Invoice",
+  "label": "IL/Invoice",
+  "instruction": "The message is an invoice or bill for a purchase or service."
 }
 ```
+
+## One job per label request
+
+A label request has exactly one job:
+
+> **Detect one specific aspect of a message.**
+
+It asks exactly one question about the message, and its Gmail label is the visible answer.
+This is the central design principle of Inbox Labeler:
+
+- **One responsibility each.** One label request, one aspect, one question, one label.
+- **Independent evaluation.** Each label request is evaluated on its own. Its answer
+  depends on two things only: the message, and its own instruction.
+- **Every trigger produces a label.** Each label request whose aspect is present
+  contributes its label to the message.
+- **Any number may trigger.** A message triggers as many label requests as have their
+  aspect present — none, one, several, or all of them.
+- **The result is a set.** For a given message the outcome is the complete set of triggered
+  label requests, and the labels applied are exactly that set.
+
+A LinkedIn connection request, for example, carries several aspects at once: it is social
+mail, it is a connection request, and you treat it as important. Three label requests ask
+those three questions, all three answer yes, so the message carries `IL/Social`,
+`IL/Connection` and `IL/Important`.
+
+## Keep label requests small
+
+Aim for many small, focused label requests rather than a few large ones. When you want
+another aspect detected, add a label request for it instead of making an existing one carry
+more meaning. Prefer three sharp questions:
+
+- `IL/Invoice` — the message is an invoice
+- `IL/Stripe` — the message comes from Stripe
+- `IL/Reminder` — the message is a reminder about something due
+
+over one request trying to encode all three concerns. A Stripe invoice reminder then
+triggers all three and carries all three labels, and each label stays meaningful on its own:
+`IL/Stripe` still finds everything from Stripe, whether or not it is an invoice.
+
+Aspects that usually appear together still deserve separate requests — each one answers its
+own question, and each adds its own label. Two requests are the same request only when they
+ask the same question, i.e. the same purpose and essentially the same instruction.
 
 ## Layout
 
@@ -83,10 +125,13 @@ with the Gmail label `IL/Processed`:
 - a message is in scope when it is in the inbox, unread, and has no `IL/Processed`
 - the complete result set is processed — pagination is followed until there is no next
   page, with no cap and no confirmation prompt for large runs
-- every label request is evaluated against every in-scope message
-- all matching labels are applied
-- `IL/Processed` is applied last, only after evaluation against all requests succeeded — so
-  an interrupted or failed run leaves the message to be picked up again
+- every message goes through the full list of label requests, each one answered
+  independently
+- the result per message is the complete set of triggered label requests, and every one of
+  their labels is applied
+- `IL/Processed` is applied last, once every label request has been evaluated and every
+  triggered label applied — so an interrupted or failed run leaves the message to be picked
+  up again
 
 Unread is only a scope filter: the unread state is never changed, and it is never used as
 the processing state.
@@ -97,9 +142,9 @@ From `.claude/skills/inbox-labeler/`:
 
 ```bash
 python3 label_requests.py list
-python3 label_requests.py create --name "Invoices" --label "IL/Invoices" \
-  --instruction "Emails containing an invoice, receipt or payment confirmation."
-python3 label_requests.py update 8da8071c --instruction "Invoices and receipts only."
+python3 label_requests.py create --name "Invoice" --label "IL/Invoice" \
+  --instruction "The message is an invoice or bill for a purchase or service."
+python3 label_requests.py update 8da8071c --instruction "The message is an invoice, bill or receipt."
 python3 label_requests.py delete 8da8071c
 ```
 
