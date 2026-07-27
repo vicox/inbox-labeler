@@ -57,12 +57,30 @@ README.md
 docs/working/                     the original build instruction
 ```
 
-Everything the skill needs lives in its own directory. Labels always live under the
-`IL/` namespace so Inbox Labeler never touches labels it did not create.
+Everything the skill needs lives in its own directory.
 
-## System labels
+## The `IL/` namespace
 
-Two labels in that namespace belong to Inbox Labeler itself rather than to any label request:
+**Inbox Labeler owns the entire `IL/` namespace.** Every Gmail label starting with `IL/` is
+Inbox Labeler's to create, apply and remove — the namespace *is* its model, expressed as
+labels. Treat it as internal: don't create or maintain `IL/` labels by hand in Gmail, because a
+reprocess will overwrite anything it finds there. The way to get a new `IL/` label is to add a
+label request.
+
+Every kind of label Inbox Labeler works with lives inside the namespace:
+
+| Kind | Origin | Example |
+| --- | --- | --- |
+| **business labels** | the `label` of a label request | `IL/Invoices`, `IL/Social` |
+| **case labels** | future label kind, not in this version | — |
+| **bucket labels** | future label kind, not in this version | — |
+| **system labels** | Inbox Labeler's own state and outcome | `IL/Processed`, `IL/NoMatch` |
+
+The boundary holds in both directions: **Inbox Labeler never modifies a label outside `IL/`.**
+Everything out there belongs to Gmail or to you — `INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`,
+`CATEGORY_*`, and every label you made yourself. Those are read, never written.
+
+### System labels
 
 | Label | Meaning |
 | --- | --- |
@@ -75,9 +93,8 @@ that was processed and matched nothing carries both; a message that matched some
 `IL/Processed` alongside its business labels. `IL/NoMatch` and business labels never coexist
 on a message — the outcome is one or the other.
 
-Every other `IL/` label comes from a label request and says something about the message
-itself — those are the **business labels**. The two system labels are reserved, and
-`label_requests.py` rejects them as a `label` value on both create and update.
+Both system labels are reserved, and `label_requests.py` rejects them as a `label` value on
+both create and update.
 
 `IL/NoMatch` is what makes an empty result visible. Without it, a message that matched
 nothing looks exactly like a message that was never processed once you stop looking at
@@ -125,20 +142,61 @@ A symlink keeps one copy, so `label-requests.json` stays in this repo. Copy the
 directory instead if you would rather the store live outside the project. Restart
 Claude Code after adding it.
 
-Then say things like "add a label request for invoices", "list my label requests", or
-"process my inbox with Inbox Labeler". Inbox processing uses Claude's Gmail tools when
-they are connected; nothing runs on a schedule — you trigger it.
+Then say things like "add a label request for invoices" or "list my label requests" to manage
+requests, and one of these two to label mail:
+
+| Say | What it does |
+| --- | --- |
+| **"process my inbox"** | labels unread inbox mail that hasn't been processed yet |
+| **"reprocess my inbox"** | re-evaluates *every* unread inbox message against your current label requests |
+
+Both use Claude's Gmail tools when they are connected; nothing runs on a schedule — you
+trigger it.
+
+## process vs. reprocess
+
+`process` is the everyday run. It skips anything already carrying `IL/Processed`, so it only
+ever looks at mail Inbox Labeler hasn't seen.
+
+`reprocess` is for after you change your label requests — added one, edited an instruction,
+deleted one. It ignores `IL/Processed` and re-evaluates every unread inbox message against the
+current set. The rule it follows:
+
+> **Reprocess behaves as if Inbox Labeler had never seen the message before.**
+
+It gets there by stripping every `IL/` label off the message and labelling it from scratch.
+Namespace ownership is what makes that safe — anything under `IL/` is Inbox Labeler's own
+previous answer, and that answer is being discarded:
+
+- a message that previously matched `IL/Social` but no longer does loses `IL/Social`
+- a message that had `IL/NoMatch` and now matches `IL/Birthday` ends up with `IL/Birthday`
+- a label left over from a deleted or renamed label request disappears
+- a message whose matches are unchanged ends up exactly as it was
+
+Practical consequences of the strip-and-relabel approach:
+
+- **deleting a label request cleans up after itself** — its label vanishes from your mail on
+  the next reprocess, with no separate cleanup step
+- **renaming a label leaves no orphans** — the old name is stripped like any other `IL/` label
+- **future case and bucket labels participate automatically**, because they will live in the
+  namespace and be cleared along with everything else
+- **the model stays simple** — no record of which label came from which request, no versioning,
+  no migrations; ownership of the namespace replaces all of that bookkeeping
+
+Both commands share the same scope rules: **unread inbox messages only**. Archived mail and
+read mail are never touched, and the unread state itself is never changed.
 
 ## How processing works
 
-Inbox processing works on individual **messages**, not threads, and records both its state
-and its outcome with the two system labels:
+Processing works on individual **messages**, not threads, and records both its state and its
+outcome with the two system labels:
 
-- a message is in scope when it is in the inbox, unread, and has no `IL/Processed`
-- the complete result set is processed — pagination is followed until there is no next
-  page, with no cap and no confirmation prompt for large runs
-- every message goes through the full list of label requests, each one decided
-  independently
+- `process` takes unread inbox messages that have no `IL/Processed`; `reprocess` takes every
+  unread inbox message
+- the complete result set is handled — pagination is followed until there is no next page,
+  with no cap and no confirmation prompt for large runs
+- `reprocess` first clears the message's `IL/` labels — all of them, whatever they are
+- every message goes through the full list of label requests, each one decided independently
 - the result per message is the complete set of triggered label requests, and every one of
   their labels is applied
 
@@ -146,13 +204,15 @@ What happens then depends on whether anything triggered:
 
 | Outcome | Labels applied |
 | --- | --- |
-| at least one label request triggered | every triggered business label, then `IL/Processed`; `IL/NoMatch` is removed if an earlier run left it there |
+| at least one label request triggered | every triggered business label, then `IL/Processed`; a stale `IL/NoMatch` is removed |
 | nothing triggered | `IL/NoMatch`, then `IL/Processed` |
 
 `IL/Processed` always goes on last, once every label request has been evaluated and the
 outcome labels are in place — so an interrupted or failed run leaves the message to be picked
-up again. `IL/NoMatch` is the only label Inbox Labeler ever removes, and only from a message
-that has matches now.
+up again. A failure on one message is reported and the run continues with the rest.
+
+Removal is confined to the `IL/` namespace: inside it anything may be cleared, outside it
+nothing is ever added or removed.
 
 Unread is only a scope filter: the unread state is never changed, and it is never used as
 the processing state.
