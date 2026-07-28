@@ -1,17 +1,32 @@
 [
   {
+    "label": "Newsletter",
+    "type": "detection",
+    "attention": "none",
+    "instruction": "The message was sent to a mailing list rather than addressed personally."
+  },
+  {
     "label": "Invoice",
     "type": "detection",
+    "attention": "normal",
     "instruction": "The message is an invoice or bill for a purchase or service."
   },
   {
     "label": "Large amount",
     "type": "detection",
+    "attention": "normal",
     "instruction": "The message states a monetary amount over 100 in any currency."
+  },
+  {
+    "label": "Delivery arriving soon",
+    "type": "detection",
+    "attention": "temporary",
+    "instruction": "The message says a delivery arrives today or within the next few days, as of when it was written."
   },
   {
     "label": "Large payment needs attention",
     "type": "derived",
+    "attention": "high",
     "instruction": "A payment this large should be looked at, whether it is still due or already paid.",
     "required_labels": [
       "Large amount"

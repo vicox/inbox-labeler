@@ -56,8 +56,24 @@ RESERVED_LABELS = {
     "nomatch": "Inbox Labeler's evaluation outcome",
 }
 
+# What a label asks of the user. Attention is not a label and is not stored per
+# message: the `attention` command computes it from the labels a message has,
+# strongest first, and turns it into Gmail actions.
+ATTENTION_LEVELS = ("none", "normal", "temporary", "high")
+DEFAULT_ATTENTION = "normal"
+
+# What the `attention` command does at each level. Fixed, not configurable.
+ATTENTION_POLICIES = {
+    "none": {"mark_read_after": "24h"},
+    "normal": {},
+    "temporary": {"star": True, "expires_after": "2d"},
+    "high": {"star": True},
+}
+
+DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
 # Fields every label carries, whatever its type.
-COMMON_FIELDS = ("label", "type")
+COMMON_FIELDS = ("label", "type", "attention")
 
 # The label types Inbox Labeler understands. `fields` are the type's own
 # required text fields, on top of COMMON_FIELDS; `references` are its lists of
@@ -112,6 +128,70 @@ def same_label(one, other):
     return normalise(one).lower() == normalise(other).lower()
 
 
+# --- attention -------------------------------------------------------------
+
+
+def parse_duration(value):
+    """Turn "24h" or "2d" into seconds."""
+    text = str(value).strip().lower()
+    unit = text[-1:]
+    if unit not in DURATION_UNITS or not text[:-1].isdigit():
+        raise ValidationError(
+            "duration %r must be a whole number followed by %s, e.g. 24h"
+            % (value, "/".join(sorted(DURATION_UNITS)))
+        )
+    return int(text[:-1]) * DURATION_UNITS[unit]
+
+
+def effective_attention(triggered):
+    """The strongest attention among the labels a message carries.
+
+    Nothing else is consulted: not the email, not the clock. A message with no
+    labels comes out at the default, so it is left alone.
+    """
+    levels = []
+    for entry in triggered or []:
+        level = (entry.get("attention") or DEFAULT_ATTENTION).strip().lower()
+        if level not in ATTENTION_LEVELS:
+            raise ValidationError(
+                "label %r has an unknown attention %r" % (entry.get("label"), level)
+            )
+        levels.append(level)
+    if not levels:
+        return DEFAULT_ATTENTION
+    return max(levels, key=ATTENTION_LEVELS.index)
+
+
+def attention_actions(attention, age_seconds):
+    """What the `attention` command should do to a message, from its level alone.
+
+    `age_seconds` is how long ago the message was received. Returns action names:
+
+        star        add Gmail's star
+        unstar      remove it, because a temporary level has expired
+        mark_read   clear UNREAD
+
+    Labels are deliberately not an input, and no action ever touches an `IL/`
+    label.
+    """
+    if attention not in ATTENTION_LEVELS:
+        raise ValidationError(
+            "unknown attention %r — levels: %s" % (attention, ", ".join(ATTENTION_LEVELS))
+        )
+    policy = ATTENTION_POLICIES[attention]
+    age = max(0, int(age_seconds))
+
+    if policy.get("star"):
+        expires_after = policy.get("expires_after")
+        if expires_after and age >= parse_duration(expires_after):
+            return ["unstar"]
+        return ["star"]
+    mark_read_after = policy.get("mark_read_after")
+    if mark_read_after and age >= parse_duration(mark_read_after):
+        return ["mark_read"]
+    return []
+
+
 # --- storage ---------------------------------------------------------------
 
 
@@ -153,6 +233,8 @@ def load_labels():
             entry["label"] = normalise(strip_namespace(entry["label"].strip()))
         if not entry.get("type"):
             entry["type"] = DEFAULT_TYPE
+        if not entry.get("attention"):
+            entry["attention"] = DEFAULT_ATTENTION
         for field in LABEL_TYPES.get(entry["type"], {}).get("references", ()):
             entry[field] = [
                 normalise(ref) for ref in entry.get(field) or [] if normalise(ref)
@@ -218,8 +300,15 @@ def validate(entry, existing, own=None):
     """Validate a complete label. Returns a cleaned copy in canonical order."""
     cleaned = {field: normalise(entry.get(field) or "") for field in COMMON_FIELDS}
     cleaned["type"] = cleaned["type"].lower()
+    cleaned["attention"] = (cleaned["attention"] or DEFAULT_ATTENTION).lower()
     label_type = cleaned["type"]
     label = cleaned["label"]
+
+    if cleaned["attention"] not in ATTENTION_LEVELS:
+        raise ValidationError(
+            "unknown attention %r — levels, weakest first: %s"
+            % (cleaned["attention"], ", ".join(ATTENTION_LEVELS))
+        )
 
     if not label_type:
         raise ValidationError(
@@ -298,6 +387,7 @@ def create_label(
     label,
     instruction,
     label_type=DEFAULT_TYPE,
+    attention=DEFAULT_ATTENTION,
     required_labels=None,
     recommended_labels=None,
 ):
@@ -306,6 +396,7 @@ def create_label(
         {
             "label": label,
             "type": label_type,
+            "attention": attention,
             "instruction": instruction,
             "required_labels": required_labels,
             "recommended_labels": recommended_labels,
@@ -331,6 +422,7 @@ def update_label(
     new_label=None,
     instruction=None,
     label_type=None,
+    attention=None,
     required_labels=None,
     recommended_labels=None,
 ):
@@ -338,12 +430,13 @@ def update_label(
         "label": new_label,
         "instruction": instruction,
         "type": label_type,
+        "attention": attention,
         "required_labels": required_labels,
         "recommended_labels": recommended_labels,
     }
     if all(value is None for value in changes.values()):
         raise ValidationError(
-            "nothing to update: pass --label, --type, --instruction, "
+            "nothing to update: pass --label, --type, --attention, --instruction, "
             "--required-label or --recommended-label"
         )
     labels = load_labels()
@@ -420,6 +513,10 @@ def main(argv=None):
         DEFAULT_TYPE,
         ", ".join(sorted(LABEL_TYPES)),
     )
+    attention_help = "what this label asks of the user (default: %s — %s)" % (
+        DEFAULT_ATTENTION,
+        ", ".join(ATTENTION_LEVELS),
+    )
     label_help = (
         'the label, a readable phrase that may contain spaces, e.g. "Delivery arriving soon" '
         "(becomes IL/Delivery arriving soon in Gmail); no IL/ prefix"
@@ -439,6 +536,7 @@ def main(argv=None):
         "--instruction", required=True, help="how Claude decides whether the label applies"
     )
     create.add_argument("--type", default=DEFAULT_TYPE, help=type_help)
+    create.add_argument("--attention", default=DEFAULT_ATTENTION, help=attention_help)
     create.add_argument(
         "--required-label", action="append", dest="required_labels", metavar="LABEL",
         help=required_help,
@@ -456,6 +554,7 @@ def main(argv=None):
     )
     update.add_argument("--instruction")
     update.add_argument("--type", help=type_help)
+    update.add_argument("--attention", help=attention_help)
     update.add_argument(
         "--required-label", action="append", dest="required_labels", metavar="LABEL",
         help=required_help + "; replaces the stored list",
@@ -467,6 +566,17 @@ def main(argv=None):
 
     delete = sub.add_parser("delete", help="delete a label")
     delete.add_argument("label", help="the label text")
+
+    level = sub.add_parser(
+        "attention", help="the effective attention for the labels a message carries"
+    )
+    level.add_argument("labels", nargs="*", metavar="LABEL", help="the labels on the message")
+
+    act = sub.add_parser(
+        "policy", help="what the attention command should do to a message at this level"
+    )
+    act.add_argument("attention", choices=ATTENTION_LEVELS)
+    act.add_argument("--age", required=True, help="how long ago it was received, e.g. 30h")
 
     args = parser.parse_args(argv)
 
@@ -480,6 +590,7 @@ def main(argv=None):
                 args.label,
                 args.instruction,
                 args.type,
+                args.attention,
                 args.required_labels,
                 args.recommended_labels,
             )
@@ -489,9 +600,26 @@ def main(argv=None):
                 args.new_label,
                 args.instruction,
                 args.type,
+                args.attention,
                 args.required_labels,
                 args.recommended_labels,
             )
+        elif args.command == "attention":
+            labels = load_labels()
+            triggered, unknown = [], []
+            for text in args.labels or []:
+                match = next((e for e in labels if same_label(e["label"], text)), None)
+                (triggered if match else unknown).append(match or normalise(text))
+            result = {
+                "attention": effective_attention(triggered),
+                "from": {e["label"]: e["attention"] for e in triggered},
+                "unknown": unknown,
+            }
+        elif args.command == "policy":
+            result = {
+                "attention": args.attention,
+                "actions": attention_actions(args.attention, parse_duration(args.age)),
+            }
         else:
             result = delete_label(args.label)
     except ValidationError as exc:

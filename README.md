@@ -10,9 +10,13 @@ apply when that aspect is present.
 {
   "label": "Delivery arriving soon",
   "type": "detection",
+  "attention": "temporary",
   "instruction": "The message says a delivery is arriving today or in the next few days."
 }
 ```
+
+Each label also carries an **attention** level — what it asks of you. See
+[Attention](#attention).
 
 `label` is the label's **only identifier** — there is no separate name and no technical id.
 It is a readable phrase, spaces and all, and it is what other labels reference and what
@@ -30,6 +34,31 @@ Two labels are **not** yours: `processed` and `nomatch` are reserved system labe
 lowercase spelling is the convention that marks them as internal. Your labels are readable
 phrases — `Delivery`, `Large amount`, `Delivery arriving soon` — and keep their spelling
 exactly as you write it. See [System labels](#system-labels).
+
+## Attention
+
+Labels say what a message *means*. **Attention** says what it asks of you — and it is the only
+thing that lets Inbox Labeler touch your mailbox rather than just annotate it.
+
+| Attention | What it does to the mail |
+| --- | --- |
+| `none` | marked read once the message is 24h old |
+| `normal` | *(the default)* nothing at all |
+| `temporary` | starred; once the message is 2d old, the star is removed |
+| `high` | starred, and it stays starred |
+
+Attention is **not** a label. It is computed per message from the labels that are on it, and the
+**strongest one wins** — `high` > `temporary` > `normal` > `none`. A message with no labels comes
+out `normal`, so it is left alone. The policies above are fixed and not configurable.
+
+None of this happens on its own. **Say "apply attention"** and it runs over already-labelled
+mail — unread messages carrying `IL/processed`. It reads the labels that are already there,
+never the email, and it never adds or removes an Inbox Labeler label. `process` labels; `attention`
+acts on those labels. Two commands, two jobs.
+
+One thing to know before using `temporary` or `high`: Inbox Labeler cannot tell its own star from
+one you set by hand, so when a `temporary` level expires it removes the star it finds. If you
+star mail yourself, keep that in mind.
 
 ## Label types
 
@@ -238,9 +267,10 @@ these two to label mail:
 | Say | What it does |
 | --- | --- |
 | **"process my inbox"** | labels unread inbox mail that hasn't been processed yet |
+| **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
 
-It uses Claude's Gmail tools when they are connected; nothing runs on a schedule — you
-trigger it.
+Both use Claude's Gmail tools when they are connected; nothing runs on a schedule — you trigger
+them, and `attention` never runs as part of `process`.
 
 ## What `process` does
 

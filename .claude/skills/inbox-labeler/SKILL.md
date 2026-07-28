@@ -12,6 +12,7 @@ Gmail label to apply when that aspect is present:
 | --- | --- |
 | `label` | the label itself — its identity and its display text, e.g. `Delivery arriving soon` |
 | `type` | how the label decides whether it applies: `detection` or `derived` |
+| `attention` | what the label asks of the user: `none`, `normal`, `temporary` or `high`. Defaults to `normal` |
 | `instruction` | how you decide whether that aspect is present in a message, in natural language |
 | `required_labels` | *derived only* — detection labels that must all have matched before this label is evaluated |
 | `recommended_labels` | *derived only* — detection labels offered as context when they matched |
@@ -414,6 +415,11 @@ background. There is exactly one command:
 | The user says | Command | Scope | Per run |
 | --- | --- | --- | --- |
 | "process my inbox" | **process** | unread inbox messages **without** `IL/processed` — new mail only | at most 10 |
+| "apply attention" | **attention** | unread inbox messages **with** `IL/processed` — already labelled mail | — |
+
+The two never overlap: `process` classifies mail that has no `IL/processed`, `attention` acts on
+mail that has it. Neither does the other's job, and **`attention` only runs when the user asks
+for it** — it is never part of a `process` run.
 
 It begins with a precondition — label definitions must be available, loaded from the Google
 Drive Label Store if they are not here yet. See
@@ -542,6 +548,82 @@ worth it.
     continue with the rest — otherwise the user has no way to tell a finished inbox from a
     truncated run.
 
+## Attention
+
+**Attention is not a label.** It is what a label asks of the user, declared per label and
+computed per message. It is never written to Gmail and never stored on a message.
+
+| Level | What the label is saying |
+| --- | --- |
+| `none` | the user never needs to see this |
+| `normal` | *(the default)* leave the message alone |
+| `temporary` | worth attention for a while, then no longer |
+| `high` | important, and stays important |
+
+**The strongest level among the labels a message carries wins**, ranked
+`high` > `temporary` > `normal` > `none`. A message with no labels at all comes out `normal`, so
+it is left alone. Never rank the levels by eye:
+
+```bash
+python3 labels.py attention "Invoice" "Delivery arriving soon"
+# {"attention": "temporary", "from": {...}, "unknown": []}
+```
+
+The policies are fixed, not configurable:
+
+| Attention | Policy | Effect |
+| --- | --- | --- |
+| `none` | `mark_read_after: 24h` | mark read once the message is 24h old, otherwise nothing |
+| `normal` | — | nothing |
+| `temporary` | `star: true`, `expires_after: 2d` | star it; once it is 2d old, remove the star |
+| `high` | `star: true` | star it, and keep it starred |
+
+Ask for the decision rather than deriving it:
+
+```bash
+python3 labels.py policy temporary --age 30h
+# {"attention": "temporary", "actions": ["star"]}
+```
+
+Ages count from **when the message was received**, which is the only timestamp available.
+
+### attention
+
+**Only run this when the user asks.** It is never part of `process`.
+
+The command brings Gmail's own state in line with the attention the labels already imply. It
+**does not classify anything** and it **never adds or removes an `IL/` label** — `process` owns
+labelling, `attention` owns the Gmail state that follows from it.
+
+1. Complete [step zero](#step-zero-make-sure-labels-are-available); without definitions there is
+   no attention to apply.
+2. Run `list_labels` and note the id of `IL/processed` and of every label's resolved Gmail name.
+   Create nothing here — a label that does not exist in Gmail cannot be on a message.
+3. Find candidate threads with `search_threads`, query
+   `in:inbox is:unread label:<IL/processed id>`. This is the mirror image of `process`: only
+   mail that **has** been processed.
+4. For each thread, call `get_thread` and pick out the messages that are in the inbox, unread
+   and carry `IL/processed`.
+5. **Read the labels already on the message.** Take its `labelIds`, keep the ones that resolve
+   to an `IL/` name, and strip the prefix to get the labels. Ignore `IL/processed` and
+   `IL/nomatch` — they are state, not meaning. Do not evaluate the email, do not consult its
+   content, and do not reconsider whether a label belongs there.
+6. Ask `python3 labels.py attention <those labels>` for the effective level.
+7. Ask `python3 labels.py policy <level> --age <age of the message>` and carry out what it
+   returns:
+   - `star` → `label_message` with `STARRED`
+   - `unstar` → `unlabel_message` with `STARRED`
+   - `mark_read` → `unlabel_message` with `UNREAD`
+   - nothing → leave the message untouched
+
+   `STARRED` and `UNREAD` are the only two things this command writes, and it uses those tools
+   for nothing else. Skip an action whose state already holds — do not re-star a starred message.
+8. Report what changed per message and what was left alone.
+
+Two boundaries this command must not cross. It never touches an `IL/` label, in either
+direction — no adding, no removing, not even `IL/processed`. And it never looks at the email
+itself: the labels on the message are the whole input.
+
 ## The derived-label prompt
 
 When you evaluate a derived label, give yourself exactly four things:
@@ -596,7 +678,7 @@ Keep each derived label's evaluation independent: one derived label's outcome is
 another. If a derived label needs a fact no detection label provides, the answer is a new
 detection label, not a longer derived instruction.
 
-Rules while processing:
+Rules while processing (`process`):
 
 - **No labels, no processing.** Never touch a message before step zero has produced
   definitions. An empty rulebook does not mean "nothing matches" — it means the run should not
@@ -623,10 +705,11 @@ Rules while processing:
   one detection business label or `IL/nomatch`, never both. Derived labels do not affect it.
 - **`IL/processed` is always last and always earned.** Never leave it on a message whose
   evaluation did not complete successfully.
-- **Labelling only ever adds.** No label is removed from any message, inside the `IL/` namespace
-  or outside it. Gmail's own labels (`INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`, `CATEGORY_*`) and
-  every user label are read-only, and so is anything Inbox Labeler applied on an earlier run.
-  Never archive, mark as read, delete, or reply — labelling is the entire job.
+- **Labelling only ever adds.** `process` removes no label from any message, inside the `IL/`
+  namespace or outside it. Gmail's own labels (`INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`,
+  `CATEGORY_*`) and every user label are read-only to it, and so is anything Inbox Labeler
+  applied on an earlier run. Never archive, delete, or reply — labelling is its entire job.
+  `STARRED` and `UNREAD` belong to the `attention` command, and to nothing else.
 - **Never stop for the wrong reason.** Ten messages is the only limit. Within a run, size is
   never a reason to pause: do not sample, do not ask for
   confirmation because the inbox is large, and do not cut a message short because it triggered

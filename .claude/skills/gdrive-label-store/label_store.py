@@ -41,7 +41,10 @@ LABEL_TYPES = {
         "references": ("required_labels", "recommended_labels"),
     },
 }
-COMMON_FIELDS = ("label", "type")
+COMMON_FIELDS = ("label", "type", "attention")
+
+# What a label asks of the user, mirrored from the Inbox Labeler skill.
+ATTENTION_LEVELS = ("none", "normal", "temporary", "high")
 REFERENCE_FIELDS = tuple(
     field for spec in LABEL_TYPES.values() for field in spec.get("references", ())
 )
@@ -51,7 +54,7 @@ REFERENCEABLE_TYPE = "detection"
 # Reserved by the Inbox Labeler for its own Gmail labels.
 RESERVED_LABELS = ("processed", "nomatch")
 
-FIELD_ORDER = ("label", "type") + ("instruction",) + REFERENCE_FIELDS
+FIELD_ORDER = ("label", "type", "attention") + ("instruction",) + REFERENCE_FIELDS
 
 
 class StoreError(Exception):
@@ -128,6 +131,18 @@ def validate(document):
                 % (where, label_type, ", ".join(sorted(LABEL_TYPES)))
             )
             continue
+
+        attention = entry.get("attention")
+        if attention is not None:
+            if not isinstance(attention, str):
+                errors.append(
+                    "%s: attention must be a string, not %s" % (where, type_name(attention))
+                )
+            elif attention.strip().lower() not in ATTENTION_LEVELS:
+                errors.append(
+                    "%s: unknown attention %r — levels: %s"
+                    % (where, attention, ", ".join(ATTENTION_LEVELS))
+                )
 
         spec = LABEL_TYPES[label_type]
         for field in spec["fields"]:
