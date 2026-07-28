@@ -1,6 +1,6 @@
 ---
 name: inbox-labeler
-description: Manage persistent labels (a readable label, a type and an instruction) and apply them to inbox emails as Gmail labels on demand. Use when the user wants to create, change, rename, delete, list or inspect labels, or asks Inbox Labeler to process or reprocess / relabel their inbox.
+description: Manage persistent labels (a readable label, a type and an instruction) and apply them to inbox emails as Gmail labels on demand. Use when the user wants to create, change, rename, delete, list or inspect labels, or asks Inbox Labeler to process / label their inbox.
 ---
 
 # Inbox Labeler
@@ -156,9 +156,9 @@ to look at.** When the user asks to process "everything from today", narrowing t
 selection, not evaluation — the labels each selected message then receives are unaffected by
 when the run happens.
 
-This is also what makes `reprocess` trustworthy. Because evaluation does not depend on when it
-runs, re-evaluating year-old mail cannot change its labels for time reasons. If a reprocess
-changes something, the labels changed — never the clock.
+It also makes a run reproducible. Because evaluation does not depend on when it runs, the same
+email evaluated twice yields the same labels — if an outcome ever differs, the labels changed,
+never the clock.
 
 ## The `IL/` namespace
 
@@ -381,8 +381,9 @@ Guidance:
   passing an empty value clears it. Create the detection labels first — a reference to a label
   that does not exist is rejected.
 - **A label's type is immutable.** `update` refuses to turn a detection label into a derived one
-  or the other way round. If the user wants the other kind, create a new label — and ask before
-  deleting the old one, since its Gmail label disappears from their mail on the next reprocess.
+  or the other way round. If the user wants the other kind, create a new label — and say that the
+  old label's Gmail label stays on the mail that already carries it, since nothing revisits
+  processed messages.
 - **A detection label cannot be deleted while a derived label references it.** `delete` refuses
   and names the derived labels involved. Nothing is cleaned up automatically: either update
   those derived labels to drop the reference, or delete them first. Tell the user which choice
@@ -408,18 +409,18 @@ carries every reference along.
 ## Processing the inbox
 
 Only do this when the user explicitly asks. There is no scheduler and nothing runs in the
-background. Two commands exist:
+background. There is exactly one command:
 
-| The user says | Command | Scope |
-| --- | --- | --- |
-| "process my inbox" | **process** | unread inbox messages **without** `IL/processed` — new mail only |
-| "reprocess my inbox" | **reprocess** | **every** unread inbox message, including those already processed |
+| The user says | Command | Scope | Per run |
+| --- | --- | --- | --- |
+| "process my inbox" | **process** | unread inbox messages **without** `IL/processed` — new mail only | at most 10 |
 
-Both commands begin with the same precondition — label definitions must be available, loaded
-from the Google Drive Label Store if they are not here yet. See
-[step zero](#step-zero-make-sure-labels-are-available).
+It begins with a precondition — label definitions must be available, loaded from the Google
+Drive Label Store if they are not here yet. See
+[step zero](#step-zero-make-sure-labels-are-available). It stops after ten messages; see
+[every run handles at most ten messages](#every-run-handles-at-most-ten-messages).
 
-They then run the same two stages per message — **detection first, then derived**:
+Each message then goes through two stages — **detection first, then derived**:
 
 ```text
 Email
@@ -433,14 +434,15 @@ Derived labels
 IL/processed        (last, always)
 ```
 
-`process` is the everyday run: it looks at mail Inbox Labeler has not seen yet and leaves
-already-processed messages alone. `reprocess` re-evaluates everything against the current set
-of detection labels and replaces each message's previous outcome — that is what makes it the
-right choice after labels were added, changed, or deleted. Follow the flow that matches what
-the user asked for, and if the wording is genuinely ambiguous, ask which one they mean rather
-than guessing: `reprocess` rewrites Gmail labels that `process` would leave untouched.
+`process` looks at mail Inbox Labeler has not seen yet and leaves already-processed messages
+alone. `IL/processed` is what keeps them out of scope, so a run never redoes work and later runs
+continue with what is left — no cursor, no bookkeeping.
 
-Both commands share the same fundamentals. A **message** is the unit of work — never a
+**Labelling only ever moves forward.** A message keeps the labels it was given, so editing or
+deleting a label changes what *new* mail receives and leaves already-processed mail as it is. If
+a user expects a change to reach mail that was labelled earlier, say plainly that it will not.
+
+A **message** is the unit of work — never a
 thread. Only unread inbox messages are ever touched, so archived mail and read mail are out of
 scope in both commands. `IL/processed` records that a message was evaluated and `IL/nomatch`
 records that the evaluation produced no matches. Unread is only a scope filter — **never
@@ -477,6 +479,22 @@ The distinction between step 3 and step 5 is the one that matters. *Nothing conf
 normal state with an obvious next action; *something broken* must never be silently treated as
 *nothing there*, because that would relabel a mailbox from an empty rulebook.
 
+### Every run handles at most ten messages
+
+**A run processes no more than ten messages, and then stops.** Fewer is fine: if only three are
+eligible, a run handles three; if none are, it handles none. Everything beyond the tenth is
+left alone.
+
+The limit changes *how many* messages a run touches, never *which* ones. Selection, ordering
+and the per-message rules are untouched — the run simply ends early.
+
+Nothing is needed to keep the rest for later. An unhandled message never received
+`IL/processed`, so it is still in scope exactly as it was, and the next run continues in the
+same order. There is no cursor to keep and no state to write.
+
+Always say how many you handled and whether more remain, so the user knows another run is
+worth it.
+
 ### process
 
 1. Complete [step zero](#step-zero-make-sure-labels-are-available). Then resolve each label to
@@ -489,16 +507,17 @@ normal state with an obvious next action; *something broken* must never be silen
    `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display
    name. If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use
    `pageSize: 50`.
-4. **Follow pagination to the end.** Keep calling `search_threads` with the returned
-   `nextPageToken` until no next page token comes back. Process the complete result set —
-   there is no cap on how many messages you handle, and no "first page only" shortcut.
-   Narrow the query only if the user explicitly asked for a narrower scope (e.g.
-   "everything from today" → add `newer_than:1d`). That is selection; it does not change what
-   any selected message means.
+4. **Work through the pages in order, and stop at ten messages.** Keep calling `search_threads`
+   with the returned `nextPageToken` while you still need messages; once ten have been
+   processed, stop and fetch no further page. If the pages run out first, you are done — fewer
+   than ten is fine, and so is none. Narrow the query only if the user explicitly asked for a
+   narrower scope (e.g. "everything from today" → add `newer_than:1d`). That is selection; it
+   does not change what any selected message means.
 5. For each thread, call `get_thread` and pick out the individual messages that are in the
    inbox, unread, and lack the `IL/processed` id in `labelIds`. Gmail returns a whole thread
    when any one of its messages matches, so a result can mix in-scope and out-of-scope
-   messages — check every message and skip the ones that do not qualify.
+   messages — check every message and skip the ones that do not qualify. Take them in the order
+   the search returned them and count only the ones you actually process against the ten.
 6. **Detection stage.** For each in-scope message, work through the whole list of detection
    labels and decide each one independently, keeping the ones whose aspect is present. Subject,
    sender and snippet are usually enough; use the full body from `get_thread` when they are not.
@@ -507,8 +526,7 @@ normal state with an obvious next action; *something broken* must never be silen
 7. Apply the detection outcome with `label_message`, which branch depending on whether the set
    is empty:
    - **At least one detection label triggered** — apply the resolved business label of every
-     triggered label. If the message still carries `IL/nomatch` from an earlier run, remove it
-     with `unlabel_message`: detection found matches now, so that outcome no longer holds.
+     triggered label.
    - **No detection label triggered** — apply `IL/nomatch`.
 8. **Derived stage.** Evaluate every derived label against the message, using the detection
    result as context — see [The derived-label prompt](#the-derived-label-prompt). Apply the
@@ -520,67 +538,9 @@ normal state with an obvious next action; *something broken* must never be silen
 10. Report a short summary: how many messages were processed, which message got which business
     labels and why, which got `IL/nomatch`, and anything you were unsure about instead of
     guessing silently. Say which labels came from interpretation when a derived label triggered.
-
-### reprocess
-
-Use this when the user asks to reprocess, or to re-run the labels after changing them. The
-governing idea:
-
-> **Reprocess behaves as if Inbox Labeler had never seen the message before.**
-
-Because Inbox Labeler owns the whole `IL/` namespace, achieving that needs no bookkeeping:
-strip every `IL/` label off the message, then label it from scratch. There is no need to work
-out which Gmail label came from which label, or which labels have since been changed or
-deleted — anything in the namespace is Inbox Labeler's previous answer, and the previous answer
-is being discarded.
-
-1. Complete [step zero](#step-zero-make-sure-labels-are-available) — with no labels there is
-   nothing to re-evaluate against, and reprocess strips the existing outcome before it writes a
-   new one, so starting without definitions would clear a mailbox for nothing. Then resolve each
-   label to its Gmail name as in `process` step 1.
-2. Run `list_labels` and build the id map for the whole namespace: **every** label whose name
-   starts with `IL/`, not just the ones you expect. Create any Gmail label a current label
-   needs, plus `IL/processed` and `IL/nomatch`, with `create_label`.
-3. Find candidate threads with `search_threads`, query `in:inbox is:unread`, `pageSize: 50`.
-   There is deliberately no `-label:` filter: messages that already carry `IL/processed` are
-   included this time.
-4. **Follow pagination to the end**, exactly as in `process` — keep calling `search_threads`
-   with the returned `nextPageToken` until no next page token comes back, and handle the
-   complete result set.
-5. For each thread, call `get_thread` and pick out the messages that are in the inbox and
-   unread. `IL/processed` is not a disqualifier here, but read messages and messages outside
-   the inbox still are, so check `labelIds` per message.
-6. **Clear the namespace on that message.** Intersect its `labelIds` with the `IL/` ids from
-   step 2 and remove all of them in **one** `unlabel_message` call. Every label outside the
-   namespace is preserved untouched — Gmail's own labels and anything the user made stay
-   exactly as they are. (`labelIds` holds ids, not names, which is why step 2 maps the whole
-   namespace: an id you cannot resolve to an `IL/` name is not yours to remove.)
-7. **Detection stage.** Evaluate the message against every current detection label
-   independently, the same way as `process` step 6, keeping one line of evidence per match. The
-   message now carries no `IL/` labels at all, so judge it purely on its own content — this is a
-   first look, not a review of an earlier decision.
-8. Apply the detection business labels with `label_message`: the resolved label of every
-   triggered detection label. If no detection label matched, apply `IL/nomatch`.
-9. **Derived stage.** Evaluate every derived label with the detection result as context, exactly
-   as in `process` step 8, and apply the resolved label of each one that triggered. A derived
-   label whose `required_labels` did not all match is skipped.
-10. Apply any resulting **bucket label**. Bucket labels do not exist in this version, so this
-    step is a no-op today — when they arrive they slot in here, and step 6 already clears them
-    for free because they live in the namespace.
-11. Apply `IL/processed` last, once both stages finished and every outcome label is in place.
-12. Report a summary: how many messages were re-evaluated, what changed (labels gained, labels
-    lost, `IL/nomatch` set or cleared), what stayed the same, and any message you could not
-    complete.
-
-The outcome fully replaces the previous one, so a message that no longer matches `IL/Social`
-loses it, a message that was `IL/nomatch` and now matches `IL/Birthday` ends up with
-`IL/Birthday` alone, a Gmail label whose label was deleted disappears, and a message whose
-matches are unchanged ends up exactly as it was.
-
-Failure handling is per message. If a call fails partway through a message, leave
-`IL/processed` off that message, report it, and carry on with the remaining messages — one
-failure never aborts the run. A message left stripped and without `IL/processed` is in a safe
-state: the next `process` run picks it up again, because that is precisely its scope.
+    **If the run stopped at the ten-message limit, say so** and that another `process` run will
+    continue with the rest — otherwise the user has no way to tell a finished inbox from a
+    truncated run.
 
 ## The derived-label prompt
 
@@ -636,7 +596,7 @@ Keep each derived label's evaluation independent: one derived label's outcome is
 another. If a derived label needs a fact no detection label provides, the answer is a new
 detection label, not a longer derived instruction.
 
-Rules for both commands:
+Rules while processing:
 
 - **No labels, no processing.** Never touch a message before step zero has produced
   definitions. An empty rulebook does not mean "nothing matches" — it means the run should not
@@ -662,15 +622,15 @@ Rules for both commands:
 - **`IL/nomatch` reflects the detection stage.** A processed message carries either at least
   one detection business label or `IL/nomatch`, never both. Derived labels do not affect it.
 - **`IL/processed` is always last and always earned.** Never leave it on a message whose
-  evaluation did not complete successfully, in either command.
-- **Removal is confined to the `IL/` namespace.** Inside it, anything may be removed —
-  `reprocess` clears all of it, `process` drops a stale `IL/nomatch`. Outside it, nothing is
-  ever added or removed: Gmail's own labels (`INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`,
-  `CATEGORY_*`) and every user label are read-only. Never archive, mark as read, delete, or
-  reply — labelling is the entire job.
-- Work through the entire result set, however large, and label each message with everything
-  it triggered. Neither a long list of messages nor a long list of labels on one message
-  calls for stopping, sampling, or asking for confirmation.
+  evaluation did not complete successfully.
+- **Labelling only ever adds.** No label is removed from any message, inside the `IL/` namespace
+  or outside it. Gmail's own labels (`INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`, `CATEGORY_*`) and
+  every user label are read-only, and so is anything Inbox Labeler applied on an earlier run.
+  Never archive, mark as read, delete, or reply — labelling is the entire job.
+- **Never stop for the wrong reason.** Ten messages is the only limit. Within a run, size is
+  never a reason to pause: do not sample, do not ask for
+  confirmation because the inbox is large, and do not cut a message short because it triggered
+  many labels. Label each message with everything it triggered.
 - One failing message is not a failing run: report it and continue with the rest.
 - If Gmail tools are unavailable, do not fake it: report which messages you cannot reach and
   present the labelling decisions as a plan, applying nothing.

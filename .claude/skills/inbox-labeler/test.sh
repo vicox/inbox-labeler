@@ -378,9 +378,43 @@ PY
 check "process: detection -> IL/nomatch -> derived -> IL/processed" \
     "$(order_check '### process' '**Detection stage.**' 'apply `IL/nomatch`' \
         '**Derived stage.**' 'Apply `IL/processed` last')" "True"
-check "reprocess: detection -> IL/nomatch -> derived -> IL/processed" \
-    "$(order_check '### reprocess' '**Detection stage.**' 'apply `IL/nomatch`' \
-        '**Derived stage.**' 'Apply `IL/processed` last')" "True"
+check "the ten-message limit is documented" \
+    "$(order_check '### Every run handles at most ten messages' \
+        'no more than ten messages' 'Fewer is fine' 'never *which* ones' \
+        'never received `IL/processed`, so it is still in scope' \
+        'no cursor to keep')" \
+    "True"
+check "the limit is in the command table" \
+    "$(order_check 'Per run' 'process my inbox' 'at most 10')" "True"
+check "the process steps stop at ten" \
+    "$(order_check '### process' 'stop at ten messages' 'fetch no further page' \
+        'count only the ones you actually process against the ten')" "True"
+check "a truncated run must be reported as such" \
+    "$(order_check '### process' 'If the run stopped at the ten-message limit, say so' \
+        'a finished inbox from a truncated run')" "True"
+check "there is exactly one processing command" \
+    "$(order_check 'There is exactly one command' 'process my inbox')" "True"
+check "labelling is documented as forward-only" \
+    "$(order_check 'Labelling only ever moves forward' 'leaves already-processed mail as it is' \
+        'say plainly that it will not')" "True"
+check "labelling is documented as add-only" \
+    "$(order_check 'Rules while processing' 'Labelling only ever adds' \
+        'No label is removed from any message' 'read-only')" "True"
+check "nothing removes a label any more" \
+    "$(grep -c 'unlabel_message' "$SCRIPT_DIR/SKILL.md")" "0"
+check "the readme says nothing is removed" \
+    "$(grep -c 'Nothing is ever removed' "$SCRIPT_DIR/../../../README.md")" "1"
+check "no reprocess remains in the skill" \
+    "$(grep -ci 'reprocess' "$SCRIPT_DIR/SKILL.md")" "0"
+check "no reprocess remains in the readme" \
+    "$(grep -ci 'reprocess' "$SCRIPT_DIR/../../../README.md")" "0"
+check "size alone is still never a reason to stop" \
+    "$(order_check 'Rules while processing' 'Never stop for the wrong reason' \
+        'Ten messages is the only limit' 'do not sample' 'because the inbox is large')" "True"
+check "no stale no-cap claim remains" \
+    "$(grep -c 'no cap' "$SCRIPT_DIR/SKILL.md" "$SCRIPT_DIR/../../../README.md" | grep -c ':0$')" "2"
+check "the limit is fixed, not configurable" \
+    "$(grep -ciE 'configurable limit|--limit|max_messages|batch_size' "$SCRIPT_DIR/SKILL.md")" "0"
 check "step zero comes before both commands and covers all five outcomes" \
     "$(order_check '### Step zero: make sure labels are available' \
         'Look locally first' 'Non-empty' 'Empty' \
@@ -394,11 +428,10 @@ check "empty local means not loaded, not no labels" \
 check "broken is distinguished from missing" \
     "$(order_check '### Step zero' 'A broken document is not the same as no document' \
         'must never be silently treated as')" "True"
-check "both commands are gated on it" \
-    "$(order_check '### process' 'Complete [step zero]' '### reprocess' 'Complete [step zero]')" \
-    "True"
+check "process is gated on it" \
+    "$(order_check '### process' 'Complete [step zero]')" "True"
 check "the ownership boundary is stated in the rules" \
-    "$(order_check 'Rules for both commands' 'No labels, no processing' \
+    "$(order_check 'Rules while processing' 'No labels, no processing' \
         'Loading is the store' 'deciding is yours' 'Never put processing rules into it')" "True"
 check "the skill defers loading to the store rather than calling Drive" \
     "$(order_check '### Step zero' 'gdrive-label-store' 'Do not reach into Drive yourself')" "True"
@@ -479,7 +512,7 @@ check "selection is distinguished from evaluation" \
     "$(order_check '## Labels are timeless' 'choosing which messages to look at' \
         'selection, not evaluation')" "True"
 check "the processing rules restate it where evaluation happens" \
-    "$(order_check 'Rules for both commands' 'Judge every message as of the day it was written' \
+    "$(order_check 'Rules while processing' 'Judge every message as of the day it was written' \
         'Neither stage consults the current date')" "True"
 check "no guidance tells the agent to compare against the current date" \
     "$(grep -ciE "compare .{0,20}(against|to) (today|the current (date|time))|based on (today|the current date)|if (it|the email) is still" "$SCRIPT_DIR/SKILL.md")" \

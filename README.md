@@ -148,8 +148,8 @@ Everything the skill needs lives in its own directory.
 
 **Inbox Labeler owns the entire `IL/` namespace.** Every Gmail label starting with `IL/` is
 Inbox Labeler's to create, apply and remove — the namespace *is* its model, expressed as Gmail
-labels. Treat it as internal: don't create or maintain `IL/` labels by hand in Gmail, because a
-reprocess will overwrite anything it finds there. The way to get a new `IL/` label is to add a
+labels. Treat it as internal: don't create or maintain `IL/` labels by hand in Gmail, because
+Inbox Labeler assumes everything there is its own. The way to get a new `IL/` label is to add a
 label.
 
 Because the namespace belongs to Inbox Labeler rather than to any individual label, it never
@@ -238,55 +238,35 @@ these two to label mail:
 | Say | What it does |
 | --- | --- |
 | **"process my inbox"** | labels unread inbox mail that hasn't been processed yet |
-| **"reprocess my inbox"** | re-evaluates *every* unread inbox message against your current labels |
 
-Both use Claude's Gmail tools when they are connected; nothing runs on a schedule — you
+It uses Claude's Gmail tools when they are connected; nothing runs on a schedule — you
 trigger it.
 
-## process vs. reprocess
+## What `process` does
 
-`process` is the everyday run. It skips anything already carrying `IL/processed`, so it only
-ever looks at mail Inbox Labeler hasn't seen.
+A run handles **at most ten messages**, fewer if fewer are eligible. It skips anything already
+carrying `IL/processed`, so it only ever looks at mail Inbox Labeler hasn't seen — and anything
+beyond the tenth message keeps its place, because it never got `IL/processed` either. Run it
+again to work through a backlog; each run continues where the last one stopped, with no cursor
+to maintain.
 
-`reprocess` is for after you change your labels — added one, edited an instruction, deleted
-one. It ignores `IL/processed` and re-evaluates every unread inbox message against the current
-set. The rule it follows:
+Scope is **unread inbox messages only**. Archived mail and read mail are never touched, and the
+unread state itself is never changed.
 
-> **Reprocess behaves as if Inbox Labeler had never seen the message before.**
-
-It gets there by stripping every `IL/` label off the message and labelling it from scratch.
-Namespace ownership is what makes that safe — anything under `IL/` is Inbox Labeler's own
-previous answer, and that answer is being discarded:
-
-- a message that previously matched `IL/Social` but no longer does loses `IL/Social`
-- a message that had `IL/nomatch` and now matches `IL/Birthday` ends up with `IL/Birthday`
-- a Gmail label left over from a deleted or renamed label disappears
-- a message whose matches are unchanged ends up exactly as it was
-
-Practical consequences of the strip-and-relabel approach:
-
-- **deleting a label cleans up after itself** — its Gmail label vanishes from your mail on the
-  next reprocess, with no separate cleanup step
-- **renaming a label leaves no orphans** — the old name is stripped like any other `IL/` label
-- **future case and bucket labels participate automatically**, because they will live in the
-  namespace and be cleared along with everything else
-- **the model stays simple** — no record of which Gmail label came from which label, no
-  versioning, no migrations; ownership of the namespace replaces all of that bookkeeping
-
-Both commands share the same scope rules: **unread inbox messages only**. Archived mail and
-read mail are never touched, and the unread state itself is never changed.
+**Labelling only moves forward.** A message keeps the labels it was given. Editing a label's
+instruction changes what *new* mail receives; deleting a label stops it being applied in future.
+Neither reaches back to mail that was already processed — there is no command that revisits it,
+so a Gmail label already on a message stays until you remove it in Gmail yourself.
 
 ## How processing works
 
 Processing works on individual **messages**, not threads, and records both its state and its
 outcome with the two system labels:
 
-- `process` takes unread inbox messages that have no `IL/processed`; `reprocess` takes every
-  unread inbox message
-- the complete result set is handled — pagination is followed until there is no next page,
-  with no cap and no confirmation prompt for large runs
-- `reprocess` first clears the message's `IL/` labels — all of them, whatever they are
-- each message then goes through two stages, in this order:
+- the scope is unread inbox messages that have no `IL/processed`
+- **at most ten messages per run**, fewer if fewer are eligible
+- a run never pauses to ask because the inbox is large
+- each message goes through two stages, in this order:
 
 ```text
 Email
@@ -305,7 +285,7 @@ anything triggered:
 
 | Detection outcome | Gmail labels applied |
 | --- | --- |
-| at least one detection label triggered | every triggered business label; a stale `IL/nomatch` is removed |
+| at least one detection label triggered | every triggered business label |
 | nothing triggered | `IL/nomatch` |
 
 Then the derived stage runs. A derived label whose `required_labels` didn't all match is
@@ -315,8 +295,8 @@ skipped; the rest are evaluated and each one that triggers adds its business lab
 in place — so an interrupted or failed run leaves the message to be picked up again. A failure
 on one message is reported and the run continues with the rest.
 
-Removal is confined to the `IL/` namespace: inside it anything may be cleared, outside it
-nothing is ever added or removed.
+Nothing is ever removed. Labels are only added — Gmail's own labels are read-only, and so is
+anything Inbox Labeler applied on an earlier run.
 
 Unread is only a scope filter: the unread state is never changed, and it is never used as
 the processing state.
