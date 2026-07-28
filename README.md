@@ -1,4 +1,4 @@
-# Inbox Labeler (local prototype)
+# Inbox Labeler
 
 A Claude Agent Skill for keeping persistent **labels** and applying them to Gmail inbox mail
 on demand.
@@ -168,7 +168,6 @@ triggers adds its Gmail label, and none of them displaces another.
 ├── labels.example.json   documentation only, never read at runtime
 └── labels.json           the store — local, gitignored, created on first use
 README.md
-docs/working/             the original build instruction
 ```
 
 Everything the skill needs lives in its own directory.
