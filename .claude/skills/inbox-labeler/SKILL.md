@@ -415,7 +415,11 @@ background. Two commands exist:
 | "process my inbox" | **process** | unread inbox messages **without** `IL/processed` — new mail only |
 | "reprocess my inbox" | **reprocess** | **every** unread inbox message, including those already processed |
 
-Both commands run the same two stages per message — **detection first, then derived**:
+Both commands begin with the same precondition — label definitions must be available, loaded
+from the Google Drive Label Store if they are not here yet. See
+[step zero](#step-zero-make-sure-labels-are-available).
+
+They then run the same two stages per message — **detection first, then derived**:
 
 ```text
 Email
@@ -442,11 +446,42 @@ scope in both commands. `IL/processed` records that a message was evaluated and 
 records that the evaluation produced no matches. Unread is only a scope filter — **never
 change the unread state** (no marking as read) and never treat unread as the processing state.
 
+### Step zero: make sure labels are available
+
+**Every command starts here.** Processing without label definitions is meaningless, so before
+touching a single message, establish that they exist. This is the Inbox Labeler's job, not the
+store's — the store loads and saves a file, it does not decide when to.
+
+1. **Look locally first.** Run `python3 labels.py list`.
+   - **Non-empty** → the definitions are already here. Continue with the flow below and do not
+     go near Drive; the local store is what this run uses.
+   - **Empty** → nothing is loaded yet. Go to step 2. (`labels.py` creates an empty store on
+     first use, so an empty list means *not loaded*, not *no labels exist*.)
+2. **Load from the Google Drive Label Store.** Use the `gdrive-label-store` skill, which finds
+   the workspace folder, picks the newest `labels.json` and validates it before returning
+   anything. Do not reach into Drive yourself and do not reimplement its rules.
+3. **The store reports that no definitions exist** — no workspace folder, no `labels.json` in
+   it, or a document holding zero labels. **Stop.** Tell the user plainly that no labels are
+   configured, say which of those three it was, and offer to create some. Do not process
+   anything and do not invent a starter set.
+4. **The load succeeds.** Put the validated document in place as the local store, then run
+   `python3 labels.py list` once to confirm the Inbox Labeler reads it. Continue with the flow
+   below.
+5. **The load fails for a technical reason** — the Drive connector is not connected, the grant
+   sees nothing, the download breaks, the file is not valid JSON, or validation reports errors.
+   **Report the error verbatim and stop.** Do not fall back to an empty store, do not process
+   part of the inbox, and do not guess at definitions. A broken document is not the same as no
+   document: definitions exist and something is wrong with them, which is the user's to fix.
+
+The distinction between step 3 and step 5 is the one that matters. *Nothing configured* is a
+normal state with an obvious next action; *something broken* must never be silently treated as
+*nothing there*, because that would relabel a mailbox from an empty rulebook.
+
 ### process
 
-1. Run `python3 labels.py list`. If it is empty, say so and stop. Resolve each label to its Gmail
-   name — `Large amount` → `IL/Large amount` — and work with the resolved names from here on;
-   Gmail knows nothing about the unprefixed form.
+1. Complete [step zero](#step-zero-make-sure-labels-are-available). Then resolve each label to
+   its Gmail name — `Large amount` → `IL/Large amount` — and work with the resolved names from
+   here on; Gmail knows nothing about the unprefixed form.
 2. Run `list_labels` and note the ids of `IL/processed`, `IL/nomatch` and every resolved
    business label. Create any that are missing with `create_label`, passing the resolved name
    (the `IL` parent is created automatically).
@@ -499,8 +534,10 @@ out which Gmail label came from which label, or which labels have since been cha
 deleted — anything in the namespace is Inbox Labeler's previous answer, and the previous answer
 is being discarded.
 
-1. Run `python3 labels.py list`. If it is empty, say so and stop — with no labels there is
-   nothing to re-evaluate against. Resolve each label to its Gmail name as in `process` step 1.
+1. Complete [step zero](#step-zero-make-sure-labels-are-available) — with no labels there is
+   nothing to re-evaluate against, and reprocess strips the existing outcome before it writes a
+   new one, so starting without definitions would clear a mailbox for nothing. Then resolve each
+   label to its Gmail name as in `process` step 1.
 2. Run `list_labels` and build the id map for the whole namespace: **every** label whose name
    starts with `IL/`, not just the ones you expect. Create any Gmail label a current label
    needs, plus `IL/processed` and `IL/nomatch`, with `create_label`.
@@ -601,6 +638,13 @@ detection label, not a longer derived instruction.
 
 Rules for both commands:
 
+- **No labels, no processing.** Never touch a message before step zero has produced
+  definitions. An empty rulebook does not mean "nothing matches" — it means the run should not
+  have started, and treating the two alike would mark real mail as `IL/nomatch`.
+- **Loading is the store's job, deciding is yours.** The Inbox Labeler decides *whether* to
+  load, *when*, and what to do with each outcome. The `gdrive-label-store` skill only finds,
+  validates and returns the file. Never put processing rules into it, and never bypass it by
+  calling Drive tools from here.
 - **Detection first, derived second, always.** A derived label is never evaluated before the
   detection stage has finished for that message, because its input is the detection result.
 - **Judge every message as of the day it was written.** Neither stage consults the current date

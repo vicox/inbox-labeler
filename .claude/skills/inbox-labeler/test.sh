@@ -381,6 +381,30 @@ check "process: detection -> IL/nomatch -> derived -> IL/processed" \
 check "reprocess: detection -> IL/nomatch -> derived -> IL/processed" \
     "$(order_check '### reprocess' '**Detection stage.**' 'apply `IL/nomatch`' \
         '**Derived stage.**' 'Apply `IL/processed` last')" "True"
+check "step zero comes before both commands and covers all five outcomes" \
+    "$(order_check '### Step zero: make sure labels are available' \
+        'Look locally first' 'Non-empty' 'Empty' \
+        'Load from the Google Drive Label Store' \
+        'The store reports that no definitions exist' 'Stop.' \
+        'The load succeeds' \
+        'The load fails for a technical reason' 'Report the error verbatim and stop.')" \
+    "True"
+check "empty local means not loaded, not no labels" \
+    "$(order_check '### Step zero' 'an empty list means *not loaded*, not *no labels exist*')" "True"
+check "broken is distinguished from missing" \
+    "$(order_check '### Step zero' 'A broken document is not the same as no document' \
+        'must never be silently treated as')" "True"
+check "both commands are gated on it" \
+    "$(order_check '### process' 'Complete [step zero]' '### reprocess' 'Complete [step zero]')" \
+    "True"
+check "the ownership boundary is stated in the rules" \
+    "$(order_check 'Rules for both commands' 'No labels, no processing' \
+        'Loading is the store' 'deciding is yours' 'Never put processing rules into it')" "True"
+check "the skill defers loading to the store rather than calling Drive" \
+    "$(order_check '### Step zero' 'gdrive-label-store' 'Do not reach into Drive yourself')" "True"
+check "no Drive tool is named in the inbox labeler skill" \
+    "$(grep -ciE 'search_files|download_file_content|create_file\(|get_file_metadata' "$SCRIPT_DIR/SKILL.md")" \
+    "0"
 check "the derived prompt lists its four inputs in order" \
     "$(order_check '## The derived-label prompt' '**the email**' \
         '**the detection labels that matched**' '**the evidence**' "derived label's instruction")" \
