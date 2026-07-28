@@ -18,6 +18,16 @@ folder first, then the files inside it** — never search Drive-wide for `labels
 This skill loads those definitions and saves them back. It does nothing else: no Gmail, no
 email processing, no label interpretation. Those belong to the `inbox-labeler` skill.
 
+The two operations are not symmetric about the workspace folder, on purpose:
+
+| | If `Inbox Labeler` is missing |
+| --- | --- |
+| **load** | report that no label definitions were found, and **create nothing** |
+| **save** | **create the folder** and carry on, without asking |
+
+A load is read-only: it either finds something to read or says there is nothing. A save has
+something to write and is allowed to make room for it.
+
 ## Newest wins
 
 Saving creates a **new** `labels.json` in the folder. Earlier ones stay where they are, and
@@ -49,13 +59,16 @@ python3 label_store.py format   FILE [--write]  # stable, human-readable JSON
 
 ## Load labels
 
+**Loading never writes anything.** It reads, or it reports that there is nothing to read.
+
 1. **Find the workspace folder.** `search_files` with:
    ```text
    title = 'Inbox Labeler' and mimeType = 'application/vnd.google-apps.folder'
    ```
-   Empty result → stop and report: *the workspace folder "Inbox Labeler" does not exist in
-   Drive.* Do not create it and do not fall back to another folder. More than one match → stop
-   and ask which one; guessing risks reading the wrong workspace.
+   Empty result → stop and report: *no label definitions were found — the workspace folder
+   "Inbox Labeler" does not exist in Drive.* **Do not create it**, even though saving would, and
+   do not fall back to another folder. More than one match → stop and ask which one; guessing
+   risks reading the wrong workspace.
 2. **Find every `labels.json` in it.** `search_files` with:
    ```text
    parentId = '<folder id>' and title = 'labels.json'
@@ -79,18 +92,31 @@ The local copy is scratch. Drive holds the truth, so never leave a change only i
 
 ## Save labels
 
+**Saving creates the workspace when it has to.** That is the one asymmetry with loading, and it
+is deliberate: a load has nothing to read and says so, while a save has something to write and
+needs somewhere to put it.
+
 1. **Validate.** A document that fails validation is never uploaded.
 2. **Serialise stably**, so a diff between versions shows the real change and nothing else:
    ```bash
    python3 label_store.py format /tmp/labels-work/labels.json --write
    ```
-3. **Create a new file** in the workspace folder with `create_file`:
+3. **Find the workspace folder**, with the same query the load uses.
+   - **It exists** → use it, and add to it. Never create a second folder of the same name.
+   - **It does not exist** → **create it, without asking.** `create_file` with
+     `title` = `Inbox Labeler` and `contentMimeType` =
+     `application/vnd.google-apps.folder`, and no `parentId`, which puts it in My Drive. Say
+     that you created it in the report; do not turn it into a question.
+   - **Several exist** → stop and ask which one. Creating is unambiguous, choosing between
+     existing workspaces is not.
+4. **Create a new file** in that folder with `create_file`:
    - `parentId` — the folder id
    - `title` — `labels.json`
    - `contentMimeType` — `application/json`
    - `disableConversionToGoogleType` — `true`, or Drive turns it into a Google Doc
    - `textContent` — the serialised document
-4. **Report** the new file id and how many `labels.json` files the folder now holds.
+5. **Report** the new file id, whether the folder had to be created, and how many `labels.json`
+   files the folder now holds.
 
 Do not try to replace or delete the previous version. There is no update-in-place and no delete
 tool, and the newest file is canonical anyway.

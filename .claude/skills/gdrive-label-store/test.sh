@@ -285,5 +285,44 @@ check "the canonical location is declared once" \
     "Inbox Labeler/labels.json"
 
 echo
+echo "--- documented behaviour: load reads, save may create the workspace ---"
+order_check() {  # order_check <marker> ... -> True when each follows the previous one
+    # Whitespace is collapsed on both sides, so markers survive line rewrapping.
+    SKILL="$SCRIPT_DIR/SKILL.md" python3 - "$@" <<'PY'
+import os, re, sys
+flat = re.sub(r"\s+", " ", open(os.environ["SKILL"], encoding="utf-8").read())
+start = 0
+for marker in sys.argv[1:]:
+    index = flat.find(re.sub(r"\s+", " ", marker), start)
+    if index < 0:
+        print("OUT OF ORDER OR MISSING: %s" % marker)
+        raise SystemExit
+    start = index + 1
+print(True)
+PY
+}
+check "the asymmetry is stated up front" \
+    "$(order_check 'not symmetric about the workspace folder' \
+        'If `Inbox Labeler` is missing' \
+        'report that no label definitions were found, and **create nothing**' \
+        'create the folder** and carry on, without asking')" \
+    "True"
+check "load is read-only and creates nothing" \
+    "$(order_check '## Load labels' 'Loading never writes anything' \
+        'no label definitions were found' 'Do not create it')" "True"
+check "save creates the folder when it is missing, without asking" \
+    "$(order_check '## Save labels' 'Saving creates the workspace when it has to' \
+        'It does not exist' 'create it, without asking' \
+        'application/vnd.google-apps.folder' 'do not turn it into a question')" \
+    "True"
+check "save reuses an existing folder" \
+    "$(order_check '## Save labels' 'It exists' 'Never create a second folder of the same name')" \
+    "True"
+check "several folders is still a question" \
+    "$(order_check '## Save labels' 'Several exist' 'stop and ask which one')" "True"
+check "the report says whether the folder was created" \
+    "$(order_check '## Save labels' 'whether the folder had to be created')" "True"
+
+echo
 printf '%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
