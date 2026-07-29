@@ -200,7 +200,6 @@ compares or reports one:
 | Kind | Origin | Label | In Gmail |
 | --- | --- | --- | --- |
 | **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
-| **bucket labels** | future label kind, not in this version | — | — |
 | **system labels** | Inbox Labeler's own state and outcome | `processed`, `no-match` | `IL/processed`, `IL/no-match` |
 
 Nothing in Gmail distinguishes a derived label's output from a detection label's — they are

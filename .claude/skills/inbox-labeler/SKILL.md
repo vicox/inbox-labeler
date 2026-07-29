@@ -174,7 +174,6 @@ Every kind of Gmail label Inbox Labeler works with lives inside it:
 | Kind | Origin | Logical label | Gmail label |
 | --- | --- | --- | --- |
 | **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
-| **bucket labels** | future label kind, not part of this version | — | — |
 | **system labels** | Inbox Labeler's own state and outcome | `processed`, `no-match` | `IL/processed`, `IL/no-match` |
 
 Both label types produce business labels; nothing in Gmail distinguishes a derived label's

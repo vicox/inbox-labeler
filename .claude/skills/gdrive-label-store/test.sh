@@ -117,7 +117,7 @@ check "reports it" "$(has_error blank.json 'label must not be empty')" "yes"
 printf '[{"label": "X", "instruction": "x"}]\n' > notype.json
 err "a label without a type" -- validate notype.json
 check "reports it" "$(has_error notype.json 'type must be a string')" "yes"
-printf '[{"label": "X", "type": "bucket", "instruction": "x"}]\n' > badtype.json
+printf '[{"label": "X", "type": "nonsense", "instruction": "x"}]\n' > badtype.json
 err "an unknown type" -- validate badtype.json
 check "lists the known types" "$(has_error badtype.json 'unknown type')" "yes"
 printf '[{"label": "X", "type": "detection"}]\n' > noinstr.json
