@@ -18,7 +18,7 @@ apply when that aspect is present.
 {
   "label": "Delivery arriving soon",
   "type": "detection",
-  "attention": "temporary",
+  "attention": "high",
   "instruction": "The message says a delivery is arriving today or in the next few days."
 }
 ```
@@ -52,21 +52,16 @@ thing that lets Inbox Labeler touch your mailbox rather than just annotate it.
 | --- | --- |
 | `none` | marked read once the message is 24h old |
 | `normal` | *(the default)* nothing at all |
-| `temporary` | starred; once the message is 2d old, the star is removed |
 | `high` | starred, and it stays starred |
 
 Attention is **not** a label. It is computed per message from the labels that are on it, and the
-**strongest one wins** — `high` > `temporary` > `normal` > `none`. A message with no labels comes
-out `normal`, so it is left alone. The policies above are fixed and not configurable.
+**strongest one wins** — `high` > `normal` > `none`. A message with no labels comes out `normal`,
+so it is left alone. The policies above are fixed and not configurable.
 
 None of this happens on its own. **Say "apply attention"** and it runs over already-labelled
 mail — unread messages carrying `IL/processed`. It reads the labels that are already there,
 never the email, and it never adds or removes an Inbox Labeler label. `process` labels; `attention`
 acts on those labels. Two commands, two jobs.
-
-One thing to know before using `temporary` or `high`: Inbox Labeler cannot tell its own star from
-one you set by hand, so when a `temporary` level expires it removes the star it finds. If you
-star mail yourself, keep that in mind.
 
 ## Label types
 
@@ -400,11 +395,11 @@ python3 labels.py delete "Invoice"
 
 # set what a label asks of you
 python3 labels.py update "Newsletter" --attention none
-python3 labels.py update "Imminent" --attention temporary
+python3 labels.py update "Imminent" --attention high
 
 # the two helpers the attention command uses — these touch nothing
 python3 labels.py attention "Invoice" "Imminent"    # which level do these labels add up to?
-python3 labels.py policy temporary --age 30h        # and what follows for a 30h old message?
+python3 labels.py policy none --age 30h             # and what follows for a 30h old message?
 ```
 
 `--label` takes the label itself — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`

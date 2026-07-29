@@ -20,7 +20,7 @@
   {
     "label": "Delivery arriving soon",
     "type": "detection",
-    "attention": "temporary",
+    "attention": "high",
     "instruction": "The message says a delivery arrives today or within the next few days, as of when it was written."
   },
   {

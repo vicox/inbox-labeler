@@ -364,14 +364,14 @@ ok "attention defaults to normal" -- create --label "Invoice" --instruction "x"
 check "stored as normal" "$(field "Invoice" attention)" "normal"
 ok "none" -- create --label "Newsletter" --attention none --instruction "x"
 ok "marketing, also none" -- create --label "Marketing" --attention none --instruction "x"
-ok "temporary" -- create --label "Delivery arriving soon" --attention temporary --instruction "x"
 ok "high" -- create --label "Contract" --attention high --instruction "x"
 ok "case-insensitive" -- create --label "Shouty" --attention "HIGH" --instruction "x"
 check "normalised to lowercase" "$(field "Shouty" attention)" "high"
 ok "cleanup shouty" -- delete "Shouty"
 err "an unknown level is rejected" -- create --label "Nope" --attention urgent --instruction "x"
-ok "it can be changed" -- update "Invoice" --attention temporary
-check "the change stuck" "$(field "Invoice" attention)" "temporary"
+err "temporary is not a level" -- create --label "Nope" --attention temporary --instruction "x"
+ok "it can be changed" -- update "Invoice" --attention high
+check "the change stuck" "$(field "Invoice" attention)" "high"
 ok "and back" -- update "Invoice" --attention normal
 check "it survives a rename" \
     "$(python3 labels.py update "Contract" --label "Signed contract" >/dev/null; field "Signed contract" attention)" \
@@ -383,17 +383,17 @@ echo "--- attention: strongest level wins ---"
 agg() { python3 labels.py attention "$@" | python3 -c 'import json,sys;print(json.load(sys.stdin)["attention"])'; }
 check "none + none -> none" "$(agg "Newsletter" "Marketing")" "none"
 check "normal + none -> normal" "$(agg "Invoice" "Newsletter")" "normal"
-check "normal + temporary -> temporary" "$(agg "Invoice" "Delivery arriving soon")" "temporary"
-check "high + temporary -> high" "$(agg "Contract" "Delivery arriving soon")" "high"
+check "high + normal -> high" "$(agg "Contract" "Invoice")" "high"
+check "high + none -> high" "$(agg "Contract" "Newsletter")" "high"
 check "no labels -> normal" "$(agg)" "normal"
-check "order does not matter" "$(agg "Delivery arriving soon" "Contract")" "high"
+check "order does not matter" "$(agg "Newsletter" "Contract")" "high"
 check "lookup is case-insensitive" "$(agg "contract")" "high"
 check "an unknown label is reported, not guessed" \
     "$(python3 labels.py attention "Ghost" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["unknown"][0], d["attention"])')" \
     "Ghost normal"
 check "the levels are ranked weakest first" \
     "$(python3 -c 'import labels;print(",".join(labels.ATTENTION_LEVELS))')" \
-    "none,normal,temporary,high"
+    "none,normal,high"
 
 echo
 echo "--- attention: the fixed policies ---"
@@ -401,23 +401,26 @@ check "none marks read after 24h" \
     "$(python3 -c 'import labels;print(labels.ATTENTION_POLICIES["none"]["mark_read_after"])')" "24h"
 check "normal has no policy" \
     "$(python3 -c 'import labels;print(labels.ATTENTION_POLICIES["normal"])')" "{}"
-check "temporary stars and expires after 2d" \
-    "$(python3 -c 'import labels;p=labels.ATTENTION_POLICIES["temporary"];print(p["star"],p["expires_after"])')" \
-    "True 2d"
 check "high just stars" \
     "$(python3 -c 'import labels;print(labels.ATTENTION_POLICIES["high"])')" "{'star': True}"
+check "no policy expires" \
+    "$(python3 -c 'import labels;print(sum("expires_after" in p for p in labels.ATTENTION_POLICIES.values()))')" \
+    "0"
 acts() { python3 labels.py policy "$1" --age "$2" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["actions"]))'; }
+check "high stars a fresh message" "$(acts high 1h)" "star"
 check "high stars, whatever the age" "$(acts high 900d)" "star"
-check "temporary stars inside the window" "$(acts temporary 1h)" "star"
-check "temporary still stars at 47h" "$(acts temporary 47h)" "star"
-check "temporary unstars once expired" "$(acts temporary 3d)" "unstar"
+check "starring never marks read" "$(acts high 900d | grep -c mark_read)" "0"
 check "normal does nothing, ever" "$(acts normal 900d)" ""
 check "none does nothing before 24h" "$(acts none 1h)" ""
 check "none marks read after 24h" "$(acts none 30h)" "mark_read"
-check "expiry never marks read" \
-    "$(acts temporary 900d | grep -c mark_read)" "0"
+check "no level ever unstars" \
+    "$(for l in none normal high; do for a in 1h 30h 3d 900d; do acts "$l" "$a"; done; done | grep -c unstar)" \
+    "0"
 check "an unknown level is rejected by the parser" \
     "$(python3 labels.py policy urgent --age 1h >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "rejected"
+check "temporary is rejected by the parser too" \
+    "$(python3 labels.py policy temporary --age 1h >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
     "rejected"
 
 echo
@@ -467,15 +470,19 @@ check "the attention command is documented, explicit and label-driven" \
 check "the attention concept precedes the command" \
     "$(order_check '## Attention' 'Attention is not a label' 'strongest level' \
         'The policies are fixed, not configurable' '### attention')" "True"
-check "the four levels and their effects are documented" \
-    "$(order_check '## Attention' 'mark_read_after: 24h' 'star: true' 'expires_after: 2d' \
-        'remove the star')" "True"
+check "the three levels and their effects are documented" \
+    "$(order_check '## Attention' 'mark_read_after: 24h' 'star: true' \
+        'keep it starred')" "True"
+check "no temporary level remains in the skill" \
+    "$(grep -ciE '`temporary`|unstar|expires_after|remove the star' "$SCRIPT_DIR/SKILL.md")" "0"
+check "no temporary level remains in the readme" \
+    "$(grep -ciE '`temporary`|unstar|expires_after|remove the star' "$SCRIPT_DIR/../../../README.md")" "0"
 check "process and attention are documented as disjoint" \
     "$(order_check 'apply attention' 'The two never overlap' \
         'never part of a `process` run')" "True"
 check "the example store shows the levels" \
     "$(python3 -c "import json;print(','.join(sorted({e['attention'] for e in json.load(open('$SCRIPT_DIR/labels.example.json'))})))")" \
-    "high,none,normal,temporary"
+    "high,none,normal"
 check "there is exactly one processing command" \
     "$(order_check 'There is exactly one command' 'process my inbox')" "True"
 check "labelling is documented as forward-only" \
@@ -488,8 +495,8 @@ check "process is documented as add-only" \
 check "removal appears only in the attention command" \
     "$(grep -c 'unlabel_message' "$SCRIPT_DIR/SKILL.md")" \
     "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'unlabel_message')"
-check "and only for the two Gmail flags" \
-    "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'unlabel_message')" "2"
+check "and only for UNREAD" \
+    "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'unlabel_message')" "1"
 check "the readme says process only adds labels" \
     "$(grep -c 'only ever adds labels' "$SCRIPT_DIR/../../../README.md")" "1"
 check "no reprocess remains in the skill" \

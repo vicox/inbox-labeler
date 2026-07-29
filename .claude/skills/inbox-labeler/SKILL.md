@@ -12,7 +12,7 @@ Gmail label to apply when that aspect is present:
 | --- | --- |
 | `label` | the label itself — its identity and its display text, e.g. `Delivery arriving soon` |
 | `type` | how the label decides whether it applies: `detection` or `derived` |
-| `attention` | what the label asks of the user: `none`, `normal`, `temporary` or `high`. Defaults to `normal` |
+| `attention` | what the label asks of the user: `none`, `normal` or `high`. Defaults to `normal` |
 | `instruction` | how you decide whether that aspect is present in a message, in natural language |
 | `required_labels` | *derived only* — detection labels that must all have matched before this label is evaluated |
 | `recommended_labels` | *derived only* — detection labels offered as context when they matched |
@@ -556,16 +556,15 @@ computed per message. It is never written to Gmail and never stored on a message
 | --- | --- |
 | `none` | the user never needs to see this |
 | `normal` | *(the default)* leave the message alone |
-| `temporary` | worth attention for a while, then no longer |
 | `high` | important, and stays important |
 
-**The strongest level among the labels a message carries wins**, ranked
-`high` > `temporary` > `normal` > `none`. A message with no labels at all comes out `normal`, so
-it is left alone. Never rank the levels by eye:
+**The strongest level among the labels a message carries wins**, ranked `high` > `normal` >
+`none`. A message with no labels at all comes out `normal`, so it is left alone. Never rank the
+levels by eye:
 
 ```bash
 python3 labels.py attention "Invoice" "Delivery arriving soon"
-# {"attention": "temporary", "from": {...}, "unknown": []}
+# {"attention": "high", "from": {...}, "unknown": []}
 ```
 
 The policies are fixed, not configurable:
@@ -574,14 +573,13 @@ The policies are fixed, not configurable:
 | --- | --- | --- |
 | `none` | `mark_read_after: 24h` | mark read once the message is 24h old, otherwise nothing |
 | `normal` | — | nothing |
-| `temporary` | `star: true`, `expires_after: 2d` | star it; once it is 2d old, remove the star |
 | `high` | `star: true` | star it, and keep it starred |
 
 Ask for the decision rather than deriving it:
 
 ```bash
-python3 labels.py policy temporary --age 30h
-# {"attention": "temporary", "actions": ["star"]}
+python3 labels.py policy high --age 30h
+# {"attention": "high", "actions": ["star"]}
 ```
 
 Ages count from **when the message was received**, which is the only timestamp available.
@@ -611,7 +609,6 @@ labelling, `attention` owns the Gmail state that follows from it.
 7. Ask `python3 labels.py policy <level> --age <age of the message>` and carry out what it
    returns:
    - `star` → `label_message` with `STARRED`
-   - `unstar` → `unlabel_message` with `STARRED`
    - `mark_read` → `unlabel_message` with `UNREAD`
    - nothing → leave the message untouched
 

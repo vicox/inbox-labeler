@@ -128,6 +128,14 @@ check "names the wrong type" "$(has_error numinstr.json 'must be a string, not a
 printf '[{"label": "X", "type": "detection", "instruction": "x", "colour": "red"}]\n' > extra.json
 err "an unknown property" -- validate extra.json
 check "reports it" "$(has_error extra.json "unknown property 'colour'")" "yes"
+printf '[{"label": "X", "type": "detection", "attention": "high", "instruction": "x"}]\n' > att.json
+ok "a known attention level" -- validate att.json
+printf '[{"label": "X", "type": "detection", "attention": "temporary", "instruction": "x"}]\n' > badatt.json
+err "an unknown attention level" -- validate badatt.json
+check "lists the known levels" "$(has_error badatt.json 'unknown attention')" "yes"
+check "the levels mirror the Inbox Labeler's" \
+    "$(python3 -c 'import label_store;print(",".join(label_store.ATTENTION_LEVELS))')" \
+    "none,normal,high"
 
 echo
 echo "--- labels identify uniquely, ignoring case ---"

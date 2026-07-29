@@ -59,14 +59,13 @@ RESERVED_LABELS = {
 # What a label asks of the user. Attention is not a label and is not stored per
 # message: the `attention` command computes it from the labels a message has,
 # strongest first, and turns it into Gmail actions.
-ATTENTION_LEVELS = ("none", "normal", "temporary", "high")
+ATTENTION_LEVELS = ("none", "normal", "high")
 DEFAULT_ATTENTION = "normal"
 
 # What the `attention` command does at each level. Fixed, not configurable.
 ATTENTION_POLICIES = {
     "none": {"mark_read_after": "24h"},
     "normal": {},
-    "temporary": {"star": True, "expires_after": "2d"},
     "high": {"star": True},
 }
 
@@ -168,7 +167,6 @@ def attention_actions(attention, age_seconds):
     `age_seconds` is how long ago the message was received. Returns action names:
 
         star        add Gmail's star
-        unstar      remove it, because a temporary level has expired
         mark_read   clear UNREAD
 
     Labels are deliberately not an input, and no action ever touches an `IL/`
@@ -182,9 +180,6 @@ def attention_actions(attention, age_seconds):
     age = max(0, int(age_seconds))
 
     if policy.get("star"):
-        expires_after = policy.get("expires_after")
-        if expires_after and age >= parse_duration(expires_after):
-            return ["unstar"]
         return ["star"]
     mark_read_after = policy.get("mark_read_after")
     if mark_read_after and age >= parse_duration(mark_read_after):

@@ -44,7 +44,7 @@ LABEL_TYPES = {
 COMMON_FIELDS = ("label", "type", "attention")
 
 # What a label asks of the user, mirrored from the Inbox Labeler skill.
-ATTENTION_LEVELS = ("none", "normal", "temporary", "high")
+ATTENTION_LEVELS = ("none", "normal", "high")
 REFERENCE_FIELDS = tuple(
     field for spec in LABEL_TYPES.values() for field in spec.get("references", ())
 )
