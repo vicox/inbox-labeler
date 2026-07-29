@@ -362,6 +362,7 @@ echo "--- attention: the field ---"
 rm -f labels.json
 ok "attention defaults to normal" -- create --label "Invoice" --instruction "x"
 check "stored as normal" "$(field "Invoice" attention)" "normal"
+ok "receipt, also normal" -- create --label "Receipt" --instruction "x"
 ok "none" -- create --label "Newsletter" --attention none --instruction "x"
 ok "marketing, also none" -- create --label "Marketing" --attention none --instruction "x"
 ok "high" -- create --label "Contract" --attention high --instruction "x"
@@ -379,21 +380,24 @@ check "it survives a rename" \
 ok "rename back" -- update "Signed contract" --label "Contract"
 
 echo
-echo "--- attention: strongest level wins ---"
+echo "--- attention: the highest-priority level wins ---"
 agg() { python3 labels.py attention "$@" | python3 -c 'import json,sys;print(json.load(sys.stdin)["attention"])'; }
 check "none + none -> none" "$(agg "Newsletter" "Marketing")" "none"
-check "normal + none -> normal" "$(agg "Invoice" "Newsletter")" "normal"
+check "normal + normal -> normal" "$(agg "Invoice" "Receipt")" "normal"
+check "normal + none -> none" "$(agg "Invoice" "Newsletter")" "none"
 check "high + normal -> high" "$(agg "Contract" "Invoice")" "high"
 check "high + none -> high" "$(agg "Contract" "Newsletter")" "high"
+check "high + none + normal -> high" "$(agg "Contract" "Newsletter" "Invoice")" "high"
 check "no labels -> normal" "$(agg)" "normal"
-check "order does not matter" "$(agg "Newsletter" "Contract")" "high"
+check "order does not matter for none over normal" "$(agg "Newsletter" "Invoice")" "none"
+check "order does not matter for high" "$(agg "Newsletter" "Contract")" "high"
 check "lookup is case-insensitive" "$(agg "contract")" "high"
 check "an unknown label is reported, not guessed" \
     "$(python3 labels.py attention "Ghost" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["unknown"][0], d["attention"])')" \
     "Ghost normal"
-check "the levels are ranked weakest first" \
+check "the levels are ranked by priority, lowest first" \
     "$(python3 -c 'import labels;print(",".join(labels.ATTENTION_LEVELS))')" \
-    "none,normal,high"
+    "normal,none,high"
 
 echo
 echo "--- attention: the fixed policies ---"
@@ -468,8 +472,19 @@ check "the attention command is documented, explicit and label-driven" \
         'labels.py attention' 'labels.py policy')" \
     "True"
 check "the attention concept precedes the command" \
-    "$(order_check '## Attention' 'Attention is not a label' 'strongest level' \
+    "$(order_check '## Attention' 'Attention is not a label' 'highest-priority level' \
         'The policies are fixed, not configurable' '### attention')" "True"
+check "the priority order is documented as a rule, not a list" \
+    "$(order_check '## Attention' '`high` > `none` > `normal`' \
+        'one label at `high` → `high`' 'one label at `none` → `none`' 'otherwise → `normal`' \
+        'absence* of a request')" "True"
+check "the worked case for none over normal is shown" \
+    "$(order_check '`high` > `none` > `normal`' 'labels.py attention "Invoice" "Newsletter"' \
+        '{"attention": "none"')" "True"
+check "the readme documents the same order" \
+    "$(grep -c 'highest-priority one wins\*\* — `high` > `none` > `normal`' "$SCRIPT_DIR/../../../README.md")" "1"
+check "no stale ranking remains" \
+    "$(grep -c '`high` > `normal` > `none`' "$SCRIPT_DIR/SKILL.md" "$SCRIPT_DIR/../../../README.md" | grep -c ':0$')" "2"
 check "the three levels and their effects are documented" \
     "$(order_check '## Attention' 'mark_read_after: 24h' 'star: true' \
         'keep it starred')" "True"

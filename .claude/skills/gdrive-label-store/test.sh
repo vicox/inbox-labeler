@@ -135,7 +135,7 @@ err "an unknown attention level" -- validate badatt.json
 check "lists the known levels" "$(has_error badatt.json 'unknown attention')" "yes"
 check "the levels mirror the Inbox Labeler's" \
     "$(python3 -c 'import label_store;print(",".join(label_store.ATTENTION_LEVELS))')" \
-    "none,normal,high"
+    "normal,none,high"
 
 echo
 echo "--- labels identify uniquely, ignoring case ---"

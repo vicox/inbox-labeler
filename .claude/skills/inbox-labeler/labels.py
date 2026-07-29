@@ -57,9 +57,13 @@ RESERVED_LABELS = {
 }
 
 # What a label asks of the user. Attention is not a label and is not stored per
-# message: the `attention` command computes it from the labels a message has,
-# strongest first, and turns it into Gmail actions.
-ATTENTION_LEVELS = ("none", "normal", "high")
+# message: the `attention` command computes it from the labels a message has and
+# turns it into Gmail actions.
+#
+# The order is the priority aggregation follows, lowest first. `normal` is the
+# absence of a request, so any label that does ask for something outranks it,
+# and `high` outranks `none`.
+ATTENTION_LEVELS = ("normal", "none", "high")
 DEFAULT_ATTENTION = "normal"
 
 # What the `attention` command does at each level. Fixed, not configurable.
@@ -143,10 +147,12 @@ def parse_duration(value):
 
 
 def effective_attention(triggered):
-    """The strongest attention among the labels a message carries.
+    """The highest-priority attention among the labels a message carries.
 
-    Nothing else is consulted: not the email, not the clock. A message with no
-    labels comes out at the default, so it is left alone.
+    One `high` makes it `high`; failing that, one `none` makes it `none`;
+    otherwise it stays `normal`. Nothing else is consulted: not the email, not
+    the clock. A message with no labels comes out at the default, so it is left
+    alone.
     """
     levels = []
     for entry in triggered or []:
@@ -301,7 +307,7 @@ def validate(entry, existing, own=None):
 
     if cleaned["attention"] not in ATTENTION_LEVELS:
         raise ValidationError(
-            "unknown attention %r — levels, weakest first: %s"
+            "unknown attention %r — levels, lowest priority first: %s"
             % (cleaned["attention"], ", ".join(ATTENTION_LEVELS))
         )
 

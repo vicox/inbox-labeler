@@ -55,8 +55,13 @@ thing that lets Inbox Labeler touch your mailbox rather than just annotate it.
 | `high` | starred, and it stays starred |
 
 Attention is **not** a label. It is computed per message from the labels that are on it, and the
-**strongest one wins** — `high` > `normal` > `none`. A message with no labels comes out `normal`,
-so it is left alone. The policies above are fixed and not configurable.
+**highest-priority one wins** — `high` > `none` > `normal`. One `high` label makes the message
+`high`; failing that, one `none` label makes it `none`; otherwise it stays `normal`.
+
+`normal` comes last because it is the absence of a request, not a request to be left alone: a
+`Newsletter` label at `none` on the same message as an `Invoice` at `normal` still gets the mail
+marked read, because `none` is the only thing either label actually asked for. A message with no
+labels comes out `normal`, so it is left alone. The policies above are fixed and not configurable.
 
 None of this happens on its own. **Say "apply attention"** and it runs over already-labelled
 mail — unread messages carrying `IL/processed`. It reads the labels that are already there,

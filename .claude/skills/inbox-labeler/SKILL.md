@@ -591,13 +591,27 @@ computed per message. It is never written to Gmail and never stored on a message
 | `normal` | *(the default)* leave the message alone |
 | `high` | important, and stays important |
 
-**The strongest level among the labels a message carries wins**, ranked `high` > `normal` >
-`none`. A message with no labels at all comes out `normal`, so it is left alone. Never rank the
-levels by eye:
+**The highest-priority level among the labels a message carries wins**, ranked `high` > `none` >
+`normal`:
+
+- one label at `high` → `high`
+- otherwise, one label at `none` → `none`
+- otherwise → `normal`
+
+`normal` loses to both because it is the *absence* of a request — the default a label gets when
+nothing was said about it. A label that does ask for something outranks it, and asking for
+attention outranks asking for none. So `Invoice` (`normal`) together with `Newsletter` (`none`)
+comes out `none`: the one label with an opinion is the one that has it. A message with no labels
+at all comes out `normal`, so it is left alone.
+
+Never rank the levels by eye:
 
 ```bash
 python3 labels.py attention "Invoice" "Delivery arriving soon"
 # {"attention": "high", "from": {...}, "unknown": []}
+
+python3 labels.py attention "Invoice" "Newsletter"
+# {"attention": "none", "from": {...}, "unknown": []}
 ```
 
 The policies are fixed, not configurable:
