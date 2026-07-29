@@ -1,7 +1,15 @@
 # Inbox Labeler
 
-A Claude Agent Skill for keeping persistent **labels** and applying them to Gmail inbox mail
-on demand.
+Two Claude Agent Skills for keeping persistent **labels** and applying them to Gmail inbox mail
+on demand:
+
+| Skill | Owns |
+| --- | --- |
+| **`inbox-labeler`** | the labels, and the Gmail work — `process` and `attention` |
+| **`gdrive-label-store`** | the canonical `labels.json` in Google Drive — loading and saving it |
+
+Nothing runs on its own. You ask, and something happens — see
+[Automating it](#automating-it) if you would rather it happened hourly.
 
 A label names the aspect of a message it detects, how to detect it, and the Gmail label to
 apply when that aspect is present.
@@ -166,11 +174,15 @@ triggers adds its Gmail label, and none of them displaces another.
 ├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
 ├── test.sh               the test suite — runs in a temp dir, touches nothing real
 ├── labels.example.json   documentation only, never read at runtime
-└── labels.json           the store — local, gitignored, created on first use
+└── labels.json           the working copy — local, gitignored, created on first use
+.claude/skills/gdrive-label-store/
+├── SKILL.md              how to load and save the canonical labels.json in Drive
+├── label_store.py        validation and stable serialisation
+└── test.sh               its own test suite
 README.md
 ```
 
-Everything the skill needs lives in its own directory.
+Each skill is self-contained in its own directory.
 
 ## The `IL/` namespace
 
@@ -202,7 +214,7 @@ The boundary holds in both directions: **Inbox Labeler never modifies a Gmail la
 
 | Gmail label | Meaning |
 | --- | --- |
-| `IL/processed` | Inbox Labeler has finished evaluating this message. |
+| `IL/processed` | Inbox Labeler has finished the pipeline for this message. |
 | `IL/nomatch` | No **detection** label matched this message. |
 
 They serve different purposes. `IL/processed` records **processing state** — that the work
@@ -221,15 +233,31 @@ nothing looks exactly like a message that was never processed once you stop look
 `IL/processed` — with it, you can search `label:IL/nomatch` to see what your current labels
 are missing, which is the fastest way to spot a gap worth a new label.
 
-## Your labels stay local
+## Where labels live
 
-`labels.json` is user-specific state and is **not** committed — it is listed in `.gitignore`.
-The repository holds only source, documentation and the example file.
+Two places, with one of them in charge:
 
-Nothing needs to be set up: the first `list` or `create` writes an empty `labels.json` if none
-exists. `labels.example.json` is there to show the file's shape and to give a feel for useful
-instructions; it is never read at runtime, and deleting it changes nothing. Copy it over your
-store only if you want those examples as a starting point.
+| | |
+| --- | --- |
+| **Google Drive**, `Inbox Labeler/labels.json` | **canonical** — the definitions of record |
+| `.claude/skills/inbox-labeler/labels.json` | the local working copy Claude reads while running |
+
+The local copy is user-specific state and is **not** committed — it is in `.gitignore`, so the
+repository holds only source, documentation and the example file.
+
+**Loading is automatic, saving is not.** Before processing anything, Inbox Labeler checks the
+local copy; if it is empty it loads the definitions from Drive through the
+`gdrive-label-store` skill. If Drive has none either, it stops and says so rather than
+processing with an empty rulebook. Changes you make with the CLI or by asking Claude land in
+the local copy only — say **"save the labels"** to write them back to Drive.
+
+Saving always creates a *new* `labels.json` in the Drive folder and the newest one is canonical;
+older versions stay put. The Drive connector cannot update or delete a file in place, so
+pruning old versions is a manual job in the Drive UI.
+
+Nothing needs to be set up to start: the first `list` or `create` writes an empty local
+`labels.json`. `labels.example.json` shows the file's shape and gives a feel for useful
+instructions; it is never read at runtime, and deleting it changes nothing.
 
 ## How the skill is loaded
 
@@ -271,31 +299,24 @@ these two to label mail:
 Both use Claude's Gmail tools when they are connected; nothing runs on a schedule — you trigger
 them, and `attention` never runs as part of `process`.
 
-## What `process` does
+## What the two commands do
 
-A run handles **at most ten messages**, fewer if fewer are eligible. It skips anything already
-carrying `IL/processed`, so it only ever looks at mail Inbox Labeler hasn't seen — and anything
-beyond the tenth message keeps its place, because it never got `IL/processed` either. Run it
-again to work through a backlog; each run continues where the last one stopped, with no cursor
-to maintain.
+Both work on **individual messages**, not threads, and both are scoped to **unread inbox mail
+only** — archived and read mail are never touched. Their scopes are mirror images and never
+overlap:
 
-Scope is **unread inbox messages only**. Archived mail and read mail are never touched, and the
-unread state itself is never changed.
+| | Scope | Per run | What it writes |
+| --- | --- | --- | --- |
+| **`process`** | unread inbox mail **without** `IL/processed` | at most **10** | `IL/` labels |
+| **`attention`** | unread inbox mail **with** `IL/processed` | no limit | `STARRED`, `UNREAD` |
 
-**Labelling only moves forward.** A message keeps the labels it was given. Editing a label's
-instruction changes what *new* mail receives; deleting a label stops it being applied in future.
-Neither reaches back to mail that was already processed — there is no command that revisits it,
-so a Gmail label already on a message stays until you remove it in Gmail yourself.
+### process
 
-## How processing works
+A run handles at most ten messages, fewer if fewer are eligible. Anything beyond the tenth keeps
+its place, because it never got `IL/processed` either — so run it again to work through a
+backlog, and each run continues where the last one stopped with no cursor to maintain.
 
-Processing works on individual **messages**, not threads, and records both its state and its
-outcome with the two system labels:
-
-- the scope is unread inbox messages that have no `IL/processed`
-- **at most ten messages per run**, fewer if fewer are eligible
-- a run never pauses to ask because the inbox is large
-- each message goes through two stages, in this order:
+Each message goes through two stages:
 
 ```text
 Email
@@ -309,26 +330,50 @@ Derived labels        each decided from the email + the detection labels that ma
 IL/processed          last, always
 ```
 
-The detection stage behaves exactly as it always has. What it applies depends on whether
-anything triggered:
-
 | Detection outcome | Gmail labels applied |
 | --- | --- |
 | at least one detection label triggered | every triggered business label |
 | nothing triggered | `IL/nomatch` |
 
-Then the derived stage runs. A derived label whose `required_labels` didn't all match is
-skipped; the rest are evaluated and each one that triggers adds its business label.
+Then the derived stage runs: a derived label whose `required_labels` didn't all match is skipped,
+and each one that does trigger adds its business label. `IL/processed` goes on last, so an
+interrupted run leaves the message to be picked up again, and a failure on one message is
+reported while the run continues with the rest.
 
-`IL/processed` always goes on last, once both stages have finished and the outcome labels are
-in place — so an interrupted or failed run leaves the message to be picked up again. A failure
-on one message is reported and the run continues with the rest.
+**`process` only ever adds labels.** Nothing is removed — not Gmail's own labels, not the ones
+Inbox Labeler applied earlier. Unread is a scope filter only; `process` never changes it.
 
-Nothing is ever removed. Labels are only added — Gmail's own labels are read-only, and so is
-anything Inbox Labeler applied on an earlier run.
+**Labelling only moves forward.** A message keeps the labels it was given. Editing an
+instruction changes what *new* mail receives, and deleting a label stops it being applied in
+future — neither reaches back to mail already processed, because no command revisits it. A Gmail
+label already on a message stays until you remove it in Gmail yourself.
 
-Unread is only a scope filter: the unread state is never changed, and it is never used as
-the processing state.
+### attention
+
+Run it by saying **"apply attention"**. It reads the `IL/` labels already on a message, works out
+the effective level, and sets `STARRED` or clears `UNREAD` accordingly. It never looks at the
+email, never classifies anything, and never adds or removes an `IL/` label. See
+[Attention](#attention) for the levels and their timings.
+
+## Automating it
+
+Optional, and no part of the implementation — the skills themselves have no scheduler and never
+act unprompted.
+
+If you want it to happen regularly, set up a **recurring Claude task** with a prompt like:
+
+```text
+Process my inbox, then apply attention.
+```
+
+Hourly is a reasonable cadence: `process` handles up to ten messages per run, so an hourly task
+keeps up with roughly 240 messages a day and works steadily through a backlog. The order
+matters — `process` first, so the mail it just labelled falls into `attention`'s scope in the
+same run rather than waiting an hour.
+
+Everything the task needs must already be in place: the Gmail connector connected, and label
+definitions either in the local copy or in Drive for step zero to load. A run with no
+definitions stops and reports instead of doing anything.
 
 ## Run it directly
 
@@ -353,14 +398,22 @@ python3 labels.py update "Invoice" --instruction "The message is an invoice, bil
 python3 labels.py update "Large amount" --label "Big amount"
 
 python3 labels.py delete "Invoice"
+
+# set what a label asks of you
+python3 labels.py update "Newsletter" --attention none
+python3 labels.py update "Imminent" --attention temporary
+
+# the two helpers the attention command uses — these touch nothing
+python3 labels.py attention "Invoice" "Imminent"    # which level do these labels add up to?
+python3 labels.py policy temporary --age 30h        # and what follows for a 30h old message?
 ```
 
 `--label` takes the label itself — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
 is rejected, as are the reserved system labels `processed` and `nomatch`. Spaces are expected; quote the
 argument.
 
-`--type` defaults to `detection`, and every command prints the stored `type` so the kind of
-label is always visible. An unknown type is rejected.
+`--type` defaults to `detection` and `--attention` to `normal`; every command prints both, so
+the kind of label and what it asks for are always visible. Unknown values are rejected.
 
 `--required-label` and `--recommended-label` apply to derived labels only and name existing
 detection labels by their exact text. On update they replace the stored list rather than adding
@@ -370,22 +423,30 @@ to it; passing an empty value clears it.
 `--label` to `update` renames the label. Every command prints JSON; on a validation failure it
 prints `{"error": "..."}` and exits with status 1.
 
+The `gdrive-label-store` skill has its own two commands, for checking a document by hand:
+
+```bash
+cd .claude/skills/gdrive-label-store
+python3 label_store.py validate FILE            # every problem at once, not just the first
+python3 label_store.py format   FILE [--write]  # stable, human-readable JSON
+```
+
 ## Test it
 
-There is no test framework, just a shell script. It copies `labels.py` into a temporary
+No test framework, just a shell script per skill. Each copies its module into a temporary
 directory, so your own labels are never touched:
 
 ```bash
-.claude/skills/inbox-labeler/test.sh
+.claude/skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
+.claude/skills/gdrive-label-store/test.sh   # validation and serialisation
 ```
 
-It prints one line per check and exits non-zero if any fails. Coverage: store bootstrap, the
-`type` field on create and through update, `list`/`get` exposing it, rejection of unknown types,
-derived labels (creation, reference validation, updates, and detection labels staying
-untouched), the documented detection→derived processing order, labels persisting without the
-`IL/` prefix, logical→Gmail resolution, rejection of `IL/`-prefixed labels, rejection of
-the reserved system labels in any casing, malformed labels, loading an older store, and the
-pre-existing CRUD and validation behaviour.
+Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD
+surface, label identity and renaming, the two label types and their references including cycle
+detection, the reserved system labels, attention levels and the policy each one implies, and
+migration from older stores. A number of checks assert the *documentation* — that `SKILL.md`
+still states the processing order, the ten-message limit and the boundaries between the
+commands — because those flows live in prose rather than code and would otherwise drift.
 
 Migration is worth knowing about, and there is no command to run for it. A store written by an
 earlier version may carry a technical `id`, a separate `name`, an `IL/` prefix on the label, or
@@ -398,5 +459,11 @@ along.
 
 ## Scope
 
-Deliberately small: local JSON storage, no database, no server, no auth, no scheduler,
-no UI. Gmail work happens through Claude's Gmail tools as described in `SKILL.md`.
+Deliberately small: a JSON file per store, no database, no server, no auth of its own, no
+scheduler, no UI. Gmail and Drive work happens through Claude's connectors as described in each
+`SKILL.md`; the Python modules never touch the network.
+
+The classifying itself is Claude reading the email against your instructions — there is no model
+called from the code, no prompt file, and nothing to configure. Which is also why two runs over
+the same mail can differ in judgement, while everything deterministic — validation, label
+identity, attention levels, the policy for each level — lives in the modules and is tested.

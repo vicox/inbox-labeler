@@ -490,8 +490,8 @@ check "removal appears only in the attention command" \
     "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'unlabel_message')"
 check "and only for the two Gmail flags" \
     "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'unlabel_message')" "2"
-check "the readme says nothing is removed" \
-    "$(grep -c 'Nothing is ever removed' "$SCRIPT_DIR/../../../README.md")" "1"
+check "the readme says process only adds labels" \
+    "$(grep -c 'only ever adds labels' "$SCRIPT_DIR/../../../README.md")" "1"
 check "no reprocess remains in the skill" \
     "$(grep -ci 'reprocess' "$SCRIPT_DIR/SKILL.md")" "0"
 check "no reprocess remains in the readme" \
