@@ -269,7 +269,26 @@ Start from meaning: **what would have to be true of an email for this label to b
 - If it is an **interpretation of things already recognised**, it is a **derived label** —
   `Large payment needs attention`, `Travel disruption`, `Commercial opportunity`.
 
-Aim for the smallest useful model — as few labels as express the idea, and no fewer. Then:
+Then ask **how many concepts the request contains.** One request does not imply one label:
+"invoices with unusually large amounts", "a cancellation or severe delay that ruins a trip" and
+"login codes and password reset links" all name more than one thing, and only some of them
+should become more than one label. Put every concept you find through the reuse question:
+
+> Would this concept be worth detecting on its own, on mail that has nothing to do with the
+> rest of this request?
+
+- **Yes, for more than one of them** — model each as its own detection label, and add a derived
+  label on top when the combination carries meaning or behaviour the parts do not: its own name,
+  its own interpretation, or its own attention. That derived label is what the user asked for;
+  the detection labels underneath are what make the answer reusable.
+- **No** — the concepts are one aspect described in several words. Model it as a single detection
+  label and let the instruction carry the detail.
+
+**Several concepts mentioned is not a reason to split — several concepts reusable apart is.**
+Wording that is tightly coupled, or that names parts nobody would look for on their own,
+describes one recognisable aspect, and one detection label models it best. When splitting would
+buy no reuse, it only buys labels nobody wanted. Prefer the simplest model that preserves reuse:
+as few labels as express the idea, and no fewer. Then:
 
 1. **Run `list` first.** The detection labels that already exist are your vocabulary. Reuse
    them instead of creating a near-duplicate: if `Large amount` is there, do not add `Big amount`.
@@ -337,6 +356,20 @@ the missing observation and build on what is there:
 Inbound enquiry              detection   (new — the missing observation)
 Commercial opportunity       derived     (recommended: Inbound enquiry, Newsletter)
 ```
+
+#### Example: several concepts, still one label
+
+> Create a label called Login for login codes and password reset links.
+
+Two concepts, and neither answers the reuse question. Nobody wants login codes labelled apart
+from password resets — they are one aspect, mail that gets the user into an account, and one
+Gmail label is what was asked for. Splitting here would add labels and buy no reuse:
+
+```text
+Login    detection   ("The message carries a login code, a sign-in link or a password reset.")
+```
+
+The instruction carries the detail the split would have expressed.
 
 #### Say the model out loud when it is more than one label
 

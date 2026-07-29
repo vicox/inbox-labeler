@@ -574,6 +574,27 @@ check "the modelling examples read as phrases" \
         'Travel disruption' 'Large payment needs attention' 'Commercial opportunity')" "True"
 check "reuse before creating is documented" \
     "$(order_check '### Modelling what the user asked for' 'Run `list` first' 'Reuse')" "True"
+check "one request is not assumed to be one label" \
+    "$(order_check '### Modelling what the user asked for' 'how many concepts the request contains' \
+        'One request does not imply one label' 'the reuse question')" "True"
+check "the reuse question decides both ways" \
+    "$(order_check 'the reuse question' 'worth detecting on its own' \
+        'model each as its own detection label' 'add a derived label on top' \
+        'a single detection label')" "True"
+check "the derived label needs its own meaning or behaviour" \
+    "$(order_check 'add a derived label on top' 'meaning or behaviour the parts do not')" "True"
+check "splitting on mention alone is ruled out" \
+    "$(order_check '### Modelling what the user asked for' \
+        '**Several concepts mentioned is not a reason to split — several concepts reusable apart is.**' \
+        'one detection label models it best' 'simplest model that preserves reuse')" "True"
+check "both outcomes are shown as examples" \
+    "$(order_check '#### Example: an interpretation over observations that must both hold' \
+        '#### Example: several concepts, still one label' 'neither answers the reuse question' \
+        'buy no reuse')" "True"
+check "the readme says how a request becomes a model" \
+    "$(grep -c 'you never pick a type' "$SCRIPT_DIR/../../../README.md")" "1"
+check "and that mention alone does not split a label" \
+    "$(grep -c 'being useful apart is' "$SCRIPT_DIR/../../../README.md")" "1"
 check "camel case appears only as the counter-example" \
     "$(grep -cE '\bDeliveryArrivingSoon\b' "$SCRIPT_DIR/SKILL.md")" "1"
 check "and that one is shown as what not to write" \

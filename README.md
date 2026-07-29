@@ -132,6 +132,21 @@ Three rules keep the references honest:
   rewrites every reference to it in the same write, so the store is never left dangling.
   Renaming onto a label that already exists is rejected.
 
+### Asking for a label
+
+You describe what you want and Inbox Labeler works out the model — you never pick a type.
+Usually that is one detection label. When your request names several things that are each worth
+detecting on their own, though, you get a detection label per concept plus one derived label
+combining them, and you are told so in a line or two before anything is created:
+
+> Create a label for invoices with unusually large amounts that should be reviewed.
+
+becomes `Invoice` and `Large amount` as detection labels, with `Large payment needs attention`
+derived on top — so the two observations are yours to reuse in other labels later. When the
+parts are only ever wanted together — "login codes and password reset links" — it stays one
+detection label with the detail in its instruction. Naming several things is not by itself a
+reason to split; being useful apart is. The simplest model that keeps the pieces reusable wins.
+
 ## What a label is
 
 > A user-defined way to detect an aspect of a message that is interesting to the user.
