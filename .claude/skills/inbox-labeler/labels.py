@@ -53,7 +53,7 @@ GMAIL_NAMESPACE = "IL/"
 # reserved too.
 RESERVED_LABELS = {
     "processed": "Inbox Labeler's processing state",
-    "nomatch": "Inbox Labeler's evaluation outcome",
+    "no-match": "Inbox Labeler's evaluation outcome",
 }
 
 # What a label asks of the user. Attention is not a label and is not stored per

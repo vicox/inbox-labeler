@@ -134,7 +134,7 @@ Everything checked, on every load and before every save:
 | no unknown properties | `"colour": "red"` |
 | labels unique, ignoring case | `Invoice` and `invoice` |
 | labels trimmed, no doubled spaces | `" Padded "`, `"Two  spaces"` |
-| reserved names refused | `processed`, `nomatch` |
+| reserved names refused | `processed`, `no-match` |
 | no `IL/` prefix stored | `IL/Invoice` |
 | references resolve | `required_labels: ["Ghost"]` |
 | references point at detection labels | a derived label referencing a derived label |

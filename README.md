@@ -38,7 +38,7 @@ Labels are unique ignoring case, and lookups are case-insensitive too, so
 `get "delivery arriving soon"` finds it. Leading and trailing spaces are trimmed and inner
 runs of whitespace collapse to one; punctuation and digits are fine.
 
-Two labels are **not** yours: `processed` and `nomatch` are reserved system labels, and the
+Two labels are **not** yours: `processed` and `no-match` are reserved system labels, and the
 lowercase spelling is the convention that marks them as internal. Your labels are readable
 phrases — `Delivery`, `Large amount`, `Delivery arriving soon` — and keep their spelling
 exactly as you write it. See [System labels](#system-labels).
@@ -201,7 +201,7 @@ compares or reports one:
 | --- | --- | --- | --- |
 | **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
 | **bucket labels** | future label kind, not in this version | — | — |
-| **system labels** | Inbox Labeler's own state and outcome | `processed`, `nomatch` | `IL/processed`, `IL/nomatch` |
+| **system labels** | Inbox Labeler's own state and outcome | `processed`, `no-match` | `IL/processed`, `IL/no-match` |
 
 Nothing in Gmail distinguishes a derived label's output from a detection label's — they are
 both just business labels.
@@ -215,22 +215,22 @@ The boundary holds in both directions: **Inbox Labeler never modifies a Gmail la
 | Gmail label | Meaning |
 | --- | --- |
 | `IL/processed` | Inbox Labeler has finished the pipeline for this message. |
-| `IL/nomatch` | No **detection** label matched this message. |
+| `IL/no-match` | No **detection** label matched this message. |
 
 They serve different purposes. `IL/processed` records **processing state** — that the work
-happened. `IL/nomatch` records the **outcome of detection** — that no detection label matched.
+happened. `IL/no-match` records the **outcome of detection** — that no detection label matched.
 A message that was processed and matched nothing carries both; a message that matched something
-carries `IL/processed` alongside its business labels. `IL/nomatch` and detection business labels
+carries `IL/processed` alongside its business labels. `IL/no-match` and detection business labels
 never coexist on a message — the outcome is one or the other. Derived labels don't affect
-`IL/nomatch`, since it is decided before they are evaluated.
+`IL/no-match`, since it is decided before they are evaluated.
 
-`processed` and `nomatch` are **reserved system labels** — internal implementation detail, not
+`processed` and `no-match` are **reserved system labels** — internal implementation detail, not
 something a user models. `labels.py` rejects them on create, on rename and on delete, in any
-casing, so `Processed` and `NOMATCH` are refused too.
+casing, so `Processed` and `NO-MATCH` are refused too.
 
-`IL/nomatch` is what makes an empty result visible. Without it, a message that matched
+`IL/no-match` is what makes an empty result visible. Without it, a message that matched
 nothing looks exactly like a message that was never processed once you stop looking at
-`IL/processed` — with it, you can search `label:IL/nomatch` to see what your current labels
+`IL/processed` — with it, you can search `label:IL/no-match` to see what your current labels
 are missing, which is the fastest way to spot a gap worth a new label.
 
 ## Where labels live
@@ -323,7 +323,7 @@ Email
   ↓
 Detection labels      each decided independently against the email
   ↓
-IL/nomatch            when no detection label matched
+IL/no-match            when no detection label matched
   ↓
 Derived labels        each decided from the email + the detection labels that matched
   ↓
@@ -333,7 +333,7 @@ IL/processed          last, always
 | Detection outcome | Gmail labels applied |
 | --- | --- |
 | at least one detection label triggered | every triggered business label |
-| nothing triggered | `IL/nomatch` |
+| nothing triggered | `IL/no-match` |
 
 Then the derived stage runs: a derived label whose `required_labels` didn't all match is skipped,
 and each one that does trigger adds its business label. `IL/processed` goes on last, so an
@@ -409,7 +409,7 @@ python3 labels.py policy temporary --age 30h        # and what follows for a 30h
 ```
 
 `--label` takes the label itself — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
-is rejected, as are the reserved system labels `processed` and `nomatch`. Spaces are expected; quote the
+is rejected, as are the reserved system labels `processed` and `no-match`. Spaces are expected; quote the
 argument.
 
 `--type` defaults to `detection` and `--attention` to `normal`; every command prints both, so

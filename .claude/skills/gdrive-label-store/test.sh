@@ -144,7 +144,7 @@ err "doubled inner whitespace" -- validate doubled.json
 printf '[{"label": "processed", "type": "detection", "instruction": "x"}]\n' > reserved.json
 err "a reserved label" -- validate reserved.json
 check "reports it as reserved" "$(has_error reserved.json 'reserved')" "yes"
-printf '[{"label": "nomatch", "type": "detection", "instruction": "x"}]\n' > reserved2.json
+printf '[{"label": "no-match", "type": "detection", "instruction": "x"}]\n' > reserved2.json
 err "the other reserved label" -- validate reserved2.json
 printf '[{"label": "IL/Invoice", "type": "detection", "instruction": "x"}]\n' > prefixed.json
 err "a namespaced label" -- validate prefixed.json

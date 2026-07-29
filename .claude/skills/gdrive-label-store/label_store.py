@@ -52,7 +52,7 @@ REFERENCE_FIELDS = tuple(
 REFERENCEABLE_TYPE = "detection"
 
 # Reserved by the Inbox Labeler for its own Gmail labels.
-RESERVED_LABELS = ("processed", "nomatch")
+RESERVED_LABELS = ("processed", "no-match")
 
 FIELD_ORDER = ("label", "type", "attention") + ("instruction",) + REFERENCE_FIELDS
 
