@@ -11,15 +11,15 @@ A label names the aspect of a message it detects, how to detect it, and the Gmai
 apply when that aspect is present.
 
 Two things make this more than a labelling script. First, some things only matter in
-combination: an invoice, on its own, is routine, but a large invoice is worth a second look. You
-can say that directly with a Derived Label — `Invoices` and `Large amount` combine into
-`Large invoice`, one label naming exactly what the combination means. [The model](#the-model)
-covers exactly how Claude works that out.
+combination: an invoice, on its own, is routine, but a large invoice is worth a second look. A
+Derived Label lets you say that directly, building `Large invoice` from `Invoices` and
+`Large amount` rather than writing a new rule from scratch.
+[A concrete example](#a-concrete-example) walks through exactly how.
 
 Second, meaning alone isn't the whole story. Not every label deserves the same reaction, so
-every label also carries an **Attention** level — what it asks of you. Attention, separately
-from what a label means, decides what Inbox Labeler is allowed to do to your mailbox: star a
-message, mark it read, or leave it alone.
+every label also carries an **Attention** level — what it asks of you, separately from what it
+means: star a message, mark it read, or leave it alone. [The model](#the-model) covers what
+each level does in full.
 
 Nothing runs on its own. You ask, and something happens — see
 [Automating it](#automating-it) if you would rather it happened hourly.
@@ -71,8 +71,7 @@ own Attention, a separate decision. The same pattern repeats for a delivery that
 imminently and for a newsletter that turns out to be promotional, whose `none` Attention only
 marks it read once it's a day old.
 
-[The model](#the-model) names this distinction precisely — a **detection** label observes, a
-**derived** label interprets, and Attention decides what happens next — and
+[The model](#the-model) covers detection labels, derived labels and Attention in full, and
 [Getting started](#getting-started) shows how to build on this example yourself.
 
 ## The model
@@ -103,8 +102,7 @@ A detection label reads the email directly and decides. Here is what one looks l
 Each label also carries an **attention** level — what it asks of you; see
 [Attention](#attention) below.
 
-`Invoices`, `Newsletter`, `Question` and `Large amount` are detection labels: each reads the
-email and decides.
+`Invoices`, `Newsletter`, `Question` and `Large amount` are detection labels.
 
 ### Derived labels
 
