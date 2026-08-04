@@ -16,10 +16,10 @@ apply when that aspect is present.
 
 ```json
 {
-  "label": "Delivery arriving soon",
+  "label": "Delivery",
   "type": "detection",
-  "attention": "high",
-  "instruction": "The message says a delivery is arriving today or in the next few days."
+  "attention": "normal",
+  "instruction": "The message is a shipping or delivery status update for an order (e.g. 'out for delivery', 'delivered', 'shipped', tracking updates from a carrier or retailer like Amazon, DHL, UPS)."
 }
 ```
 
@@ -59,7 +59,7 @@ Attention is **not** a label. It is computed per message from the labels that ar
 `high`; failing that, one `none` label makes it `none`; otherwise it stays `normal`.
 
 `normal` comes last because it is the absence of a request, not a request to be left alone: a
-`Newsletter` label at `none` on the same message as an `Invoice` at `normal` still gets the mail
+`Newsletter` label at `none` on the same message as an `Invoices` at `normal` still gets the mail
 marked read, because `none` is the only thing either label actually asked for. A message with no
 labels comes out `normal`, so it is left alone. The policies above are fixed and not configurable.
 
@@ -89,36 +89,36 @@ label the same way — only the decision differs:
 
 **Detection labels recognise facts. Derived labels interpret those facts.**
 
-`Invoice`, `Newsletter`, `Login` and `Large amount` are detection labels: each reads the email
-and decides. A derived label doesn't rediscover the email from scratch — it reads the email
-*together with the detection labels that already matched* and decides what that combination
-means:
+`Invoices`, `Newsletter`, `Question` and `Large amount` are detection labels: each reads the
+email and decides. A derived label doesn't rediscover the email from scratch — it reads the
+email *together with the detection labels that already matched* and decides what that
+combination means:
 
 ```text
 Email
   ↓
-Detection labels:  Invoice, Large amount
+Detection labels:  Invoices, Large amount
   ↓
-Derived label:     Large payment needs attention
+Derived label:     Large invoice
 ```
 
 ```text
 Email
   ↓
-Detection labels:  Travel booking, Flight cancellation
+Detection labels:  Travel, Action required
   ↓
-Derived label:     Travel disruption
+Derived label:     Travel preparation
 ```
 
 A derived label names the detection labels it builds on:
 
 ```json
 {
-  "label": "Large payment needs attention",
+  "label": "Large invoice",
   "type": "derived",
-  "instruction": "A payment this large should be looked at, whether still due or already paid.",
-  "required_labels": ["Large amount"],
-  "recommended_labels": ["Invoice"]
+  "instruction": "An invoice whose amount is large enough to need a closer look.",
+  "required_labels": ["Invoices", "Large amount"],
+  "recommended_labels": []
 }
 ```
 
@@ -155,7 +155,7 @@ combining them, and you are told so in a line or two before anything is created:
 
 > Create a label for invoices with unusually large amounts that should be reviewed.
 
-becomes `Invoice` and `Large amount` as detection labels, with `Large payment needs attention`
+becomes `Invoices` and `Large amount` as detection labels, with `Large invoice`
 derived on top — so the two observations are yours to reuse in other labels later. When the
 parts are only ever wanted together — "login codes and password reset links" — it stays one
 detection label with the detail in its instruction. Naming several things is not by itself a
@@ -185,7 +185,7 @@ A LinkedIn connection request, for example, carries several aspects at once: it 
 mail, it is a connection request, and you treat it as important. If you keep labels for all
 three aspects, the message carries `IL/Social`, `IL/Connection` and `IL/Important` together.
 
-The same holds at any breadth. Someone with `Invoice`, `Stripe` and `Reminder` labels sees all
+The same holds at any breadth. Someone with `Invoices`, `Stripe` and `Reminder` labels sees all
 three land on a Stripe invoice reminder. Someone who prefers a single `Billing` label covering
 the same ground gets that one Gmail label instead. Both work the same way: every label that
 triggers adds its Gmail label, and none of them displaces another.
@@ -217,13 +217,13 @@ Inbox Labeler assumes everything there is its own. The way to get a new `IL/` la
 label.
 
 Because the namespace belongs to Inbox Labeler rather than to any individual label, it never
-appears in configuration. Labels store the label itself (`Invoice`) and Inbox Labeler
-resolves it to the **Gmail** label (`IL/Invoice`) whenever it creates, applies, removes,
+appears in configuration. Labels store the label itself (`Invoices`) and Inbox Labeler
+resolves it to the **Gmail** label (`IL/Invoices`) whenever it creates, applies, removes,
 compares or reports one:
 
 | Kind | Origin | Label | In Gmail |
 | --- | --- | --- | --- |
-| **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
+| **business labels** | the `label` of a detection or derived label | `Invoices`, `Large invoice` | `IL/Invoices`, `IL/Large invoice` |
 | **system labels** | Inbox Labeler's own state and outcome | `processed`, `no-match` | `IL/processed`, `IL/no-match` |
 
 Nothing in Gmail distinguishes a derived label's output from a detection label's — they are
@@ -414,32 +414,32 @@ python3 labels.py list
 python3 labels.py get "Large amount"
 
 # a detection label
-python3 labels.py create --label "Invoice" \
+python3 labels.py create --label "Invoices" \
   --instruction "The message is an invoice or bill for a purchase or service."
 
 # a derived label — the reference flags are repeatable
-python3 labels.py create --label "Large payment needs attention" --type derived \
-  --instruction "A payment this large should be looked at, whether still due or already paid." \
-  --required-label "Large amount" --recommended-label "Invoice"
+python3 labels.py create --label "Large invoice" --type derived \
+  --instruction "An invoice whose amount is large enough to need a closer look." \
+  --required-label "Invoices" --required-label "Large amount"
 
-python3 labels.py update "Invoice" --instruction "The message is an invoice, bill or receipt."
+python3 labels.py update "Invoices" --instruction "The message is an invoice, bill or receipt."
 
 # rename, rewriting every reference to it
 python3 labels.py update "Large amount" --label "Big amount"
 
-python3 labels.py delete "Invoice"
+python3 labels.py delete "Invoices"
 
 # set what a label asks of you
 python3 labels.py update "Newsletter" --attention none
 python3 labels.py update "Imminent" --attention high
 
 # the two helpers the attention command uses — these touch nothing
-python3 labels.py attention "Invoice" "Imminent"    # which level do these labels add up to?
+python3 labels.py attention "Invoices" "Imminent"   # which level do these labels add up to?
 python3 labels.py policy none --age 30h             # and what follows for a 30h old message?
 python3 labels.py color high                        # which Gmail color does this level get?
 ```
 
-`--label` takes the label itself — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
+`--label` takes the label itself — `Invoices`, not `IL/Invoices`. Anything starting with `IL/`
 is rejected, as are the reserved system labels `processed` and `no-match`. Spaces are expected; quote the
 argument.
 
