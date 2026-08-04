@@ -279,8 +279,15 @@ older versions stay put. The Drive connector cannot update or delete a file in p
 pruning old versions is a manual job in the Drive UI.
 
 Nothing needs to be set up to start: the first `list` or `create` writes an empty local
-`labels.json`. `labels.example.json` shows the file's shape and gives a feel for useful
-instructions; it is never read at runtime, and deleting it changes nothing.
+`labels.json`. `labels.example.json` is never read at runtime and deleting it changes nothing —
+it exists to be **copied**, not loaded.
+
+**New to Inbox Labeler? Start from `labels.example.json`.** It's a small, coherent set of
+detection labels, derived labels built on top of them, and attention levels — production-quality
+and usable as-is, but meant as a demonstration of the core modeling concepts, not a
+one-size-fits-all configuration. Copy the labels you want into your own `labels.json` (or paste
+them one at a time through the CLI) and adjust the instructions to your own mail. It is not
+imported automatically; nothing in Inbox Labeler ever reads it on its own.
 
 ## How the skill is loaded
 

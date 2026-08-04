@@ -1,38 +1,117 @@
 [
   {
-    "label": "Newsletter",
-    "type": "detection",
-    "attention": "none",
-    "instruction": "The message was sent to a mailing list rather than addressed personally."
-  },
-  {
-    "label": "Invoice",
+    "label": "Action required",
     "type": "detection",
     "attention": "normal",
-    "instruction": "The message is an invoice or bill for a purchase or service."
+    "instruction": "The message asks the recipient to do something specific: pay, reply, confirm or correct data, fill in a form, send a document, book, reschedule or cancel an appointment, renew or cancel a subscription, buy, sign up, download, collect a parcel, reset a password. It does not match messages that only report, confirm or announce something, or that invite vaguely ('stay in touch', 'let us know if you have questions'). A link is an action only when clicking it is what is asked ('confirm your address', 'shop now'), not because the message contains links — an unsubscribe footer, a 'view in browser' link, or a link to information the message already announced is not an action. Urgency, optionality, marketing intent and any existing relationship with the sender are not part of this label: 'Buy now', 'Update your preferences' and 'Payment due' match equally."
+  },
+  {
+    "label": "Imminent",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "The message states that an event, deadline, expiration, or appointment is happening today or within the next few days (roughly 3 days) as of when the message was written — e.g. 'arriving today', 'expires in 2 days', 'meeting starts in one hour', 'payment due tomorrow'. Judge this against the email's own date, not the current date."
+  },
+  {
+    "label": "Informational",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "The message only informs and asks nothing of the user: no payment, reply, confirmation, RSVP, click or deadline to meet. Notices, status updates, announcements, statements and reports that are complete in themselves. Does not include messages that request an action or a decision, however small — confirming an address, renewing a subscription, rating a purchase — and not messages that state a deadline the user has to meet."
+  },
+  {
+    "label": "Question",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "The sender is asking the recipient for information, a response, a confirmation, or a decision, and expects an answer to come back. What matters is whether an answer is genuinely expected, not whether a question mark is present: 'Are you currently hiring?', 'Could you confirm your availability?', 'Can you review this proposal?' and 'Please let me know whether this works for you.' all match equally. Does not match rhetorical questions, slogans or headlines phrased as questions, or text that reads like a question but expects no response, including a question the message goes on to answer itself. Who is asking and what the message is about are irrelevant: a colleague, a customer, a support requester, a recruiter and a salesperson asking all match the same way."
+  },
+  {
+    "label": "Invoices",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "Emails containing an invoice, bill, or receipt for a purchase/service (e.g. subject or content mentions invoice, Rechnung, receipt, payment confirmation with an amount due or paid). Does not include payment reminders, order confirmations without an invoice, or general marketing/promotional emails."
   },
   {
     "label": "Large amount",
     "type": "detection",
     "attention": "normal",
-    "instruction": "The message states a monetary amount over 100 in any currency."
+    "instruction": "The message mentions a monetary amount over 100 (in any currency, e.g. EUR, USD, GBP) — for example an invoice total, price, payment, or charge exceeding 100 units of that currency."
+  },
+  {
+    "label": "Large invoice",
+    "type": "derived",
+    "attention": "high",
+    "instruction": "The message is an invoice whose amount is large enough to represent a significant financial obligation — e.g. an invoice for a few hundred euros, an annual software renewal invoice, a large supplier invoice, a high-value consulting invoice, an enterprise subscription renewal with a substantial amount due. Does not match invoices whose amount does not meet the Large amount detection criteria.",
+    "required_labels": [
+      "Invoices",
+      "Large amount"
+    ],
+    "recommended_labels": []
+  },
+  {
+    "label": "Delivery",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "The message is a shipping or delivery status update for an order (e.g. 'out for delivery', 'delivered', 'shipped', tracking updates from a carrier or retailer like Amazon, DHL, UPS)."
   },
   {
     "label": "Delivery arriving soon",
-    "type": "detection",
-    "attention": "high",
-    "instruction": "The message says a delivery arrives today or within the next few days, as of when it was written."
-  },
-  {
-    "label": "Large payment needs attention",
     "type": "derived",
     "attention": "high",
-    "instruction": "A payment this large should be looked at, whether it is still due or already paid.",
+    "instruction": "The email is a delivery/shipping update that states the delivery is happening today or within the next few days, as of when the message was written.",
     "required_labels": [
-      "Large amount"
+      "Delivery",
+      "Imminent"
     ],
-    "recommended_labels": [
-      "Invoice"
-    ]
+    "recommended_labels": []
+  },
+  {
+    "label": "Marketing",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "The message's primary purpose is promotion, advertising, engagement, or campaign communication: trying to get the user to buy, try, sign up for, or pay attention to a product, service, sale, offer, event, or brand. This includes one-off promotional emails and ads as well as recurring newsletter/mailing-list sends, whenever the content itself is promotional — a newsletter can be Marketing too, but plenty of marketing mail is not a newsletter. Does not include transactional emails (invoices, receipts, shipping/delivery updates, login/security codes, booking confirmations) or personal/direct correspondence, even from a company the user has a relationship with."
+  },
+  {
+    "label": "Newsletter",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "Detect whether the email is a newsletter or other recurring email sent to subscribers of a mailing list. This includes recurring updates, digests, and other subscription-based communications. This label describes the delivery format, not the purpose of the email. A newsletter may also be Marketing."
+  },
+  {
+    "label": "Promotional newsletter",
+    "type": "derived",
+    "attention": "none",
+    "instruction": "The message is a promotional mailing-list send: a recurring newsletter or subscriber mailing whose content is itself advertising — a product, service, sale, offer, event or brand being pushed to a list. Routine bulk promotion the user can skip without missing anything of their own. Does not apply when the mailing carries something that concerns the recipient personally rather than the whole list, such as a statement about their account, an order of theirs, or a deadline they have to meet.",
+    "required_labels": [
+      "Marketing",
+      "Newsletter"
+    ],
+    "recommended_labels": []
+  },
+  {
+    "label": "Sales inquiry",
+    "type": "derived",
+    "attention": "normal",
+    "instruction": "The message is a sales or business-development approach that asks the recipient something and expects a reply — a vendor, agency or salesperson opening or continuing a conversation rather than only advertising. Cold outreach asking whether there is a need, a budget, a project or an opening; a follow-up asking for a call, a decision or an introduction. Does not apply to promotional mail whose only ask is to click, buy, register or read, where no answer is expected to come back.",
+    "required_labels": [
+      "Marketing",
+      "Question"
+    ],
+    "recommended_labels": []
+  },
+  {
+    "label": "Travel",
+    "type": "detection",
+    "attention": "normal",
+    "instruction": "The message relates to travel or a trip in any way: hotel, hostel or holiday-home bookings; train, flight, bus or ferry tickets and reservations; rental car and camper bookings; itineraries, check-in reminders, boarding passes and seat reservations; travel confirmations, changes, delays or cancellations; and mail from travel providers, booking platforms or travel agencies about a trip. Includes both the booking itself and follow-up messages about it. Does not include general travel marketing or destination newsletters that are not tied to a trip of the user's."
+  },
+  {
+    "label": "Travel preparation",
+    "type": "derived",
+    "attention": "high",
+    "instruction": "The email is about travel and asks the recipient to take a concrete action to prepare for or during the trip — e.g. online check-in is open, download your boarding pass, add baggage, select your seat, apply for a visa, complete required travel documents, confirm travel details. Does not match informational travel emails that ask nothing of the recipient: itinerary updates, gate changes shared for awareness, or travel/booking confirmations with no further action needed.",
+    "required_labels": [
+      "Travel",
+      "Action required"
+    ],
+    "recommended_labels": []
   }
 ]

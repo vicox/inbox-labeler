@@ -732,7 +732,7 @@ check "the example store has no name field" \
 check "the example store has no id field" \
     "$(grep -c '"id"' "$SCRIPT_DIR/labels.example.json")" "0"
 check "the example store uses readable labels" \
-    "$(grep -c 'Large payment needs attention' "$SCRIPT_DIR/labels.example.json")" "1"
+    "$(grep -c 'Delivery arriving soon' "$SCRIPT_DIR/labels.example.json")" "1"
 
 echo
 echo "--- labels are evaluated timelessly ---"
