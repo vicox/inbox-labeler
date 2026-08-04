@@ -31,6 +31,9 @@ Usage:
     labels.py update LABEL [--label NEW] [--instruction TEXT] [--type TYPE]
                      [--required-label LABEL ...] [--recommended-label LABEL ...]
     labels.py delete LABEL
+    labels.py attention [LABEL ...]
+    labels.py policy ATTENTION --age AGE
+    labels.py color ATTENTION
 
 Passing --label to update renames the label and rewrites every reference to it.
 """
@@ -71,6 +74,14 @@ ATTENTION_POLICIES = {
     "none": {"mark_read_after": "24h"},
     "normal": {},
     "high": {"star": True},
+}
+
+# Gmail label colors by attention level.
+# Attention is the source of truth.
+ATTENTION_COLORS = {
+    "none": {"backgroundColor": "#cccccc", "textColor": "#000000"},
+    "normal": {"backgroundColor": "#fce8b3", "textColor": "#000000"},
+    "high": {"backgroundColor": "#efa093", "textColor": "#000000"},
 }
 
 DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
@@ -191,6 +202,23 @@ def attention_actions(attention, age_seconds):
     if mark_read_after and age >= parse_duration(mark_read_after):
         return ["mark_read"]
     return []
+
+
+def attention_color(attention):
+    """The Gmail color for an attention level — the one place this is decided.
+
+    Raises for a level outside ATTENTION_LEVELS and, separately, for a level
+    that has no entry in ATTENTION_COLORS, so a gap in the mapping fails loudly
+    instead of a label silently going uncolored.
+    """
+    if attention not in ATTENTION_LEVELS:
+        raise ValidationError(
+            "unknown attention %r — levels: %s" % (attention, ", ".join(ATTENTION_LEVELS))
+        )
+    color = ATTENTION_COLORS.get(attention)
+    if not color:
+        raise ValidationError("no Gmail color is configured for attention %r" % attention)
+    return color
 
 
 # --- storage ---------------------------------------------------------------
@@ -579,6 +607,11 @@ def main(argv=None):
     act.add_argument("attention", choices=ATTENTION_LEVELS)
     act.add_argument("--age", required=True, help="how long ago it was received, e.g. 30h")
 
+    col = sub.add_parser(
+        "color", help="the Gmail color for an attention level"
+    )
+    col.add_argument("attention", choices=ATTENTION_LEVELS)
+
     args = parser.parse_args(argv)
 
     try:
@@ -621,6 +654,8 @@ def main(argv=None):
                 "attention": args.attention,
                 "actions": attention_actions(args.attention, parse_duration(args.age)),
             }
+        elif args.command == "color":
+            result = {"attention": args.attention, "color": attention_color(args.attention)}
         else:
             result = delete_label(args.label)
     except ValidationError as exc:

@@ -428,6 +428,67 @@ check "temporary is rejected by the parser too" \
     "rejected"
 
 echo
+echo "--- attention: Gmail label colors ---"
+check "every attention level has a configured color" \
+    "$(python3 -c 'import labels;print(set(labels.ATTENTION_LEVELS) <= set(labels.ATTENTION_COLORS))')" \
+    "True"
+check "none is light gray" \
+    "$(python3 labels.py color none | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
+    "#cccccc #000000"
+check "normal is muted yellow" \
+    "$(python3 labels.py color normal | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
+    "#fce8b3 #000000"
+check "high is muted red" \
+    "$(python3 labels.py color high | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
+    "#efa093 #000000"
+first_color=$(python3 labels.py color high)
+second_color=$(python3 labels.py color high)
+check "repeated calls return the identical color, so re-sync is idempotent" \
+    "$([ "$first_color" = "$second_color" ] && echo same)" "same"
+check "reserved system labels are not attention levels, so they never get a color" \
+    "$(python3 -c 'import labels;print(any(r in labels.ATTENTION_COLORS for r in labels.RESERVED_LABELS))')" \
+    "False"
+check "an unknown attention level fails explicitly" \
+    "$(python3 - <<'PY'
+import labels
+try:
+    labels.attention_color("urgent")
+    print("no error")
+except labels.ValidationError:
+    print("raised")
+PY
+)" "raised"
+check "a level missing from the color mapping fails explicitly too" \
+    "$(python3 - <<'PY'
+import labels
+labels.ATTENTION_COLORS.pop("normal")
+try:
+    labels.attention_color("normal")
+    print("no error")
+except labels.ValidationError:
+    print("raised")
+PY
+)" "raised"
+check "an unknown attention is rejected by the color parser" \
+    "$(python3 labels.py color urgent >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "rejected"
+ok "a detection label at high" -- create --label "Color detection" --attention high \
+    --instruction "x"
+ok "a derived label at high, referencing it" -- create --label "Color derived" --type derived \
+    --attention high --instruction "x" --required-label "Color detection"
+check "detection and derived labels resolve to the same color at the same attention" \
+    "$(python3 - <<'PY'
+import json, labels
+entries = {e["label"]: e for e in json.load(open("labels.json"))}
+det = labels.attention_color(entries["Color detection"]["attention"])
+der = labels.attention_color(entries["Color derived"]["attention"])
+print(det == der)
+PY
+)" "True"
+ok "cleanup color derived" -- delete "Color derived"
+ok "cleanup color detection" -- delete "Color detection"
+
+echo
 echo "--- documented behaviour ---"
 order_check() {  # order_check <marker> ... -> True when each follows the previous one
     # Whitespace is collapsed on both sides, so markers survive line rewrapping.
@@ -488,6 +549,53 @@ check "no stale ranking remains" \
 check "the three levels and their effects are documented" \
     "$(order_check '## Attention' 'mark_read_after: 24h' 'star: true' \
         'keep it starred')" "True"
+check "Gmail label colors follow the policies, ahead of the attention command" \
+    "$(order_check 'keep it starred' '### Gmail label colors' '### attention')" "True"
+check "colors are documented as presentation, never a second source of truth" \
+    "$(order_check '### Gmail label colors' 'presentation only, never a second source of truth')" \
+    "True"
+check "the mapping is documented as living in one place, unhardcoded elsewhere" \
+    "$(order_check '### Gmail label colors' \
+        '`ATTENTION_COLORS` in `labels.py` is the one place this mapping lives' \
+        'nothing else' 'hardcodes a color')" "True"
+check "detection and derived labels are documented as colored identically" \
+    "$(order_check '### Gmail label colors' \
+        'Detection Labels and Derived Labels are business labels alike' \
+        'this applies to both identically')" "True"
+check "system labels are documented as excluded from color" \
+    "$(order_check '### Gmail label colors' 'this applies to both identically' \
+        'never to `IL/processed` or `IL/no-match`' \
+        'created and left with no color')" "True"
+check "idempotent recoloring is documented" \
+    "$(order_check '### Gmail label colors' 'matching already' 'do nothing' \
+        'keeps repeated synchronization idempotent')" "True"
+check "a color change is documented as never touching a message" \
+    "$(order_check '### Gmail label colors' \
+        'A color change never touches a message' \
+        'it recolors the Gmail label itself')" "True"
+check "color failures are documented without rolling back the model change" \
+    "$(order_check '### Gmail label colors' \
+        'say which Gmail label could not be recolored and continue' \
+        'Never undo the label definition or Attention change because a color update failed' \
+        'never report synchronization as successful when it was not')" "True"
+check "process step 2 creates labels with their attention color" \
+    "$(order_check '### process' 'Create any that are missing with `create_label`' \
+        'the color from `python3 labels.py color' 'create `IL/processed` and `IL/no-match` with no color')" \
+    "True"
+check "process step 2 updates color only when it differs, covering Attention changes and Drive loads" \
+    "$(order_check '### process' 'compare its current color' \
+        'call `update_label` only when they differ' \
+        'after its label' 'Attention changed' 'loaded from Drive')" "True"
+check "the attention command documents that it never recolors" \
+    "$(order_check '### attention' 'no recoloring either' \
+        'Gmail label color is synchronized in `process` step 2, never here')" "True"
+check "the readme documents attention setting the Gmail label color" \
+    "$(grep -c "own Attention also sets its Gmail label's \*\*color\*\*" "$SCRIPT_DIR/../../../README.md")" \
+    "1"
+check "the readme documents color as presentation only" \
+    "$(grep -c 'Color is purely' "$SCRIPT_DIR/../../../README.md")" "1"
+check "the readme documents message processing never recoloring a message" \
+    "$(grep -c 'message processing never recolors a message' "$SCRIPT_DIR/../../../README.md")" "1"
 check "no temporary level remains in the skill" \
     "$(grep -ciE '`temporary`|unstar|expires_after|remove the star' "$SCRIPT_DIR/SKILL.md")" "0"
 check "no temporary level remains in the readme" \

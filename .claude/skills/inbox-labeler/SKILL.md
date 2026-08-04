@@ -539,8 +539,14 @@ worth it.
    its Gmail name — `Large amount` → `IL/Large amount` — and work with the resolved names from
    here on; Gmail knows nothing about the unprefixed form.
 2. Run `list_labels` and note the ids of `IL/processed`, `IL/no-match` and every resolved
-   business label. Create any that are missing with `create_label`, passing the resolved name
-   (the `IL` parent is created automatically).
+   business label, together with each business label's current Gmail color where it already
+   exists. Create any that are missing with `create_label`, passing the resolved name and the
+   color from `python3 labels.py color <attention>` for that label's Attention (the `IL` parent
+   is created automatically); create `IL/processed` and `IL/no-match` with no color, since they
+   are not business labels. For a business label that already exists, compare its current color
+   to `labels.py color`'s result and call `update_label` only when they differ — this is also
+   where a color catches up after its label's Attention changed, or after definitions were just
+   loaded from Drive. See [Gmail label colors](#gmail-label-colors).
 3. Find candidate threads with `search_threads`, query
    `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display
    name. If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use
@@ -631,6 +637,34 @@ python3 labels.py policy high --age 30h
 
 Ages count from **when the message was received**, which is the only timestamp available.
 
+### Gmail label colors
+
+Attention also decides each business label's **Gmail color** — presentation only, never a
+second source of truth. Ask for it the same way as the policy, and never choose a color by
+hand:
+
+```bash
+python3 labels.py color high
+# {"attention": "high", "color": {"backgroundColor": "#efa093", "textColor": "#000000"}}
+```
+
+`ATTENTION_COLORS` in `labels.py` is the one place this mapping lives; nothing else — not this
+skill, not a helper, not a test — hardcodes a color. Detection Labels and Derived Labels are
+business labels alike, so this applies to both identically, and never to `IL/processed` or
+`IL/no-match` — they are Inbox Labeler's own state, not something a user's Attention describes,
+and are created and left with no color.
+
+Colors are synchronized wherever [process step 2](#process) brings Gmail's labels in line with
+the definitions — whether a business label is being created for the first time, its Attention
+just changed, or the definitions were just loaded from Drive. Compare a label's current Gmail
+color to `labels.py color`'s result before touching it: **matching already → do nothing**;
+this is what keeps repeated synchronization idempotent. A color change never touches a message
+— it recolors the Gmail label itself, not anything that carries it.
+
+If a color update fails, say which Gmail label could not be recolored and continue with the
+rest. **Never undo the label definition or Attention change because a color update failed**,
+and never report synchronization as successful when it was not.
+
 ### attention
 
 **Only run this when the user asks.** It is never part of `process`.
@@ -664,7 +698,8 @@ labelling, `attention` owns the Gmail state that follows from it.
 8. Report what changed per message and what was left alone.
 
 Two boundaries this command must not cross. It never touches an `IL/` label, in either
-direction — no adding, no removing, not even `IL/processed`. And it never looks at the email
+direction — no adding, no removing, not even `IL/processed`, and no recoloring either; Gmail
+label color is synchronized in `process` step 2, never here. And it never looks at the email
 itself: the labels on the message are the whole input.
 
 ## The derived-label prompt

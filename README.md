@@ -68,6 +68,15 @@ mail — unread messages carrying `IL/processed`. It reads the labels that are a
 never the email, and it never adds or removes an Inbox Labeler label. `process` labels; `attention`
 acts on those labels. Two commands, two jobs.
 
+A label's own Attention also sets its Gmail label's **color**, using Gmail's muted palette so
+it stays out of the way — `none` light gray, `normal` muted yellow, `high` muted red, from the
+one mapping `labels.py` keeps for it. Color is purely
+presentation: it never feeds back into what a label detects or how attention is computed, and
+message processing never recolors a message — only the Gmail label itself, and only Detection
+and Derived Labels get one; the reserved system labels never do. It's set the moment a Gmail
+label is created and kept in sync whenever a label's Attention changes, so no color is ever
+chosen or edited by hand.
+
 ## Label types
 
 `type` says how a label decides whether it applies. There are two, and both produce a Gmail
@@ -420,6 +429,7 @@ python3 labels.py update "Imminent" --attention high
 # the two helpers the attention command uses — these touch nothing
 python3 labels.py attention "Invoice" "Imminent"    # which level do these labels add up to?
 python3 labels.py policy none --age 30h             # and what follows for a 30h old message?
+python3 labels.py color high                        # which Gmail color does this level get?
 ```
 
 `--label` takes the label itself — `Invoice`, not `IL/Invoice`. Anything starting with `IL/`
