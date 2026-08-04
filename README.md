@@ -1,18 +1,95 @@
 # Inbox Labeler
 
-Two Claude Agent Skills for keeping persistent **labels** and applying them to Gmail inbox mail
-on demand:
+## What is Inbox Labeler?
 
-| Skill | Owns |
-| --- | --- |
-| **`inbox-labeler`** | the labels, and the Gmail work — `process` and `attention` |
-| **`gdrive-label-store`** | the canonical `labels.json` in Google Drive — loading and saving it |
+Inbox Labeler turns a mailbox full of unlabelled mail into one that carries categories you
+defined — the ones that matter to you, not a fixed set someone else chose. You describe, in
+plain language, the aspects of a message you care about; Claude reads your mail and detects
+which of those aspects are present, applying each one as a Gmail label.
+
+A label names the aspect of a message it detects, how to detect it, and the Gmail label to
+apply when that aspect is present.
+
+Two things make this more than a labelling script. First, some things only matter in
+combination: an invoice, on its own, is routine, but a large invoice is worth a second look. You
+can say that directly with a Derived Label — `Invoices` and `Large amount` combine into
+`Large invoice`, one label naming exactly what the combination means. [The model](#the-model)
+covers exactly how Claude works that out.
+
+Second, meaning alone isn't the whole story. Not every label deserves the same reaction, so
+every label also carries an **Attention** level — what it asks of you. Attention, separately
+from what a label means, decides what Inbox Labeler is allowed to do to your mailbox: star a
+message, mark it read, or leave it alone.
 
 Nothing runs on its own. You ask, and something happens — see
 [Automating it](#automating-it) if you would rather it happened hourly.
 
-A label names the aspect of a message it detects, how to detect it, and the Gmail label to
-apply when that aspect is present.
+## A concrete example
+
+Take three labels from [`labels.example.json`](.claude/skills/inbox-labeler/labels.example.json),
+the reference set introduced in [Getting started](#getting-started). Each one starts from two
+directly observed facts, combines them into something more useful, and then shows Attention as
+the separate, final step:
+
+```text
+Email
+  ↓
+Detection labels:  Invoices, Large amount
+  ↓
+Derived label:     Large invoice
+  ↓
+Attention:         high
+```
+
+```text
+Email
+  ↓
+Detection labels:  Delivery, Imminent
+  ↓
+Derived label:     Delivery arriving soon
+  ↓
+Attention:         high
+```
+
+```text
+Email
+  ↓
+Detection labels:  Marketing, Newsletter
+  ↓
+Derived label:     Promotional newsletter
+  ↓
+Attention:         none
+```
+
+`Invoices` and `Large amount` are each detected on their own, directly from the email — an
+invoice is an invoice whether or not the amount is large, and a large amount can appear outside
+an invoice too. Only once both are present does `Large invoice` add anything: a label naming
+exactly what the combination means.
+
+What Inbox Labeler does about it next — starring the message, here — comes from that label's
+own Attention, a separate decision. The same pattern repeats for a delivery that's due
+imminently and for a newsletter that turns out to be promotional, whose `none` Attention only
+marks it read once it's a day old.
+
+[The model](#the-model) names this distinction precisely — a **detection** label observes, a
+**derived** label interprets, and Attention decides what happens next — and
+[Getting started](#getting-started) shows how to build on this example yourself.
+
+## The model
+
+`type` says how a label decides whether it applies. There are two, and both produce a Gmail
+label the same way — only the decision differs:
+
+| Type | Question it answers |
+| --- | --- |
+| `detection` | *What can I directly observe in this email?* |
+| `derived` | *Given the email and the detection labels that matched, what does this mean?* |
+
+**Detection labels recognise facts. Derived labels interpret those facts.**
+
+### Detection labels
+
+A detection label reads the email directly and decides. Here is what one looks like in full:
 
 ```json
 {
@@ -23,30 +100,26 @@ apply when that aspect is present.
 }
 ```
 
-Each label also carries an **attention** level — what it asks of you. See
-[Attention](#attention).
+Each label also carries an **attention** level — what it asks of you; see
+[Attention](#attention) below.
 
-`label` is the label's **only identifier** — there is no separate name and no technical id.
-It is a readable phrase, spaces and all, and it is what other labels reference and what
-`get`, `update` and `delete` address.
+`Invoices`, `Newsletter`, `Question` and `Large amount` are detection labels: each reads the
+email and decides.
 
-`IL/` is Inbox Labeler's Gmail namespace — infrastructure, not part of a label's identity — so
-it is stored nowhere and added only when talking to Gmail: `Delivery arriving soon` becomes
-the Gmail label **`IL/Delivery arriving soon`**, spaces preserved.
+### Derived labels
 
-Labels are unique ignoring case, and lookups are case-insensitive too, so
-`get "delivery arriving soon"` finds it. Leading and trailing spaces are trimmed and inner
-runs of whitespace collapse to one; punctuation and digits are fine.
+A derived label names what a combination of detection labels means — the way `Large invoice`,
+`Delivery arriving soon` and `Promotional newsletter` did [above](#a-concrete-example). To
+decide that, it evaluates the email together with the detection labels that already matched,
+using them as structured context. [Attention](#attention), covered next, is a separate decision
+built on top of that meaning. [Working with labels](#working-with-labels) covers exactly how a
+derived label names the detection labels it builds on.
 
-Two labels are **not** yours: `processed` and `no-match` are reserved system labels, and the
-lowercase spelling is the convention that marks them as internal. Your labels are readable
-phrases — `Delivery`, `Large amount`, `Delivery arriving soon` — and keep their spelling
-exactly as you write it. See [System labels](#system-labels).
+### Attention
 
-## Attention
-
-Labels say what a message *means*. **Attention** says what it asks of you — and it is the only
-thing that lets Inbox Labeler touch your mailbox rather than just annotate it.
+Labels describe what was detected and what it means. **Attention** says what it asks of you —
+and it is the only thing that lets Inbox Labeler touch your mailbox rather than just annotate
+it.
 
 | Attention | What it does to the mail |
 | --- | --- |
@@ -63,11 +136,6 @@ Attention is **not** a label. It is computed per message from the labels that ar
 marked read, because `none` is the only thing either label actually asked for. A message with no
 labels comes out `normal`, so it is left alone. The policies above are fixed and not configurable.
 
-None of this happens on its own. **Say "apply attention"** and it runs over already-labelled
-mail — unread messages carrying `IL/processed`. It reads the labels that are already there,
-never the email, and it never adds or removes an Inbox Labeler label. `process` labels; `attention`
-acts on those labels. Two commands, two jobs.
-
 A label's own Attention also sets its Gmail label's **color**, using Gmail's muted palette so
 it stays out of the way — `none` light gray, `normal` muted yellow, `high` muted red, from the
 one mapping `labels.py` keeps for it. Color is purely
@@ -77,91 +145,40 @@ and Derived Labels get one; the reserved system labels never do. It's set the mo
 label is created and kept in sync whenever a label's Attention changes, so no color is ever
 chosen or edited by hand.
 
-## Label types
+Inbox Labeler resolves each label to a Gmail label inside its own `IL/` namespace whenever it
+talks to Gmail — `IL/` itself is never part of a label's identity and is never stored anywhere.
+[How processing works](#how-processing-works) covers the full namespace, including the two
+reserved system labels.
 
-`type` says how a label decides whether it applies. There are two, and both produce a Gmail
-label the same way — only the decision differs:
+## Getting started
 
-| Type | Question it answers |
+**New to Inbox Labeler? Start from
+[`labels.example.json`](.claude/skills/inbox-labeler/labels.example.json).** It's a small,
+coherent set of detection labels, derived labels built on top of them, and attention levels —
+production-quality and usable as-is, but meant as a demonstration of the core modeling
+concepts, not a one-size-fits-all configuration. Copy the labels you want into your own
+`labels.json` (or paste them one at a time through the CLI) and adjust the instructions to your
+own mail. It is not imported automatically; nothing in Inbox Labeler ever reads it on its own.
+
+Then say things like "add a label for invoices" or "list my labels" to manage them, and one of
+these two to label mail:
+
+| Say | What it does |
 | --- | --- |
-| `detection` | *What can I directly observe in this email?* |
-| `derived` | *Given the email and the detection labels that matched, what does this mean?* |
+| **"process my inbox"** | labels unread inbox mail that hasn't been processed yet |
+| **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
 
-**Detection labels recognise facts. Derived labels interpret those facts.**
+Both use Claude's Gmail tools when they are connected — see
+[How processing works](#how-processing-works) for exactly how the two relate.
 
-`Invoices`, `Newsletter`, `Question` and `Large amount` are detection labels: each reads the
-email and decides. A derived label doesn't rediscover the email from scratch — it reads the
-email *together with the detection labels that already matched* and decides what that
-combination means:
+Want it to happen without asking every time? A recurring Claude task can say "process my inbox,
+then apply attention" on a schedule — see [Automating it](#automating-it) for the setup.
 
-```text
-Email
-  ↓
-Detection labels:  Invoices, Large amount
-  ↓
-Derived label:     Large invoice
-```
+*The rest of this README is the technical reference.*
 
-```text
-Email
-  ↓
-Detection labels:  Travel, Action required
-  ↓
-Derived label:     Travel preparation
-```
+## Working with labels
 
-A derived label names the detection labels it builds on:
-
-```json
-{
-  "label": "Large invoice",
-  "type": "derived",
-  "instruction": "An invoice whose amount is large enough to need a closer look.",
-  "required_labels": ["Invoices", "Large amount"],
-  "recommended_labels": []
-}
-```
-
-References are the exact label text of an existing detection label — spaces included.
-
-- **`required_labels`** — all of them must have matched, or the derived label isn't evaluated
-  for that message. This is the gate.
-- **`recommended_labels`** — context. Included in the prompt when they matched; when they
-  didn't, the derived label is still evaluated.
-
-Both hold labels (`Large amount`, not `IL/Large amount`), both may be empty, and both may
-only point at detection labels — there is no chaining from one derived label to another. The
-email is still available during evaluation; the detection labels are structured context that
-makes the decision easier and more consistent.
-
-Three rules keep the references honest:
-
-- **A label's type is immutable.** You cannot turn a detection label into a derived one, or the
-  reverse — create a new label instead.
-- **A referenced detection label cannot be deleted.** If a derived label names it in
-  `required_labels` or `recommended_labels`, the delete is rejected and tells you which derived
-  label is in the way. Nothing is rewritten for you: drop the reference or delete the derived
-  label first.
-- **Renaming carries the references with it.** `update "Large amount" --label "Big amount"`
-  rewrites every reference to it in the same write, so the store is never left dangling.
-  Renaming onto a label that already exists is rejected.
-
-### Asking for a label
-
-You describe what you want and Inbox Labeler works out the model — you never pick a type.
-Usually that is one detection label. When your request names several things that are each worth
-detecting on their own, though, you get a detection label per concept plus one derived label
-combining them, and you are told so in a line or two before anything is created:
-
-> Create a label for invoices with unusually large amounts that should be reviewed.
-
-becomes `Invoices` and `Large amount` as detection labels, with `Large invoice`
-derived on top — so the two observations are yours to reuse in other labels later. When the
-parts are only ever wanted together — "login codes and password reset links" — it stays one
-detection label with the detail in its instruction. Naming several things is not by itself a
-reason to split; being useful apart is. The simplest model that keeps the pieces reusable wins.
-
-## What a label is
+### What a label is
 
 > A user-defined way to detect an aspect of a message that is interesting to the user.
 
@@ -181,155 +198,136 @@ What matters is how labels behave together:
 - **Additive, not alternatives.** For a given message the outcome is the complete set of
   triggered labels, and the Gmail labels applied are exactly that set.
 
-A LinkedIn connection request, for example, carries several aspects at once: it is social
-mail, it is a connection request, and you treat it as important. If you keep labels for all
-three aspects, the message carries `IL/Social`, `IL/Connection` and `IL/Important` together.
+A LinkedIn connection request, for example, may carry several aspects at once: it is social
+mail, and it is a connection request. If you keep labels for both, the message carries
+`IL/Social` and `IL/Connection` together — and the strongest Attention among them, not any
+single label, determines what Gmail does next.
 
 The same holds at any breadth. Someone with `Invoices`, `Stripe` and `Reminder` labels sees all
 three land on a Stripe invoice reminder. Someone who prefers a single `Billing` label covering
 the same ground gets that one Gmail label instead. Both work the same way: every label that
 triggers adds its Gmail label, and none of them displaces another.
 
-## Layout
+`label` is the label's **only identifier** — there is no separate name and no technical id.
+It is a readable phrase, spaces and all, and it is what other labels reference and what
+`get`, `update` and `delete` address. Labels are unique ignoring case, and lookups are
+case-insensitive too, so `get "delivery arriving soon"` finds it. Leading and trailing spaces
+are trimmed and inner runs of whitespace collapse to one; punctuation and digits are fine.
 
+Two labels are **not** yours: `processed` and `no-match` are reserved system labels, and the
+lowercase spelling is the convention that marks them as internal. Your labels are readable
+phrases — `Delivery`, `Large amount`, `Delivery arriving soon` — and keep their spelling
+exactly as you write it. See [System labels](#system-labels).
+
+### Detection vs derived
+
+You describe what you want and Inbox Labeler works out the model — you never pick a type.
+Usually that is one detection label. When your request names several things that are each worth
+detecting on their own, though, you get a detection label per concept plus one derived label
+combining them, and you are told so in a line or two before anything is created:
+
+> Create a label for invoices with unusually large amounts that should be reviewed.
+
+becomes `Invoices` and `Large amount` as detection labels, with `Large invoice`
+derived on top — so the two observations are yours to reuse in other labels later. When the
+parts are only ever wanted together — "login codes and password reset links" — it stays one
+detection label with the detail in its instruction. Naming several things is not by itself a
+reason to split; being useful apart is. The simplest model that keeps the pieces reusable wins.
+
+### Required labels
+
+A derived label names the detection labels it builds on:
+
+```json
+{
+  "label": "Travel preparation",
+  "type": "derived",
+  "instruction": "Travel that asks the recipient to prepare something before or during the trip.",
+  "required_labels": ["Travel", "Action required"],
+  "recommended_labels": []
+}
 ```
-.claude/skills/inbox-labeler/
-├── SKILL.md              instructions Claude follows
-├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
-├── test.sh               the test suite — runs in a temp dir, touches nothing real
-├── labels.example.json   documentation only, never read at runtime
-└── labels.json           the working copy — local, gitignored, created on first use
-.claude/skills/gdrive-label-store/
-├── SKILL.md              how to load and save the canonical labels.json in Drive
-├── label_store.py        validation and stable serialisation
-└── test.sh               its own test suite
-README.md
-```
 
-Each skill is self-contained in its own directory.
+- **`required_labels`** — all of them must have matched, or the derived label isn't evaluated
+  for that message. This is the gate.
+- **`recommended_labels`** — context. Included in the prompt when they matched; when they
+  didn't, the derived label is still evaluated.
 
-## The `IL/` namespace
+### Renaming
 
-**Inbox Labeler owns the entire `IL/` namespace.** Every Gmail label starting with `IL/` is
-Inbox Labeler's to create, apply and remove — the namespace *is* its model, expressed as Gmail
-labels. Treat it as internal: don't create or maintain `IL/` labels by hand in Gmail, because
-Inbox Labeler assumes everything there is its own. The way to get a new `IL/` label is to add a
-label.
+**Renaming carries the references with it.** `update "Large amount" --label "Big amount"`
+rewrites every reference to it in the same write, so the store is never left dangling.
+Renaming onto a label that already exists is rejected.
 
-Because the namespace belongs to Inbox Labeler rather than to any individual label, it never
-appears in configuration. Labels store the label itself (`Invoices`) and Inbox Labeler
-resolves it to the **Gmail** label (`IL/Invoices`) whenever it creates, applies, removes,
-compares or reports one:
+### References
 
-| Kind | Origin | Label | In Gmail |
-| --- | --- | --- | --- |
-| **business labels** | the `label` of a detection or derived label | `Invoices`, `Large invoice` | `IL/Invoices`, `IL/Large invoice` |
-| **system labels** | Inbox Labeler's own state and outcome | `processed`, `no-match` | `IL/processed`, `IL/no-match` |
+References are the exact label text of an existing detection label — spaces included. Both
+fields hold labels (`Large amount`, not `IL/Large amount`), both may be empty, and both may
+only point at detection labels — there is no chaining from one derived label to another. The
+email is still available during evaluation; the detection labels are structured context that
+makes the decision easier and more consistent.
 
-Nothing in Gmail distinguishes a derived label's output from a detection label's — they are
-both just business labels.
+Two more rules keep the references honest:
 
-The boundary holds in both directions: **Inbox Labeler never modifies a Gmail label outside
-`IL/`.** Everything out there belongs to Gmail or to you — `INBOX`, `UNREAD`, `STARRED`,
-`IMPORTANT`, `CATEGORY_*`, and every label you made yourself. Those are read, never written.
+- **A label's type is immutable.** You cannot turn a detection label into a derived one, or the
+  reverse — create a new label instead.
+- **A referenced detection label cannot be deleted.** If a derived label names it in
+  `required_labels` or `recommended_labels`, the delete is rejected and tells you which derived
+  label is in the way. Nothing is rewritten for you: drop the reference or delete the derived
+  label first.
 
-### System labels
+### CLI examples
 
-| Gmail label | Meaning |
-| --- | --- |
-| `IL/processed` | Inbox Labeler has finished the pipeline for this message. |
-| `IL/no-match` | No **detection** label matched this message. |
-
-They serve different purposes. `IL/processed` records **processing state** — that the work
-happened. `IL/no-match` records the **outcome of detection** — that no detection label matched.
-A message that was processed and matched nothing carries both; a message that matched something
-carries `IL/processed` alongside its business labels. `IL/no-match` and detection business labels
-never coexist on a message — the outcome is one or the other. Derived labels don't affect
-`IL/no-match`, since it is decided before they are evaluated.
-
-`processed` and `no-match` are **reserved system labels** — internal implementation detail, not
-something a user models. `labels.py` rejects them on create, on rename and on delete, in any
-casing, so `Processed` and `NO-MATCH` are refused too.
-
-`IL/no-match` is what makes an empty result visible. Without it, a message that matched
-nothing looks exactly like a message that was never processed once you stop looking at
-`IL/processed` — with it, you can search `label:IL/no-match` to see what your current labels
-are missing, which is the fastest way to spot a gap worth a new label.
-
-## Where labels live
-
-Two places, with one of them in charge:
-
-| | |
-| --- | --- |
-| **Google Drive**, `Inbox Labeler/labels.json` | **canonical** — the definitions of record |
-| `.claude/skills/inbox-labeler/labels.json` | the local working copy Claude reads while running |
-
-The local copy is user-specific state and is **not** committed — it is in `.gitignore`, so the
-repository holds only source, documentation and the example file.
-
-**Loading is automatic, saving is not.** Before processing anything, Inbox Labeler checks the
-local copy; if it is empty it loads the definitions from Drive through the
-`gdrive-label-store` skill. If Drive has none either, it stops and says so rather than
-processing with an empty rulebook. Changes you make with the CLI or by asking Claude land in
-the local copy only — say **"save the labels"** to write them back to Drive.
-
-Saving always creates a *new* `labels.json` in the Drive folder and the newest one is canonical;
-older versions stay put. The Drive connector cannot update or delete a file in place, so
-pruning old versions is a manual job in the Drive UI.
-
-Nothing needs to be set up to start: the first `list` or `create` writes an empty local
-`labels.json`. `labels.example.json` is never read at runtime and deleting it changes nothing —
-it exists to be **copied**, not loaded.
-
-**New to Inbox Labeler? Start from `labels.example.json`.** It's a small, coherent set of
-detection labels, derived labels built on top of them, and attention levels — production-quality
-and usable as-is, but meant as a demonstration of the core modeling concepts, not a
-one-size-fits-all configuration. Copy the labels you want into your own `labels.json` (or paste
-them one at a time through the CLI) and adjust the instructions to your own mail. It is not
-imported automatically; nothing in Inbox Labeler ever reads it on its own.
-
-## How the skill is loaded
-
-Claude Code discovers skills by directory, not by filename — a `SKILL.md` sitting at a
-repository root is *not* picked up. It must be at
-`<skills-dir>/<skill-name>/SKILL.md`, and there are two such locations:
-
-**Project skill (how this repo is set up).** The skill is committed at
-`.claude/skills/inbox-labeler/SKILL.md`, so it loads automatically for any Claude Code
-session whose working directory is this project. No installation step:
+From `.claude/skills/inbox-labeler/`:
 
 ```bash
-cd /path/to/inbox-labeler
-claude
+python3 labels.py list
+python3 labels.py get "Large amount"
+
+# a detection label
+python3 labels.py create --label "Invoices" \
+  --instruction "The message is an invoice or bill for a purchase or service."
+
+# a derived label — the reference flags are repeatable
+python3 labels.py create --label "Large invoice" --type derived \
+  --instruction "An invoice whose amount is large enough to need a closer look." \
+  --required-label "Invoices" --required-label "Large amount"
+
+python3 labels.py update "Invoices" --instruction "The message is an invoice, bill or receipt."
+
+# rename, rewriting every reference to it
+python3 labels.py update "Large amount" --label "Big amount"
+
+python3 labels.py delete "Invoices"
+
+# set what a label asks of you
+python3 labels.py update "Newsletter" --attention none
+python3 labels.py update "Imminent" --attention high
+
+# the two helpers the attention command uses — these touch nothing
+python3 labels.py attention "Invoices" "Imminent"   # which level do these labels add up to?
+python3 labels.py policy none --age 30h             # and what follows for a 30h old message?
+python3 labels.py color high                        # which Gmail color does this level get?
 ```
 
-Confirm it is loaded by running `/skills` (it appears as `inbox-labeler`), or just ask
-"list my labels".
+`--label` takes the label itself — `Invoices`, not `IL/Invoices`. Anything starting with `IL/`
+is rejected, as are the reserved system labels `processed` and `no-match`. Spaces are expected; quote the
+argument.
 
-**Personal skill (available in every project).** Link or copy the skill directory into
-your personal skills directory:
+`--type` defaults to `detection` and `--attention` to `normal`; every command prints both, so
+the kind of label and what it asks for are always visible. Unknown values are rejected.
 
-```bash
-mkdir -p ~/.claude/skills
-ln -s "$PWD/.claude/skills/inbox-labeler" ~/.claude/skills/inbox-labeler
-```
+`--required-label` and `--recommended-label` apply to derived labels only and name existing
+detection labels by their exact text. On update they replace the stored list rather than adding
+to it; passing an empty value clears it.
 
-A symlink keeps one copy, so `labels.json` stays in this repo. Copy the directory instead if
-you would rather the store live outside the project. Restart Claude Code after adding it.
+`get`, `update` and `delete` address a label by its text, matched case-insensitively. Passing
+`--label` to `update` renames the label. Every command prints JSON; on a validation failure it
+prints `{"error": "..."}` and exits with status 1.
 
-Then say things like "add a label for invoices" or "list my labels" to manage them, and one of
-these two to label mail:
+## How processing works
 
-| Say | What it does |
-| --- | --- |
-| **"process my inbox"** | labels unread inbox mail that hasn't been processed yet |
-| **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
-
-Both use Claude's Gmail tools when they are connected; nothing runs on a schedule — you trigger
-them, and `attention` never runs as part of `process`.
-
-## What the two commands do
+`process` labels; `attention` acts on those labels. Two commands, two jobs.
 
 Both work on **individual messages**, not threads, and both are scoped to **unread inbox mail
 only** — archived and read mail are never touched. Their scopes are mirror images and never
@@ -385,10 +383,56 @@ the effective level, and sets `STARRED` or clears `UNREAD` accordingly. It never
 email, never classifies anything, and never adds or removes an `IL/` label. See
 [Attention](#attention) for the levels and their timings.
 
-## Automating it
+### System labels
 
-Optional, and no part of the implementation — the skills themselves have no scheduler and never
-act unprompted.
+| Gmail label | Meaning |
+| --- | --- |
+| `IL/processed` | Inbox Labeler has finished the pipeline for this message. |
+| `IL/no-match` | No **detection** label matched this message. |
+
+They serve different purposes. `IL/processed` records **processing state** — that the work
+happened. `IL/no-match` records the **outcome of detection** — that no detection label matched.
+A message that was processed and matched nothing carries both; a message that matched something
+carries `IL/processed` alongside its business labels. `IL/no-match` and detection business labels
+never coexist on a message — the outcome is one or the other. Derived labels don't affect
+`IL/no-match`, since it is decided before they are evaluated.
+
+`processed` and `no-match` are **reserved system labels** — internal implementation detail, not
+something a user models. `labels.py` rejects them on create, on rename and on delete, in any
+casing, so `Processed` and `NO-MATCH` are refused too.
+
+`IL/no-match` is what makes an empty result visible. Without it, a message that matched
+nothing looks exactly like a message that was never processed once you stop looking at
+`IL/processed` — with it, you can search `label:IL/no-match` to see what your current labels
+are missing, which is the fastest way to spot a gap worth a new label.
+
+### The `IL/` namespace
+
+**Inbox Labeler owns the entire `IL/` namespace.** Every Gmail label starting with `IL/` is
+Inbox Labeler's to create, apply and remove — the namespace *is* its model, expressed as Gmail
+labels. Treat it as internal: don't create or maintain `IL/` labels by hand in Gmail, because
+Inbox Labeler assumes everything there is its own. The way to get a new `IL/` label is to add a
+label.
+
+Because the namespace belongs to Inbox Labeler rather than to any individual label, it never
+appears in configuration. Labels store the label itself and Inbox Labeler resolves it to the
+**Gmail** label whenever it creates, applies, removes, compares or reports one. Detection and
+Derived Labels resolve exactly the same way — nothing in Gmail distinguishes one from the
+other, both are just business labels:
+
+| Kind | Stored label | Gmail label |
+| --- | --- | --- |
+| Detection | `Delivery` | `IL/Delivery` |
+| Derived | `Delivery arriving soon` | `IL/Delivery arriving soon` |
+| System | `processed` | `IL/processed` |
+
+The boundary holds in both directions: **Inbox Labeler never modifies a Gmail label outside
+`IL/`.** Everything out there belongs to Gmail or to you — `INBOX`, `UNREAD`, `STARRED`,
+`IMPORTANT`, `CATEGORY_*`, and every label you made yourself. Those are read, never written.
+
+### Automating it
+
+Optional, and no part of the implementation.
 
 If you want it to happen regularly, set up a **recurring Claude task** with a prompt like:
 
@@ -405,54 +449,31 @@ Everything the task needs must already be in place: the Gmail connector connecte
 definitions either in the local copy or in Drive for step zero to load. A run with no
 definitions stops and reports instead of doing anything.
 
-## Run it directly
+## Persistence
 
-From `.claude/skills/inbox-labeler/`:
+Two places, with one of them in charge:
 
-```bash
-python3 labels.py list
-python3 labels.py get "Large amount"
+| | |
+| --- | --- |
+| **Google Drive**, `Inbox Labeler/labels.json` | **canonical** — the definitions of record |
+| `.claude/skills/inbox-labeler/labels.json` | the local working copy Claude reads while running |
 
-# a detection label
-python3 labels.py create --label "Invoices" \
-  --instruction "The message is an invoice or bill for a purchase or service."
+The local copy is user-specific state and is **not** committed — it is in `.gitignore`, so the
+repository holds only source, documentation and the example file.
 
-# a derived label — the reference flags are repeatable
-python3 labels.py create --label "Large invoice" --type derived \
-  --instruction "An invoice whose amount is large enough to need a closer look." \
-  --required-label "Invoices" --required-label "Large amount"
+**Loading is automatic, saving is not.** Before processing anything, Inbox Labeler checks the
+local copy; if it is empty it loads the definitions from Drive through the
+`gdrive-label-store` skill. If Drive has none either, it stops and says so rather than
+processing with an empty rulebook. Changes you make with the CLI or by asking Claude land in
+the local copy only — say **"save the labels"** to write them back to Drive.
 
-python3 labels.py update "Invoices" --instruction "The message is an invoice, bill or receipt."
+Saving always creates a *new* `labels.json` in the Drive folder and the newest one is canonical;
+older versions stay put. The Drive connector cannot update or delete a file in place, so
+pruning old versions is a manual job in the Drive UI.
 
-# rename, rewriting every reference to it
-python3 labels.py update "Large amount" --label "Big amount"
-
-python3 labels.py delete "Invoices"
-
-# set what a label asks of you
-python3 labels.py update "Newsletter" --attention none
-python3 labels.py update "Imminent" --attention high
-
-# the two helpers the attention command uses — these touch nothing
-python3 labels.py attention "Invoices" "Imminent"   # which level do these labels add up to?
-python3 labels.py policy none --age 30h             # and what follows for a 30h old message?
-python3 labels.py color high                        # which Gmail color does this level get?
-```
-
-`--label` takes the label itself — `Invoices`, not `IL/Invoices`. Anything starting with `IL/`
-is rejected, as are the reserved system labels `processed` and `no-match`. Spaces are expected; quote the
-argument.
-
-`--type` defaults to `detection` and `--attention` to `normal`; every command prints both, so
-the kind of label and what it asks for are always visible. Unknown values are rejected.
-
-`--required-label` and `--recommended-label` apply to derived labels only and name existing
-detection labels by their exact text. On update they replace the stored list rather than adding
-to it; passing an empty value clears it.
-
-`get`, `update` and `delete` address a label by its text, matched case-insensitively. Passing
-`--label` to `update` renames the label. Every command prints JSON; on a validation failure it
-prints `{"error": "..."}` and exits with status 1.
+Nothing needs to be set up to start: the first `list` or `create` writes an empty local
+`labels.json`. Deleting `labels.example.json` changes nothing at runtime — see
+[Getting started](#getting-started) for what it's there for.
 
 The `gdrive-label-store` skill has its own two commands, for checking a document by hand:
 
@@ -462,7 +483,61 @@ python3 label_store.py validate FILE            # every problem at once, not jus
 python3 label_store.py format   FILE [--write]  # stable, human-readable JSON
 ```
 
-## Test it
+## Repository layout
+
+Two Claude Agent Skills implement Inbox Labeler:
+
+| Skill | Owns |
+| --- | --- |
+| **`inbox-labeler`** | the labels, and the Gmail work — `process` and `attention` |
+| **`gdrive-label-store`** | the canonical `labels.json` in Google Drive — loading and saving it |
+
+```
+.claude/skills/inbox-labeler/
+├── SKILL.md              instructions Claude follows
+├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
+├── test.sh               the test suite — runs in a temp dir, touches nothing real
+├── labels.example.json   documentation only, never read at runtime
+└── labels.json           the working copy — local, gitignored, created on first use
+.claude/skills/gdrive-label-store/
+├── SKILL.md              how to load and save the canonical labels.json in Drive
+├── label_store.py        validation and stable serialisation
+└── test.sh               its own test suite
+README.md
+```
+
+Each skill is self-contained in its own directory.
+
+### How the skill is loaded
+
+Claude Code discovers skills by directory, not by filename — a `SKILL.md` sitting at a
+repository root is *not* picked up. It must be at
+`<skills-dir>/<skill-name>/SKILL.md`, and there are two such locations:
+
+**Project skill (how this repo is set up).** The skill is committed at
+`.claude/skills/inbox-labeler/SKILL.md`, so it loads automatically for any Claude Code
+session whose working directory is this project. No installation step:
+
+```bash
+cd /path/to/inbox-labeler
+claude
+```
+
+Confirm it is loaded by running `/skills` (it appears as `inbox-labeler`), or just ask
+"list my labels".
+
+**Personal skill (available in every project).** Link or copy the skill directory into
+your personal skills directory:
+
+```bash
+mkdir -p ~/.claude/skills
+ln -s "$PWD/.claude/skills/inbox-labeler" ~/.claude/skills/inbox-labeler
+```
+
+A symlink keeps one copy, so `labels.json` stays in this repo. Copy the directory instead if
+you would rather the store live outside the project. Restart Claude Code after adding it.
+
+## Testing
 
 No test framework, just a shell script per skill. Each copies its module into a temporary
 directory, so your own labels are never touched:

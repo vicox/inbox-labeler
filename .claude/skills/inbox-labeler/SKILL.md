@@ -118,9 +118,10 @@ What the design does fix is how labels behave together:
 - **Additive, not alternatives.** For a given message the outcome is the complete set of
   triggered labels, and the Gmail labels applied are exactly that set.
 
-Example: a LinkedIn connection request carries several aspects at once. It is social mail, it
-is a connection request, and the user treats it as important. If the user keeps labels for all
-three aspects, the message carries `IL/Social`, `IL/Connection` and `IL/Important` together.
+Example: a LinkedIn connection request carries several aspects at once. It is social mail, and
+it is a connection request. If the user keeps labels for both, the message carries `IL/Social`
+and `IL/Connection` together — and the strongest Attention among them, not any single label,
+determines what happens to the message next.
 
 ## Labels are timeless
 
