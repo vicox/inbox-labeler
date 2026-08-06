@@ -307,6 +307,18 @@ Choosing between the two reference lists follows from the user's wording:
   *or* another is enough to make the interpretation worth considering, and let the instruction
   weigh them.
 
+**A derived label should be able to say no.** The required labels decide which messages are
+considered; the instruction decides which of those the label belongs on. Put every derived
+label through the rejection question:
+
+> Is there a message where every required label matches and this label still does not belong?
+
+`Review requested` answers yes — a pull request whose comments are addressed to someone else
+matches the gate and is rejected anyway — and `Input requested` answers yes for the same
+reason. A label that answers no is not interpreting anything: its instruction restates the
+conjunction, and what it really adds is a threshold or an attention level. That can be worth
+having, but say which of the two it is rather than presenting it as a new concept.
+
 If an interpretation seems to need another interpretation, the missing piece is a detection
 label — derived labels never reference derived labels.
 
