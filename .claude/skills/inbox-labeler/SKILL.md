@@ -595,6 +595,9 @@ worth it.
 10. Report a short summary: how many messages were processed, which message got which business
     labels and why, which got `IL/no-match`, and anything you were unsure about instead of
     guessing silently. Say which labels came from interpretation when a derived label triggered.
+    When a derived label's `required_labels` all matched but the interpretation rejected it, say
+    so and explain briefly why — a rejected candidate is the clearest sign the interpretation is
+    doing work.
     **If the run stopped at the ten-message limit, say so** and that another `process` run will
     continue with the rest — otherwise the user has no way to tell a finished inbox from a
     truncated run.
