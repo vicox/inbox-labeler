@@ -581,3 +581,9 @@ The classifying itself is Claude reading the email against your instructions —
 called from the code, no prompt file, and nothing to configure. Which is also why two runs over
 the same mail can differ in judgement, while everything deterministic — validation, label
 identity, attention levels, the policy for each level — lives in the modules and is tested.
+
+## License
+
+Inbox Labeler is released under the MIT License — see [`LICENSE`](LICENSE) for the full text.
+Use it, change it and redistribute it freely, including commercially; the only condition is
+that the copyright notice travels with it, and it comes with no warranty.
