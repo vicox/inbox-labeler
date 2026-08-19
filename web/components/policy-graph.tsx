@@ -189,7 +189,7 @@ export function PolicyGraph() {
           <Panel
             tone="detection"
             title="Detection"
-            note="Each one reads a message on its own."
+            note="What's in the email?"
             count={detection.length}
           >
             {combined.map(card)}
@@ -199,7 +199,7 @@ export function PolicyGraph() {
           <Panel
             tone="derived"
             title="Derived"
-            note="Each one reads the detections it requires."
+            note="What does it mean to you?"
             count={derived.length}
           >
             {derived.map(card)}
