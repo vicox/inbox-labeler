@@ -210,10 +210,11 @@ when they help a decision; never add or remove one.
 
 ## Storage
 
-Labels are stored in `labels.json` in this skill's directory. The file is local, untracked,
-and created automatically on first use — an empty list is a normal starting state, not an
-error. Never edit it by hand: always go through the CLI below, which validates before writing.
-(`labels.example.json` is documentation only — never read from or write to it.)
+Labels are stored in `data/labels.json` at the repository root, outside this skill. The file
+is local, untracked, and created automatically on first use — an empty list is a normal
+starting state, not an error. Never edit it by hand: always go through the CLI below, which
+validates before writing. (`data/labels.example.json` is documentation only — never read from
+or write to it.)
 
 ## Managing labels
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Inbox Labeler tests. Runs labels.py in a temporary directory, so the real
-# labels.json is never touched.
+# Inbox Labeler tests. Runs labels.py against a throwaway copy of the repository
+# layout, so the real data/labels.json is never touched.
 #
 #   ./test.sh
 #
@@ -8,11 +8,23 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# -P throughout: the skill is also reachable through the symlinks in
+# .claude/skills/ and .agents/skills/, and the checks against README.md and
+# data/ below only find the repository when ".." is followed physically.
+SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
+REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd -P)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cp "$SCRIPT_DIR/labels.py" "$WORK/"
-cd "$WORK"
+# labels.py resolves its store as ../../data/labels.json relative to itself, so
+# the temporary tree has to mirror skills/inbox-labeler/ and data/ for the store
+# to land inside $WORK. Every check below runs from that data directory and
+# reads the store as plain labels.json.
+mkdir -p "$WORK/skills/inbox-labeler" "$WORK/data"
+cp "$SCRIPT_DIR/labels.py" "$WORK/skills/inbox-labeler/"
+cd "$WORK/data"
+LABELS=../skills/inbox-labeler/labels.py
+# Checks that import labels as a module run from the data directory too.
+export PYTHONPATH="$WORK/skills/inbox-labeler"
 
 pass=0
 fail=0
@@ -23,7 +35,7 @@ run() {
     local want=$1 desc=$2
     shift 3  # drop want, desc, and the literal --
     local out rc
-    out=$(python3 labels.py "$@" 2>&1)
+    out=$(python3 "$LABELS" "$@" 2>&1)
     rc=$?
     if [ "$rc" -eq "$want" ]; then
         pass=$((pass + 1))
@@ -127,37 +139,37 @@ err "detection labels reject --required-label" -- create --label "Plain" --instr
 echo
 echo "--- 5. list and get expose no name field ---"
 check "list has no name" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("name" in e for e in json.load(sys.stdin)))')" \
+    "$(python3 "$LABELS" list | python3 -c 'import json,sys;print(any("name" in e for e in json.load(sys.stdin)))')" \
     "False"
 check "list has no id either" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("id" in e for e in json.load(sys.stdin)))')" \
+    "$(python3 "$LABELS" list | python3 -c 'import json,sys;print(any("id" in e for e in json.load(sys.stdin)))')" \
     "False"
 ok "get by label text" -- get "Travel disruption"
 check "get has no name" \
-    "$(python3 labels.py get "Travel disruption" | python3 -c 'import json,sys;print("name" in json.load(sys.stdin))')" \
+    "$(python3 "$LABELS" get "Travel disruption" | python3 -c 'import json,sys;print("name" in json.load(sys.stdin))')" \
     "False"
 check "get is case-insensitive" \
-    "$(python3 labels.py get "TRAVEL DISRUPTION" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "$(python3 "$LABELS" get "TRAVEL DISRUPTION" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
     "Travel disruption"
 err "get on an unknown label" -- get "Does not exist"
 
 echo
 echo "--- 6. the CLI exposes label, never name ---"
 check "create has no --name" \
-    "$(python3 labels.py create --help 2>&1 | grep -c -- '--name')" "0"
+    "$(python3 "$LABELS" create --help 2>&1 | grep -c -- '--name')" "0"
 check "update has no --name" \
-    "$(python3 labels.py update --help 2>&1 | grep -c -- '--name')" "0"
+    "$(python3 "$LABELS" update --help 2>&1 | grep -c -- '--name')" "0"
 check "create takes --label" \
-    "$(python3 labels.py create --help 2>&1 | grep -q -- '--label' && echo yes)" "yes"
+    "$(python3 "$LABELS" create --help 2>&1 | grep -q -- '--label' && echo yes)" "yes"
 check "get takes a positional label" \
-    "$(python3 labels.py get --help 2>&1 | grep -qi 'label' && echo yes)" "yes"
+    "$(python3 "$LABELS" get --help 2>&1 | grep -qi 'label' && echo yes)" "yes"
 check "--name is rejected outright by the parser" \
-    "$(python3 labels.py create --name "Nope" --label "Nope" --instruction "x" >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "$(python3 "$LABELS" create --name "Nope" --label "Nope" --instruction "x" >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
     "rejected"
 check "the module declares no name field" \
     "$(python3 -c 'import labels;print("name" in labels.COMMON_FIELDS)')" "False"
 check "the help mentions spaces are fine" \
-    "$(python3 labels.py create --help 2>&1 | grep -c 'may contain spaces')" "1"
+    "$(python3 "$LABELS" create --help 2>&1 | grep -c 'may contain spaces')" "1"
 
 echo
 echo "--- 7. Gmail labels keep the spaces ---"
@@ -195,9 +207,9 @@ check "the rename attempt changed nothing" "$(field "Renameable" label)" "Rename
 err "users cannot delete processed" -- delete "processed"
 err "users cannot delete no-match" -- delete "no-match"
 check "the error calls it a reserved system label" \
-    "$(python3 labels.py delete "processed" 2>&1 | grep -c 'reserved system label')" "1"
+    "$(python3 "$LABELS" delete "processed" 2>&1 | grep -c 'reserved system label')" "1"
 check "the create error calls it a reserved system label" \
-    "$(python3 labels.py create --label "no-match" --instruction "x" 2>&1 | grep -c 'reserved system label')" \
+    "$(python3 "$LABELS" create --label "no-match" --instruction "x" 2>&1 | grep -c 'reserved system label')" \
     "1"
 ok "look-alikes are still ordinary labels" -- create --label "Processed orders" --instruction "x"
 ok "and so is No match found" -- create --label "No match found" --instruction "x"
@@ -251,7 +263,7 @@ echo
 echo "--- 10. deletion guards use the readable labels ---"
 err "delete a required detection label" -- delete "Cancelled flight"
 check "the error names both labels" \
-    "$(python3 labels.py delete "Cancelled flight" 2>&1 | grep -c 'Travel disruption likely')" "1"
+    "$(python3 "$LABELS" delete "Cancelled flight" 2>&1 | grep -c 'Travel disruption likely')" "1"
 check "it is still there" "$(field "Cancelled flight" label)" "Cancelled flight"
 err "delete a recommended detection label" -- delete "Delayed flight"
 ok "an unreferenced label deletes" -- create --label "Loose end" --instruction "x"
@@ -279,28 +291,28 @@ cat > labels.json <<'JSON'
 ]
 JSON
 check "every label survives the load" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')" \
+    "$(python3 "$LABELS" list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')" \
     "6"
 check "no name survives the load" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("name" in e for e in json.load(sys.stdin)))')" \
+    "$(python3 "$LABELS" list | python3 -c 'import json,sys;print(any("name" in e for e in json.load(sys.stdin)))')" \
     "False"
 check "no id survives the load" \
-    "$(python3 labels.py list | python3 -c 'import json,sys;print(any("id" in e for e in json.load(sys.stdin)))')" \
+    "$(python3 "$LABELS" list | python3 -c 'import json,sys;print(any("id" in e for e in json.load(sys.stdin)))')" \
     "False"
 check "a stray IL/ prefix is stripped" \
-    "$(python3 labels.py get "LargeAmount" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "$(python3 "$LABELS" get "LargeAmount" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
     "LargeAmount"
 check "a label-less entry falls back to its old name" \
-    "$(python3 labels.py get "Legacy" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "$(python3 "$LABELS" get "Legacy" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
     "Legacy"
 check "whitespace is normalised" \
-    "$(python3 labels.py get "Padded label" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
+    "$(python3 "$LABELS" get "Padded label" | python3 -c 'import json,sys;print(json.load(sys.stdin)["label"])')" \
     "Padded label"
 check "a missing type becomes detection" \
-    "$(python3 labels.py get "Untyped" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" \
+    "$(python3 "$LABELS" get "Untyped" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" \
     "detection"
 check "derived references survive" \
-    "$(python3 labels.py get "LargePayment" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["required_labels"]))')" \
+    "$(python3 "$LABELS" get "LargePayment" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["required_labels"]))')" \
     "LargeAmount"
 check "list does not rewrite the store" "$(grep -c '"name"' labels.json)" "6"
 ok "the next write persists the migration" -- update "Invoices" --instruction "Invoices only."
@@ -375,13 +387,13 @@ ok "it can be changed" -- update "Invoice" --attention high
 check "the change stuck" "$(field "Invoice" attention)" "high"
 ok "and back" -- update "Invoice" --attention normal
 check "it survives a rename" \
-    "$(python3 labels.py update "Contract" --label "Signed contract" >/dev/null; field "Signed contract" attention)" \
+    "$(python3 "$LABELS" update "Contract" --label "Signed contract" >/dev/null; field "Signed contract" attention)" \
     "high"
 ok "rename back" -- update "Signed contract" --label "Contract"
 
 echo
 echo "--- attention: the highest-priority level wins ---"
-agg() { python3 labels.py attention "$@" | python3 -c 'import json,sys;print(json.load(sys.stdin)["attention"])'; }
+agg() { python3 "$LABELS" attention "$@" | python3 -c 'import json,sys;print(json.load(sys.stdin)["attention"])'; }
 check "none + none -> none" "$(agg "Newsletter" "Marketing")" "none"
 check "normal + normal -> normal" "$(agg "Invoice" "Receipt")" "normal"
 check "normal + none -> none" "$(agg "Invoice" "Newsletter")" "none"
@@ -393,7 +405,7 @@ check "order does not matter for none over normal" "$(agg "Newsletter" "Invoice"
 check "order does not matter for high" "$(agg "Newsletter" "Contract")" "high"
 check "lookup is case-insensitive" "$(agg "contract")" "high"
 check "an unknown label is reported, not guessed" \
-    "$(python3 labels.py attention "Ghost" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["unknown"][0], d["attention"])')" \
+    "$(python3 "$LABELS" attention "Ghost" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["unknown"][0], d["attention"])')" \
     "Ghost normal"
 check "the levels are ranked by priority, lowest first" \
     "$(python3 -c 'import labels;print(",".join(labels.ATTENTION_LEVELS))')" \
@@ -410,7 +422,7 @@ check "high just stars" \
 check "no policy expires" \
     "$(python3 -c 'import labels;print(sum("expires_after" in p for p in labels.ATTENTION_POLICIES.values()))')" \
     "0"
-acts() { python3 labels.py policy "$1" --age "$2" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["actions"]))'; }
+acts() { python3 "$LABELS" policy "$1" --age "$2" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["actions"]))'; }
 check "high stars a fresh message" "$(acts high 1h)" "star"
 check "high stars, whatever the age" "$(acts high 900d)" "star"
 check "starring never marks read" "$(acts high 900d | grep -c mark_read)" "0"
@@ -421,10 +433,10 @@ check "no level ever unstars" \
     "$(for l in none normal high; do for a in 1h 30h 3d 900d; do acts "$l" "$a"; done; done | grep -c unstar)" \
     "0"
 check "an unknown level is rejected by the parser" \
-    "$(python3 labels.py policy urgent --age 1h >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "$(python3 "$LABELS" policy urgent --age 1h >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
     "rejected"
 check "temporary is rejected by the parser too" \
-    "$(python3 labels.py policy temporary --age 1h >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "$(python3 "$LABELS" policy temporary --age 1h >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
     "rejected"
 
 echo
@@ -433,16 +445,16 @@ check "every attention level has a configured color" \
     "$(python3 -c 'import labels;print(set(labels.ATTENTION_LEVELS) <= set(labels.ATTENTION_COLORS))')" \
     "True"
 check "none is light gray" \
-    "$(python3 labels.py color none | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
+    "$(python3 "$LABELS" color none | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
     "#cccccc #000000"
 check "normal is muted yellow" \
-    "$(python3 labels.py color normal | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
+    "$(python3 "$LABELS" color normal | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
     "#fce8b3 #000000"
 check "high is muted red" \
-    "$(python3 labels.py color high | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
+    "$(python3 "$LABELS" color high | python3 -c 'import json,sys;d=json.load(sys.stdin)["color"];print(d["backgroundColor"],d["textColor"])')" \
     "#efa093 #000000"
-first_color=$(python3 labels.py color high)
-second_color=$(python3 labels.py color high)
+first_color=$(python3 "$LABELS" color high)
+second_color=$(python3 "$LABELS" color high)
 check "repeated calls return the identical color, so re-sync is idempotent" \
     "$([ "$first_color" = "$second_color" ] && echo same)" "same"
 check "reserved system labels are not attention levels, so they never get a color" \
@@ -470,7 +482,7 @@ except labels.ValidationError:
 PY
 )" "raised"
 check "an unknown attention is rejected by the color parser" \
-    "$(python3 labels.py color urgent >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
+    "$(python3 "$LABELS" color urgent >/dev/null 2>&1; [ $? -ne 0 ] && echo rejected)" \
     "rejected"
 ok "a detection label at high" -- create --label "Color detection" --attention high \
     --instruction "x"
@@ -543,9 +555,9 @@ check "the worked case for none over normal is shown" \
     "$(order_check '`high` > `none` > `normal`' 'labels.py attention "Invoice" "Newsletter"' \
         '{"attention": "none"')" "True"
 check "the readme documents the same order" \
-    "$(grep -c 'highest-priority one wins\*\* — `high` > `none` > `normal`' "$SCRIPT_DIR/../../../README.md")" "1"
+    "$(grep -c 'highest-priority one wins\*\* — `high` > `none` > `normal`' "$REPO_ROOT/README.md")" "1"
 check "no stale ranking remains" \
-    "$(grep -c '`high` > `normal` > `none`' "$SCRIPT_DIR/SKILL.md" "$SCRIPT_DIR/../../../README.md" | grep -c ':0$')" "2"
+    "$(grep -c '`high` > `normal` > `none`' "$SCRIPT_DIR/SKILL.md" "$REPO_ROOT/README.md" | grep -c ':0$')" "2"
 check "the three levels and their effects are documented" \
     "$(order_check '## Attention' 'mark_read_after: 24h' 'star: true' \
         'keep it starred')" "True"
@@ -590,21 +602,21 @@ check "the attention command documents that it never recolors" \
     "$(order_check '### attention' 'no recoloring either' \
         'Gmail label color is synchronized in `process` step 2, never here')" "True"
 check "the readme documents attention setting the Gmail label color" \
-    "$(grep -c "own Attention also sets its Gmail label's \*\*color\*\*" "$SCRIPT_DIR/../../../README.md")" \
+    "$(grep -c "own Attention also sets its Gmail label's \*\*color\*\*" "$REPO_ROOT/README.md")" \
     "1"
 check "the readme documents color as presentation only" \
-    "$(grep -c 'Color is purely' "$SCRIPT_DIR/../../../README.md")" "1"
+    "$(grep -c 'Color is purely' "$REPO_ROOT/README.md")" "1"
 check "the readme documents message processing never recoloring a message" \
-    "$(grep -c 'message processing never recolors a message' "$SCRIPT_DIR/../../../README.md")" "1"
+    "$(grep -c 'message processing never recolors a message' "$REPO_ROOT/README.md")" "1"
 check "no temporary level remains in the skill" \
     "$(grep -ciE '`temporary`|unstar|expires_after|remove the star' "$SCRIPT_DIR/SKILL.md")" "0"
 check "no temporary level remains in the readme" \
-    "$(grep -ciE '`temporary`|unstar|expires_after|remove the star' "$SCRIPT_DIR/../../../README.md")" "0"
+    "$(grep -ciE '`temporary`|unstar|expires_after|remove the star' "$REPO_ROOT/README.md")" "0"
 check "process and attention are documented as disjoint" \
     "$(order_check 'apply attention' 'The two never overlap' \
         'never part of a `process` run')" "True"
 check "the example store shows the levels" \
-    "$(python3 -c "import json;print(','.join(sorted({e['attention'] for e in json.load(open('$SCRIPT_DIR/labels.example.json'))})))")" \
+    "$(python3 -c "import json;print(','.join(sorted({e['attention'] for e in json.load(open('$REPO_ROOT/data/labels.example.json'))})))")" \
     "high,none,normal"
 check "there is exactly one processing command" \
     "$(order_check 'There is exactly one command' 'process my inbox')" "True"
@@ -621,16 +633,16 @@ check "removal appears only in the attention command" \
 check "and only for UNREAD" \
     "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'unlabel_message')" "1"
 check "the readme says process only adds labels" \
-    "$(grep -c 'only ever adds labels' "$SCRIPT_DIR/../../../README.md")" "1"
+    "$(grep -c 'only ever adds labels' "$REPO_ROOT/README.md")" "1"
 check "no reprocess remains in the skill" \
     "$(grep -ci 'reprocess' "$SCRIPT_DIR/SKILL.md")" "0"
 check "no reprocess remains in the readme" \
-    "$(grep -ci 'reprocess' "$SCRIPT_DIR/../../../README.md")" "0"
+    "$(grep -ci 'reprocess' "$REPO_ROOT/README.md")" "0"
 check "size alone is still never a reason to stop" \
     "$(order_check 'Rules while processing' 'Never stop for the wrong reason' \
         'Ten messages is the only limit' 'do not sample' 'because the inbox is large')" "True"
 check "no stale no-cap claim remains" \
-    "$(grep -c 'no cap' "$SCRIPT_DIR/SKILL.md" "$SCRIPT_DIR/../../../README.md" | grep -c ':0$')" "2"
+    "$(grep -c 'no cap' "$SCRIPT_DIR/SKILL.md" "$REPO_ROOT/README.md" | grep -c ':0$')" "2"
 check "the limit is fixed, not configurable" \
     "$(grep -ciE 'configurable limit|--limit|max_messages|batch_size' "$SCRIPT_DIR/SKILL.md")" "0"
 check "step zero comes before both commands and covers all five outcomes" \
@@ -669,7 +681,7 @@ check "the prompt has no generic Question section" \
 check "the skill has no title-case system labels left" \
     "$(grep -c 'IL/Processed\|IL/NoMatch\|IL/No-Match' "$SCRIPT_DIR/SKILL.md")" "0"
 check "the readme has no title-case system labels left" \
-    "$(grep -c 'IL/Processed\|IL/NoMatch\|IL/No-Match' "$SCRIPT_DIR/../../../README.md")" "0"
+    "$(grep -c 'IL/Processed\|IL/NoMatch\|IL/No-Match' "$REPO_ROOT/README.md")" "0"
 check "the skill does use the lowercase ones" \
     "$(grep -q 'IL/processed' "$SCRIPT_DIR/SKILL.md" && grep -q 'IL/no-match' "$SCRIPT_DIR/SKILL.md" && echo yes)" \
     "yes"
@@ -715,9 +727,9 @@ check "both outcomes are shown as examples" \
         '#### Example: several concepts, still one label' 'neither answers the reuse question' \
         'buy no reuse')" "True"
 check "the readme says how a request becomes a model" \
-    "$(grep -c 'you never pick a type' "$SCRIPT_DIR/../../../README.md")" "1"
+    "$(grep -c 'you never pick a type' "$REPO_ROOT/README.md")" "1"
 check "and that mention alone does not split a label" \
-    "$(grep -c 'being useful apart is' "$SCRIPT_DIR/../../../README.md")" "1"
+    "$(grep -c 'being useful apart is' "$REPO_ROOT/README.md")" "1"
 check "camel case appears only as the counter-example" \
     "$(grep -cE '\bDeliveryArrivingSoon\b' "$SCRIPT_DIR/SKILL.md")" "1"
 check "and that one is shown as what not to write" \
@@ -728,11 +740,11 @@ check "no other camel-case label examples remain" \
 check "no --name remains in the skill" \
     "$(grep -c -- '--name' "$SCRIPT_DIR/SKILL.md")" "0"
 check "the example store has no name field" \
-    "$(grep -c '"name"' "$SCRIPT_DIR/labels.example.json")" "0"
+    "$(grep -c '"name"' "$REPO_ROOT/data/labels.example.json")" "0"
 check "the example store has no id field" \
-    "$(grep -c '"id"' "$SCRIPT_DIR/labels.example.json")" "0"
+    "$(grep -c '"id"' "$REPO_ROOT/data/labels.example.json")" "0"
 check "the example store uses readable labels" \
-    "$(grep -c 'Delivery arriving soon' "$SCRIPT_DIR/labels.example.json")" "1"
+    "$(grep -c 'Delivery arriving soon' "$REPO_ROOT/data/labels.example.json")" "1"
 
 echo
 echo "--- labels are evaluated timelessly ---"

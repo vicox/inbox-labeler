@@ -26,7 +26,7 @@ Nothing runs on its own. You ask, and something happens — see
 
 ## A concrete example
 
-Take three labels from [`labels.example.json`](.claude/skills/inbox-labeler/labels.example.json),
+Take three labels from [`labels.example.json`](data/labels.example.json),
 the reference set introduced in [Getting started](#getting-started). Each one starts from two
 directly observed facts, combines them into something more useful, and then shows Attention as
 the separate, final step:
@@ -151,11 +151,11 @@ reserved system labels.
 ## Getting started
 
 **New to Inbox Labeler? Start from
-[`labels.example.json`](.claude/skills/inbox-labeler/labels.example.json).** It's a small,
+[`labels.example.json`](data/labels.example.json).** It's a small,
 coherent set of detection labels, derived labels built on top of them, and attention levels —
 production-quality and usable as-is, but meant as a demonstration of the core modeling
 concepts, not a one-size-fits-all configuration. Copy the labels you want into your own
-`labels.json` (or paste them one at a time through the CLI) and adjust the instructions to your
+`data/labels.json` (or paste them one at a time through the CLI) and adjust the instructions to your
 own mail. It is not imported automatically; nothing in Inbox Labeler ever reads it on its own.
 
 Then say things like "add a label for invoices" or "list my labels" to manage them, and one of
@@ -276,7 +276,7 @@ Two more rules keep the references honest:
 
 ### CLI examples
 
-From `.claude/skills/inbox-labeler/`:
+From `skills/inbox-labeler/`:
 
 ```bash
 python3 labels.py list
@@ -454,7 +454,7 @@ Two places, with one of them in charge:
 | | |
 | --- | --- |
 | **Google Drive**, `Inbox Labeler/labels.json` | **canonical** — the definitions of record |
-| `.claude/skills/inbox-labeler/labels.json` | the local working copy Claude reads while running |
+| `data/labels.json` | the local working copy the agent reads while running |
 
 The local copy is user-specific state and is **not** committed — it is in `.gitignore`, so the
 repository holds only source, documentation and the example file.
@@ -469,21 +469,21 @@ Saving always creates a *new* `labels.json` in the Drive folder and the newest o
 older versions stay put. The Drive connector cannot update or delete a file in place, so
 pruning old versions is a manual job in the Drive UI.
 
-Nothing needs to be set up to start: the first `list` or `create` writes an empty local
-`labels.json`. Deleting `labels.example.json` changes nothing at runtime — see
+Nothing needs to be set up to start: the first `list` or `create` writes an empty
+`data/labels.json`. Deleting `labels.example.json` changes nothing at runtime — see
 [Getting started](#getting-started) for what it's there for.
 
 The `gdrive-label-store` skill has its own two commands, for checking a document by hand:
 
 ```bash
-cd .claude/skills/gdrive-label-store
+cd skills/gdrive-label-store
 python3 label_store.py validate FILE            # every problem at once, not just the first
 python3 label_store.py format   FILE [--write]  # stable, human-readable JSON
 ```
 
 ## Repository layout
 
-Two Claude Agent Skills implement Inbox Labeler:
+Two Agent Skills implement Inbox Labeler:
 
 | Skill | Owns |
 | --- | --- |
@@ -491,49 +491,59 @@ Two Claude Agent Skills implement Inbox Labeler:
 | **`gdrive-label-store`** | the canonical `labels.json` in Google Drive — loading and saving it |
 
 ```
-.claude/skills/inbox-labeler/
-├── SKILL.md              instructions Claude follows
+skills/inbox-labeler/
+├── SKILL.md              the instructions the agent follows
 ├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
-├── test.sh               the test suite — runs in a temp dir, touches nothing real
-├── labels.example.json   documentation only, never read at runtime
-└── labels.json           the working copy — local, gitignored, created on first use
-.claude/skills/gdrive-label-store/
+└── test.sh               the test suite — runs in a temp dir, touches nothing real
+skills/gdrive-label-store/
 ├── SKILL.md              how to load and save the canonical labels.json in Drive
 ├── label_store.py        validation and stable serialisation
 └── test.sh               its own test suite
+data/
+├── labels.example.json   documentation only, never read at runtime
+└── labels.json           the working copy — local, gitignored, created on first use
+web/                      reserved for the web UI; empty for now
 README.md
 ```
 
-Each skill is self-contained in its own directory.
+`skills/` is the one copy of each skill, and it names no agent. The agents reach it through
+symlinks, described below. The labels live outside both skills in `data/`, because they are
+the user's, not the skill's — a second reader such as the web UI needs them just as much.
 
-### How the skill is loaded
+### How the skills are found
 
-Claude Code discovers skills by directory, not by filename — a `SKILL.md` sitting at a
-repository root is *not* picked up. It must be at
-`<skills-dir>/<skill-name>/SKILL.md`, and there are two such locations:
+Agents discover skills by directory, not by filename — a `SKILL.md` sitting at a repository
+root is *not* picked up. It must be at `<skills-dir>/<skill-name>/SKILL.md`, and each agent
+looks under a different `<skills-dir>`: Claude Code under `.claude/skills/`, Codex under
+`.agents/skills/`. Both are committed here as symlinks back to `skills/`:
 
-**Project skill (how this repo is set up).** The skill is committed at
-`.claude/skills/inbox-labeler/SKILL.md`, so it loads automatically for any Claude Code
-session whose working directory is this project. No installation step:
+```
+.claude/skills/inbox-labeler  -> ../../skills/inbox-labeler
+.agents/skills/inbox-labeler  -> ../../skills/inbox-labeler
+```
+
+So there is no installation step and no copy to keep in sync. Start either agent in this
+project and both skills are there:
 
 ```bash
 cd /path/to/inbox-labeler
-claude
+claude        # or: codex
 ```
 
-Confirm it is loaded by running `/skills` (it appears as `inbox-labeler`), or just ask
-"list my labels".
+Confirm with `/skills` in Claude Code or `/skills` in Codex — they appear as `inbox-labeler`
+and `gdrive-label-store` — or just ask "list my labels".
 
-**Personal skill (available in every project).** Link or copy the skill directory into
-your personal skills directory:
+**To use the skills in every project**, link them into your personal skills directory, which
+is `~/.claude/skills/` for Claude Code and `~/.agents/skills/` for Codex:
 
 ```bash
 mkdir -p ~/.claude/skills
-ln -s "$PWD/.claude/skills/inbox-labeler" ~/.claude/skills/inbox-labeler
+ln -s "$PWD/skills/inbox-labeler" ~/.claude/skills/inbox-labeler
 ```
 
-A symlink keeps one copy, so `labels.json` stays in this repo. Copy the directory instead if
-you would rather the store live outside the project. Restart Claude Code after adding it.
+Link rather than copy: `labels.py` resolves the store relative to its own location, so a copy
+outside this repository would read a `data/labels.json` somewhere else. Restart the agent
+after adding it.
 
 ## Testing
 
@@ -541,8 +551,8 @@ No test framework, just a shell script per skill. Each copies its module into a 
 directory, so your own labels are never touched:
 
 ```bash
-.claude/skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
-.claude/skills/gdrive-label-store/test.sh   # validation and serialisation
+skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
+skills/gdrive-label-store/test.sh   # validation and serialisation
 ```
 
 Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD

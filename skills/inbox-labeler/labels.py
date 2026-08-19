@@ -2,8 +2,8 @@
 """Inbox Labeler — local CRUD for labels.
 
 A label is {label, type, instruction}, plus {required_labels,
-recommended_labels} when it is derived. Labels live in labels.json next to this
-script. Every command prints JSON to stdout and exits non-zero with
+recommended_labels} when it is derived. Labels live in data/labels.json at the
+repository root. Every command prints JSON to stdout and exits non-zero with
 {"error": ...} when something is wrong.
 
 `label` is the label's only identifier. It is what the user reads, what other
@@ -43,7 +43,11 @@ import json
 import sys
 from pathlib import Path
 
-STORE = Path(__file__).resolve().parent / "labels.json"
+# The store lives in the repository's data/ directory, not beside this script:
+# the skill directory is reached through symlinks from .claude/skills/ and
+# .agents/skills/, so resolve() first follows those back to the real file here
+# in skills/inbox-labeler/, and data/ is two levels up from it.
+STORE = Path(__file__).resolve().parents[2] / "data" / "labels.json"
 
 # The Gmail namespace Inbox Labeler owns. Labels are stored without it and
 # resolved through it on the way to Gmail.
@@ -273,6 +277,7 @@ def load_labels():
 
 
 def save_labels(labels):
+    STORE.parent.mkdir(parents=True, exist_ok=True)
     STORE.write_text(
         json.dumps(labels, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
