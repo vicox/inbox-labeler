@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  /* Warm paper, near-black ink, and the two surfaces the whole page turns on. */
+  --color-paper: #fbf7f1;
+  --color-ink: #1c1a17;
+  --color-ink-soft: #6d655b;
+  --color-ink-faint: #a89e91;
+  --color-rule: #e8ded1;
+
+  --color-detection: #f9ebdd;
+  --color-detection-rule: #e9d3bd;
+  --color-detection-card: #fffaf4;
+
+  --color-derived: #e6f0e8;
+  --color-derived-rule: #c9dfcf;
+  --color-derived-card: #f9fdfa;
+
+  /* Warm, so the peach and mint keep their colour under the detail overlay
+     instead of turning grey. */
+  --color-scrim: rgba(120, 88, 52, 0.16);
+
+  --color-thread: #c2ae98;
+  --color-thread-lit: #8a6f52;
+}
+
+html {
+  background-color: var(--color-paper);
+}
+
+body {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The panels and the connection threads are the page; nothing should flash or
+   jump while the browser settles on final font metrics. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
