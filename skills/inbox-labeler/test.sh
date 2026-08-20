@@ -770,6 +770,42 @@ check "no guidance tells the agent to compare against the current date" \
     "$(grep -ciE "compare .{0,20}(against|to) (today|the current (date|time))|based on (today|the current date)|if (it|the email) is still" "$SCRIPT_DIR/SKILL.md")" \
     "0"
 
+check "recording sits between labelling and reporting in the process steps" \
+    "$(order_check '### process' '**Detection stage.**' '**Derived stage.**' \
+        'Apply `IL/processed` last' '**Record what matched.**' 'Report a short summary')" "True"
+check "recording is part of every run rather than a thing to ask for" \
+    "$(order_check '**Record what matched.**' \
+        'part of every `process` run and is never skipped' 'One call per message')" "True"
+check "both stages are recorded, and only what matched" \
+    "$(order_check '**Record what matched.**' 'detection labels and derived labels alike' \
+        'A label that did not match is not passed' \
+        'never recorded' 'matched nothing, so it has no call')" "True"
+check "the recorded timestamp is the message's, not the run's" \
+    "$(order_check '**Record what matched.**' \
+        "The timestamp is the email's own, not the moment you are running" \
+        'counts towards March' 'refused rather than guessed')" "True"
+check "only labels and a timestamp leave the skill" \
+    "$(order_check '**Record what matched.**' \
+        'Pass the label names and that timestamp, and nothing else' \
+        'the store keeps counts, not mail')" "True"
+check "a failed recording is reported and changes nothing else" \
+    "$(order_check '**Record what matched.**' 'If a `record` call fails' \
+        'the classification stands' 'keeps its `IL/processed`' \
+        'Do not evaluate the message again' 'change the mailbox to fix a counter' \
+        'Say which messages went unrecorded')" "True"
+check "processing the inbox is documented as implying recording" \
+    "$(order_check '## Processing the inbox' 'Recording matches is not a third command' \
+        'never something the user has to ask for' \
+        'already means classify, label, and record')" "True"
+check "recording can still be asked for on its own" \
+    "$(order_check 'Recording matches is not a third command' \
+        'If the user does ask for it on its own' 'change nothing else')" "True"
+check "recording did not become part of attention" \
+    "$(sed -n '/^### attention$/,/^## /p' "$SCRIPT_DIR/SKILL.md" | grep -c 'matches.py')" "0"
+check "attention is still explicit and still outside process" \
+    "$(order_check '### attention' 'Only run this when the user asks' \
+        'never part of `process`')" "True"
+
 echo
 echo "--- match statistics ---"
 

@@ -163,7 +163,7 @@ these two to label mail:
 
 | Say | What it does |
 | --- | --- |
-| **"process my inbox"** | labels unread inbox mail that hasn't been processed yet |
+| **"process my inbox"** | labels unread inbox mail that hasn't been processed yet, and records what matched |
 | **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
 
 Both use Claude's Gmail tools when they are connected — see
@@ -333,7 +333,7 @@ overlap:
 
 | | Scope | Per run | What it writes |
 | --- | --- | --- | --- |
-| **`process`** | unread inbox mail **without** `IL/processed` | at most **10** | `IL/` labels |
+| **`process`** | unread inbox mail **without** `IL/processed` | at most **10** | `IL/` labels, match counts |
 | **`attention`** | unread inbox mail **with** `IL/processed` | no limit | `STARRED`, `UNREAD` |
 
 ### process

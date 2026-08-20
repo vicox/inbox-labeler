@@ -477,6 +477,12 @@ The two never overlap: `process` classifies mail that has no `IL/processed`, `at
 mail that has it. Neither does the other's job, and **`attention` only runs when the user asks
 for it** — it is never part of a `process` run.
 
+Recording matches is not a third command. It is a step inside `process`, runs on every message
+that run labels, and is never something the user has to ask for: "process my inbox" already
+means classify, label, and record. If the user does ask for it on its own — after labelling
+something by hand, say — run `matches.py record` for those labels with that message's own
+timestamp, and change nothing else.
+
 It begins with a precondition — label definitions must be available, loaded from the Google
 Drive Label Store if they are not here yet. See
 [step zero](#step-zero-make-sure-labels-are-available). It stops after ten messages; see
@@ -603,20 +609,33 @@ worth it.
 9. Apply `IL/processed` last, once both stages finished and every business label is in place.
    If either stage is incomplete or a labelling call fails, leave `IL/processed` off so the
    message is picked up again on the next run.
-10. Record what matched, once the message is fully labelled. Run
+10. **Record what matched.** Every message this run labelled gets one call, once it is fully
+    labelled — this step is part of every `process` run and is never skipped:
 
     ```bash
     python3 matches.py record --at <the message's own timestamp> <each business label applied>
     ```
 
-    naming the labels without their `IL/` prefix — one call per message covers all of them, and
-    both stages count. `IL/no-match` and `IL/processed` are Inbox Labeler's own state, not
-    labels, and are never recorded. **The timestamp is the email's own, not the moment you are
-    running**: a message written in March counts towards March, which is what lets a run over
-    old mail line up with the rest of the history. Give it with a UTC offset —
-    `2026-08-20T10:12:00Z` or `2026-08-20T12:12:00+02:00`; without one it is refused rather
-    than guessed. Nothing in the store identifies an email, so a message reported twice is
-    counted twice: report each one once.
+    One call per message, naming every business label that matched it — detection labels and
+    derived labels alike, without their `IL/` prefix. A label that did not match is not passed.
+    `IL/no-match` and `IL/processed` are Inbox Labeler's own state rather than labels, and are
+    never recorded. A message that got `IL/no-match` matched nothing, so it has no call.
+
+    **The timestamp is the email's own, not the moment you are running.** A message written in
+    March counts towards March, which is what lets a run over old mail line up with the rest of
+    the history. Give it with a UTC offset — `2026-08-20T10:12:00Z` or
+    `2026-08-20T12:12:00+02:00`; without one it is refused rather than guessed.
+
+    **Pass the label names and that timestamp, and nothing else.** Not the subject, the sender,
+    the recipients, the body, the message or thread id, or anything about an attachment: the
+    store keeps counts, not mail. Nothing in it identifies an email, so a message reported twice
+    is counted twice — report each one once.
+
+    If a `record` call fails, **say so in the summary and carry on**. Recording is bookkeeping
+    and does not decide anything: the classification stands, the Gmail labels stay as they are,
+    and the message keeps its `IL/processed`. Do not evaluate the message again and do not
+    re-apply labels that are already on it in order to retry the bookkeeping — that would change
+    the mailbox to fix a counter. Say which messages went unrecorded and why.
 11. Report a short summary: how many messages were processed, which message got which business
     labels and why, which got `IL/no-match`, and anything you were unsure about instead of
     guessing silently. Say which labels came from interpretation when a derived label triggered.
