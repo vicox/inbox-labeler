@@ -453,11 +453,12 @@ Two places, with one of them in charge:
 
 | | |
 | --- | --- |
-| **Google Drive**, `Inbox Labeler/labels.json` | **canonical** — the definitions of record |
-| `data/labels.json` | the local working copy the agent reads while running |
+| **Google Drive**, `Inbox Labeler/` | **canonical** — the state of record |
+| `data/` | the local working copy the agent reads while running |
 
-The local copy is user-specific state and is **not** committed — it is in `.gitignore`, so the
-repository holds only source, documentation and the example file.
+Both files sync: `labels.json`, which is required, and `matches.json`, which is optional and
+simply absent until a run has recorded something. Neither local copy is committed — both are in
+`.gitignore`, so the repository holds only source, documentation and the example file.
 
 **Loading is automatic, saving is not.** Before processing anything, Inbox Labeler checks the
 local copy; if it is empty it loads the definitions from Drive through the
@@ -465,9 +466,18 @@ local copy; if it is empty it loads the definitions from Drive through the
 processing with an empty rulebook. Changes you make with the CLI or by asking Claude land in
 the local copy only — say **"save the labels"** to write them back to Drive.
 
-Saving always creates a *new* `labels.json` in the Drive folder and the newest one is canonical;
-older versions stay put. The Drive connector cannot update or delete a file in place, so
-pruning old versions is a manual job in the Drive UI.
+**"save the labels" saves the match history too**, when there is one; if `data/matches.json`
+does not exist yet, that is not an error and nothing is invented to fill the gap.
+
+Saving always creates a *new* file in the Drive folder and the newest one of each name is
+canonical; older versions stay put. The Drive connector cannot update or delete a file in place,
+so pruning old versions is a manual job in the Drive UI.
+
+Loading works the other way and is blunt about it: a file that comes down from Drive **replaces**
+the local one, because Drive is what is canonical. For counts that is worth knowing — matches
+recorded since the last save are lost when a newer history is loaded, so save first if a run has
+happened in between. A missing `matches.json` in Drive changes nothing locally; it means no
+history stored yet, not a failure.
 
 Nothing needs to be set up to start: the first `list` or `create` writes an empty
 `data/labels.json`. Deleting `labels.example.json` changes nothing at runtime — see

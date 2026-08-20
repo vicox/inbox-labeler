@@ -7,7 +7,11 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# -P: the skill is also reachable through the symlinks in .claude/skills/ and
+# .agents/skills/, and the checks against the repository below only find it
+# when ".." is followed physically.
+SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
+REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd -P)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cp "$SCRIPT_DIR/label_store.py" "$WORK/"
@@ -286,8 +290,12 @@ check "no network or Drive calls" \
     "$(grep -ciE 'urllib|requests|http|socket|oauth|credential|token' "$SCRIPT_DIR/label_store.py")" "0"
 check "the CLI is just validate and format" \
     "$(python3 label_store.py --help 2>&1 | grep -o '{[a-z,]*}' | head -1)" "{validate,format}"
+# `stamp` used to be in this pattern; matches documents legitimately carry a
+# last_matched_at, so it matched data rather than machinery. The names below are
+# the machinery itself, including the Drive field newest-wins is decided on —
+# which the deterministic half must not know about either.
 check "no revision or conflict machinery is left" \
-    "$(grep -ciE 'revision|conflict|checksum|sha256|hashlib|stamp' label_store.py)" "0"
+    "$(grep -ciE 'revision|conflict|checksum|sha256|hashlib|modifiedTime|mtime' label_store.py)" "0"
 check "the canonical location is declared once" \
     "$(python3 -c 'import label_store;print(label_store.WORKSPACE_FOLDER + "/" + label_store.LABELS_FILE)')" \
     "Inbox Labeler/labels.json"
@@ -330,6 +338,195 @@ check "several folders is still a question" \
     "$(order_check '## Save labels' 'Several exist' 'stop and ask which one')" "True"
 check "the report says whether the folder was created" \
     "$(order_check '## Save labels' 'whether the folder had to be created')" "True"
+
+echo
+echo "--- matches documents ---"
+
+# merrors_for <file> — the validation errors for a matches document, one per line
+merrors_for() {
+    python3 label_store.py validate "$1" --kind matches 2>/dev/null \
+        | python3 -c 'import json,sys;[print(e) for e in json.load(sys.stdin)["errors"]]'
+}
+mhas_error() { merrors_for "$1" | grep -qF "$2" && echo yes || echo no; }
+merror_count() { merrors_for "$1" | grep -c . ; }
+
+cat > matches-valid.json <<'JSON'
+{
+  "Invoices": {
+    "last_matched_at": "2026-08-20T10:12:00Z",
+    "daily_matches": { "2026-08-18": 2, "2026-08-19": 1, "2026-08-20": 3 }
+  },
+  "Newsletter": {
+    "last_matched_at": "2026-08-20T11:42:00+02:00",
+    "daily_matches": { "2026-08-20": 5 }
+  }
+}
+JSON
+
+ok "a matches document validates" -- validate matches-valid.json --kind matches
+check "a valid matches document has no errors" "$(merror_count matches-valid.json)" "0"
+check "validate reports which kind it checked" \
+    "$(python3 label_store.py validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])')" \
+    "matches"
+check "the count is the labels with a history" \
+    "$(python3 label_store.py validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
+    "2"
+
+cat > matches-empty.json <<'JSON'
+{}
+JSON
+ok "a matches document with no history at all is valid" -- validate matches-empty.json --kind matches
+
+# A label with no matches yet is a legitimate resting state.
+cat > matches-never.json <<'JSON'
+{ "Invoices": { "last_matched_at": null, "daily_matches": {} } }
+JSON
+ok "a label that has never matched is valid" -- validate matches-never.json --kind matches
+
+echo
+echo "--- a matches document is counts, never mail ---"
+cat > matches-leak.json <<'JSON'
+{
+  "Invoices": {
+    "last_matched_at": "2026-08-20T10:12:00Z",
+    "daily_matches": { "2026-08-20": 1 },
+    "subject": "Your invoice",
+    "message_id": "18f2a1c9",
+    "sender": "billing@example.com"
+  }
+}
+JSON
+err "a document carrying anything about an email is rejected" -- \
+    validate matches-leak.json --kind matches
+check "the rejection names every stray property" \
+    "$(mhas_error matches-leak.json "'message_id', 'sender', 'subject'")" "yes"
+check "the rejection says what the store is for" \
+    "$(mhas_error matches-leak.json "nothing about an email")" "yes"
+
+echo
+echo "--- matches validation catches the rest ---"
+cat > matches-root.json <<'JSON'
+[ { "label": "Invoices" } ]
+JSON
+err "a matches document must not be an array" -- validate matches-root.json --kind matches
+check "the wrong root is named as such" \
+    "$(mhas_error matches-root.json "must be a JSON object keyed by label")" "yes"
+
+cat > matches-bad-time.json <<'JSON'
+{ "Invoices": { "last_matched_at": "2026-08-20T10:12:00", "daily_matches": { "2026-08-20": 1 } } }
+JSON
+err "a timestamp without an offset is rejected" -- validate matches-bad-time.json --kind matches
+check "the timestamp error asks for an offset" \
+    "$(mhas_error matches-bad-time.json "with a UTC offset")" "yes"
+
+cat > matches-bad-day.json <<'JSON'
+{ "Invoices": { "last_matched_at": null, "daily_matches": { "2026-13-02": 1, "last week": 2 } } }
+JSON
+err "days that are not dates are rejected" -- validate matches-bad-day.json --kind matches
+check "both bad days are reported, not just the first" \
+    "$(merror_count matches-bad-day.json)" "2"
+
+cat > matches-bad-count.json <<'JSON'
+{ "Invoices": { "last_matched_at": null, "daily_matches": { "2026-08-20": 0, "2026-08-19": "3" } } }
+JSON
+err "a zero or non-numeric count is rejected" -- validate matches-bad-count.json --kind matches
+check "a stored zero is called out" \
+    "$(mhas_error matches-bad-count.json "a day with no matches is not stored")" "yes"
+
+cat > matches-reserved.json <<'JSON'
+{ "processed": { "last_matched_at": null, "daily_matches": { "2026-08-20": 1 } } }
+JSON
+err "a reserved label is rejected" -- validate matches-reserved.json --kind matches
+
+cat > matches-prefixed.json <<'JSON'
+{ "IL/Invoices": { "last_matched_at": null, "daily_matches": { "2026-08-20": 1 } } }
+JSON
+err "an IL/ prefixed label is rejected" -- validate matches-prefixed.json --kind matches
+
+echo
+echo "--- the two kinds do not cross ---"
+check "checking a matches file as labels reports the shape, not nonsense" \
+    "$(has_error matches-valid.json "must be a JSON array of labels")" "yes"
+check "checking a labels file as matches reports the shape, not nonsense" \
+    "$(mhas_error valid.json "must be a JSON object keyed by label")" "yes"
+check "kind defaults to labels, so existing calls are unchanged" \
+    "$(python3 label_store.py validate valid.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])')" \
+    "labels"
+
+echo
+echo "--- matches serialisation is stable ---"
+cat > matches-messy.json <<'JSON'
+{
+  "newsletter": { "daily_matches": { "2026-08-20": 5, "2026-08-01": 1 }, "last_matched_at": "2026-08-20T11:42:00Z" },
+  "Invoices": { "daily_matches": { "2026-08-19": 1 }, "last_matched_at": "2026-08-19T09:00:00Z" }
+}
+JSON
+check "labels come out alphabetically, ignoring case" \
+    "$(python3 label_store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)))')" \
+    "Invoices,newsletter"
+check "days come out oldest first" \
+    "$(python3 label_store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["newsletter"]["daily_matches"]))')" \
+    "2026-08-01,2026-08-20"
+check "last_matched_at comes before the counts" \
+    "$(python3 label_store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["Invoices"]))')" \
+    "last_matched_at,daily_matches"
+check "formatting a matches document is idempotent" \
+    "$(python3 label_store.py format matches-messy.json --kind matches | md5)" \
+    "$(python3 label_store.py format matches-messy.json --kind matches | md5)"
+err "an invalid matches document is never formatted" -- format matches-leak.json --kind matches
+
+echo
+echo "--- both files are documented as the store's contents ---"
+check "the workspace holds both files, matches optional" \
+    "$(order_check 'Inbox Labeler/' 'labels.json' 'matches.json' \
+        '`labels.json` | **required**' '`matches.json` | **optional**')" "True"
+check "a missing matches.json is stated to be normal, not a fault" \
+    "$(order_check '**`matches.json` may simply not exist**' 'a normal state rather' \
+        'never been processed has no history' 'Neither operation below')" "True"
+check "the privacy boundary is stated up front" \
+    "$(order_check 'holds **counts, never mail**' 'No subject, no sender' \
+        'neither needs nor adds any of that')" "True"
+
+check "loading the history follows loading the definitions" \
+    "$(order_check '## Load labels' 'Then load the match history' \
+        'None in the folder' 'no match history stored yet' 'change nothing' \
+        'not an error and not a warning')" "True"
+check "a remote history replaces the local one, and that is said plainly" \
+    "$(order_check 'Then load the match history' 'the newest is canonical' \
+        'replacing what is there' 'A load replaces the local files it found remotely' \
+        'lost' 'Save before loading')" "True"
+check "an invalid remote history leaves the local one alone" \
+    "$(order_check 'Then load the match history' 'Invalid' \
+        'leave `data/matches.json` untouched' 'the definitions loaded and the history did')" \
+    "True"
+
+check "saving the history follows saving the definitions" \
+    "$(order_check '## Save labels' 'Then save the match history, if there is one' \
+        'nothing to save' 'no match history to save yet' 'treat the save as complete')" "True"
+check "no empty history is invented just to upload one" \
+    "$(order_check 'Then save the match history' 'Never invent an empty one')" "True"
+check "each file is reported separately, and a half save is not a save" \
+    "$(order_check 'Report each file separately' 'name any that were not and why' \
+        'stop and report that' 'say exactly that' 'is not a save that worked')" "True"
+
+check "the matches checks are documented" \
+    "$(order_check 'And for a matches document' 'root is an object keyed by label' \
+        'no property but a last timestamp and a count per day' \
+        'days are real calendar dates' 'counts are whole numbers' \
+        'privacy boundary made mechanical')" "True"
+
+echo
+echo "--- reachable through every skill path ---"
+for entry in skills .claude/skills .agents/skills; do
+    check "label_store.py runs through $entry/" \
+        "$(python3 "$REPO_ROOT/$entry/gdrive-label-store/label_store.py" \
+            validate matches-valid.json --kind matches >/dev/null 2>&1 && echo yes)" \
+        "yes"
+    check "the same document validates the same way through $entry/" \
+        "$(python3 "$REPO_ROOT/$entry/gdrive-label-store/label_store.py" \
+            validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["ok"])')" \
+        "True"
+done
 
 echo
 printf '%s passed, %s failed\n' "$pass" "$fail"

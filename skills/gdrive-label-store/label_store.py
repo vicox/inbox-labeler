@@ -24,13 +24,16 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # The canonical location in Drive. The folder is the product workspace and may
 # gain further files later, so the folder is located first and the file second.
 WORKSPACE_FOLDER = "Inbox Labeler"
 LABELS_FILE = "labels.json"
+MATCHES_FILE = "matches.json"
 
 # The label schema, mirrored from the Inbox Labeler skill. `fields` are required
 # non-empty strings; `references` are lists of labels pointing at other labels.
@@ -253,6 +256,112 @@ def type_name(value):
     }.get(type(value), type(value).__name__)
 
 
+# --- validation: matches ----------------------------------------------------
+#
+# The matches document is the other half of the Inbox Labeler's state: how often
+# each label has matched. Its shape is mirrored from matches.py, the same way the
+# label schema above is mirrored from labels.py.
+#
+# The check that no other property is allowed is the privacy boundary made
+# mechanical. A matches document holds a label, a day and a count, and a document
+# carrying a subject, a sender or a message id is rejected rather than uploaded.
+
+DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MATCH_FIELDS = ("last_matched_at", "daily_matches")
+
+
+def parse_timestamp(value):
+    """An ISO 8601 timestamp carrying a UTC offset, or None if it is not one."""
+    text = value[:-1] + "+00:00" if value[-1:] in ("Z", "z") else value
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def validate_matches(document):
+    """Check a matches document. Returns every problem found, never repairing."""
+    errors = []
+
+    if not isinstance(document, dict):
+        return [
+            "the document must be a JSON object keyed by label, not %s" % type_name(document)
+        ]
+
+    seen = {}
+    for label, entry in document.items():
+        where = "entry %r" % label
+        if not label.strip():
+            errors.append("%s: the label must not be empty" % where)
+        elif label != label.strip() or "  " in label:
+            errors.append("%s: the label has untrimmed or doubled whitespace" % where)
+        key = label.strip().lower()
+        if key in seen:
+            errors.append(
+                "%s duplicates %r — labels identify case-insensitively" % (where, seen[key])
+            )
+        else:
+            seen[key] = label
+        if key in RESERVED_LABELS:
+            errors.append("%s is reserved for the Inbox Labeler's own state" % where)
+        if key.startswith("il/"):
+            errors.append("%s must not carry the IL/ namespace prefix" % where)
+
+        if not isinstance(entry, dict):
+            errors.append("%s must be a JSON object, not %s" % (where, type_name(entry)))
+            continue
+
+        unknown = sorted(set(entry) - set(MATCH_FIELDS))
+        if unknown:
+            errors.append(
+                "%s has properties that are not match statistics: %s — this store keeps a "
+                "label, a day and a count, and nothing about an email"
+                % (where, ", ".join(repr(field) for field in unknown))
+            )
+
+        last = entry.get("last_matched_at")
+        if last is None:
+            pass
+        elif not isinstance(last, str):
+            errors.append(
+                "%s: last_matched_at must be a string or null, not %s" % (where, type_name(last))
+            )
+        elif parse_timestamp(last) is None:
+            errors.append(
+                "%s: last_matched_at %r is not an ISO 8601 timestamp with a UTC offset, "
+                "e.g. 2026-08-20T10:12:00Z" % (where, last)
+            )
+
+        daily = entry.get("daily_matches")
+        if not isinstance(daily, dict):
+            errors.append(
+                "%s: daily_matches must be a JSON object, not %s" % (where, type_name(daily))
+            )
+            continue
+
+        for day, count in daily.items():
+            if not DAY.match(day):
+                errors.append("%s: %r is not a calendar day, e.g. 2026-08-20" % (where, day))
+            else:
+                try:
+                    datetime.strptime(day, "%Y-%m-%d")
+                except ValueError:
+                    errors.append("%s: %r is not a real date" % (where, day))
+            if isinstance(count, bool) or not isinstance(count, int):
+                errors.append(
+                    "%s: the count for %s must be a whole number, not %s"
+                    % (where, day, type_name(count))
+                )
+            elif count < 1:
+                errors.append(
+                    "%s: the count for %s is %d — a day with no matches is not stored"
+                    % (where, day, count)
+                )
+
+    return errors
+
+
 # --- serialising -----------------------------------------------------------
 
 
@@ -269,6 +378,27 @@ def serialise(document):
     return json.dumps(labels, indent=2, ensure_ascii=False) + "\n"
 
 
+def serialise_matches(document):
+    """The same for a matches document: labels alphabetically, days oldest first."""
+    result = {}
+    for label in sorted(document, key=lambda text: text.lower()):
+        entry = document[label]
+        result[label] = {
+            "last_matched_at": entry.get("last_matched_at"),
+            "daily_matches": {
+                day: entry["daily_matches"][day] for day in sorted(entry["daily_matches"])
+            },
+        }
+    return json.dumps(result, indent=2, ensure_ascii=False) + "\n"
+
+
+# What each kind of document needs, so the two commands below stay one code path.
+KINDS = {
+    "labels": (LABELS_FILE, validate, serialise),
+    "matches": (MATCHES_FILE, validate_matches, serialise_matches),
+}
+
+
 # --- cli -------------------------------------------------------------------
 
 
@@ -278,36 +408,49 @@ def main(argv=None):
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    check = sub.add_parser("validate", help="check a labels document, reporting every problem")
+    kind_help = (
+        "which document this is: labels for the policy (the default), matches for the "
+        "match statistics"
+    )
+
+    check = sub.add_parser("validate", help="check a document, reporting every problem")
     check.add_argument("file")
+    check.add_argument("--kind", choices=sorted(KINDS), default="labels", help=kind_help)
 
     fmt = sub.add_parser("format", help="serialise to stable, human-readable JSON")
     fmt.add_argument("file")
     fmt.add_argument("--write", action="store_true", help="rewrite the file in place")
+    fmt.add_argument("--kind", choices=sorted(KINDS), default="labels", help=kind_help)
 
     args = parser.parse_args(argv)
+    _, check_document, serialise_document = KINDS[args.kind]
 
     try:
         document = read_document(args.file)
+        # For a labels document this counts the labels defined; for a matches
+        # document, the labels that have a history. Either way: how many labels
+        # the file is about.
+        counted = len(document) if isinstance(document, (list, dict)) else None
         if args.command == "validate":
-            errors = validate(document)
+            errors = check_document(document)
             result = {
                 "ok": not errors,
                 "file": args.file,
-                "labels": len(document) if isinstance(document, list) else None,
+                "kind": args.kind,
+                "labels": counted,
                 "errors": errors,
             }
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if not errors else 1
-        errors = validate(document)
+        errors = check_document(document)
         if errors:
             raise StoreError("refusing to format an invalid document: %s" % errors[0])
-        text = serialise(document)
+        text = serialise_document(document)
         if not args.write:
             print(text, end="")
             return 0
         Path(args.file).write_text(text, encoding="utf-8")
-        result = {"ok": True, "file": args.file, "labels": len(document)}
+        result = {"ok": True, "file": args.file, "kind": args.kind, "labels": counted}
     except StoreError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
         return 1

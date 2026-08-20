@@ -520,7 +520,7 @@ change the unread state** (no marking as read) and never treat unread as the pro
 
 **Every command starts here.** Processing without label definitions is meaningless, so before
 touching a single message, establish that they exist. This is the Inbox Labeler's job, not the
-store's — the store loads and saves a file, it does not decide when to.
+store's — the store loads and saves the files, it does not decide when to.
 
 1. **Look locally first.** Run `python3 labels.py list`.
    - **Non-empty** → the definitions are already here. Continue with the flow below and do not
@@ -536,7 +536,9 @@ store's — the store loads and saves a file, it does not decide when to.
    anything and do not invent a starter set.
 4. **The load succeeds.** Put the validated document in place as the local store, then run
    `python3 labels.py list` once to confirm the Inbox Labeler reads it. Continue with the flow
-   below.
+   below. The store brings the match history down in the same load when Drive holds one; that
+   is its business, and whether it found one changes nothing here — processing needs the
+   definitions, not the counts.
 5. **The load fails for a technical reason** — the Drive connector is not connected, the grant
    sees nothing, the download breaks, the file is not valid JSON, or validation reports errors.
    **Report the error verbatim and stop.** Do not fall back to an empty store, do not process
