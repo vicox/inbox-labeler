@@ -168,11 +168,11 @@ happens inside processing:
 | **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
 
 Both use Claude's Gmail tools when they are connected — see
-[How processing works](#how-processing-works) for exactly how the two relate. Want both? Say
-**"process my inbox, then apply attention."**
+[How processing works](#how-processing-works) for exactly how the two relate. Want the whole run? Say
+**"process my inbox, update matches, then apply attention."**
 
 Want it to happen without asking every time? A recurring Claude task can say "process my inbox,
-then apply attention" on a schedule — see [Automating it](#automating-it) for the setup.
+update matches, then apply attention" on a schedule — see [Automating it](#automating-it) for the setup.
 
 *The rest of this README is the technical reference.*
 
@@ -437,7 +437,7 @@ Optional, and no part of the implementation.
 If you want it to happen regularly, set up a **recurring Claude task** with a prompt like:
 
 ```text
-Process my inbox, then apply attention.
+Process my inbox, update matches, then apply attention.
 ```
 
 Hourly is a reasonable cadence: `process` handles up to ten messages per run, so an hourly task
@@ -499,13 +499,18 @@ keeps after a run. It is written only by `matches.py`; label definitions never h
 
 **It records that a label matched, not what it matched.** Per label it holds the newest email
 timestamp it has seen and a count per calendar day — nothing more. No subject, no sender, no
-recipients, no message or thread id, nothing that could lead back to a message:
+recipients, no message or thread id, nothing about an attachment, nothing that could lead back
+to a message:
 
 ```json
 {
   "Invoices": {
     "last_matched_at": "2026-08-20T10:12:00Z",
-    "daily_matches": { "2026-08-19": 1, "2026-08-20": 3 }
+    "daily_matches": {
+      "2026-08-18": 2,
+      "2026-08-19": 1,
+      "2026-08-20": 3
+    }
   }
 }
 ```
@@ -513,7 +518,8 @@ recipients, no message or thread id, nothing that could lead back to a message:
 The timestamp is **the email's own**, never the moment of the run, so labelling a year-old
 message raises that year-old day's count. `last_matched_at` only ever moves forward: the newest
 email a label has matched, not the last time the store was written. Days with no matches are
-not stored, and the file is local and gitignored, like `labels.json`.
+not stored. The file is optional: it does not exist until a run records something, and it is
+local and gitignored, like `labels.json`.
 
 Recording is part of `process` — see [How processing works](#how-processing-works). By hand:
 
@@ -552,7 +558,7 @@ skills/inbox-labeler/
 └── test.sh               the test suite — runs in a temp dir, touches nothing real
 skills/gdrive-store/
 ├── SKILL.md              how to load and save the canonical state in Drive
-├── store.py        validation and stable serialisation
+├── store.py              validation and stable serialisation
 └── test.sh               its own test suite
 data/
 ├── labels.example.json   documentation only, never read at runtime
@@ -608,7 +614,7 @@ directory, so your own labels are never touched:
 
 ```bash
 skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
-skills/gdrive-store/test.sh   # validation and serialisation, for both files
+skills/gdrive-store/test.sh         # validation and serialisation, for both files
 ```
 
 Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD
