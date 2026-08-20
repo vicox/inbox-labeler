@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Google Drive Label Store tests. Runs label_store.py in a temporary directory,
+# Google Drive Store tests. Runs store.py in a temporary directory,
 # so no real file is ever touched. Drive is not involved: everything here is the
 # deterministic half — validation and serialisation.
 #
@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd -P)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cp "$SCRIPT_DIR/label_store.py" "$WORK/"
+cp "$SCRIPT_DIR/store.py" "$WORK/"
 cd "$WORK"
 
 pass=0
@@ -24,7 +24,7 @@ run() {
     local want=$1 desc=$2
     shift 3
     local out rc
-    out=$(python3 label_store.py "$@" 2>&1)
+    out=$(python3 store.py "$@" 2>&1)
     rc=$?
     if [ "$rc" -eq "$want" ]; then
         pass=$((pass + 1)); printf 'PASS  %s\n' "$desc"
@@ -47,7 +47,7 @@ check() {
 
 # errors_for <file> — the validation errors, one per line
 errors_for() {
-    python3 label_store.py validate "$1" 2>/dev/null \
+    python3 store.py validate "$1" 2>/dev/null \
         | python3 -c 'import json,sys;[print(e) for e in json.load(sys.stdin)["errors"]]'
 }
 # has_error <file> <substring>
@@ -84,24 +84,24 @@ echo "--- a valid document ---"
 ok "validate accepts it" -- validate valid.json
 check "no errors" "$(error_count valid.json)" "0"
 check "the label count is reported" \
-    "$(python3 label_store.py validate valid.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
+    "$(python3 store.py validate valid.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
     "3"
 printf '[]\n' > empty.json
 ok "an empty store is valid" -- validate empty.json
 check "and reports zero labels" \
-    "$(python3 label_store.py validate empty.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
+    "$(python3 store.py validate empty.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
     "0"
 
 echo
 echo "--- the document must be readable JSON with the expected root ---"
 err "a missing file" -- validate nope.json
 check "says so plainly" \
-    "$(python3 label_store.py validate nope.json | python3 -c 'import json,sys;print("does not exist" in json.load(sys.stdin)["error"])')" \
+    "$(python3 store.py validate nope.json | python3 -c 'import json,sys;print("does not exist" in json.load(sys.stdin)["error"])')" \
     "True"
 printf '{ not json\n' > broken.json
 err "invalid JSON" -- validate broken.json
 check "names the parse problem" \
-    "$(python3 label_store.py validate broken.json | python3 -c 'import json,sys;print("not valid JSON" in json.load(sys.stdin)["error"])')" \
+    "$(python3 store.py validate broken.json | python3 -c 'import json,sys;print("not valid JSON" in json.load(sys.stdin)["error"])')" \
     "True"
 printf '{"labels": []}\n' > object.json
 err "an object root" -- validate object.json
@@ -138,7 +138,7 @@ printf '[{"label": "X", "type": "detection", "attention": "temporary", "instruct
 err "an unknown attention level" -- validate badatt.json
 check "lists the known levels" "$(has_error badatt.json 'unknown attention')" "yes"
 check "the levels mirror the Inbox Labeler's" \
-    "$(python3 -c 'import label_store;print(",".join(label_store.ATTENTION_LEVELS))')" \
+    "$(python3 -c 'import store;print(",".join(store.ATTENTION_LEVELS))')" \
     "normal,none,high"
 
 echo
@@ -246,7 +246,7 @@ ok "two labels sharing a target is not a cycle" -- validate diamond.json
 echo
 echo "--- nothing is silently repaired ---"
 before="$(cat dupes.json)"
-python3 label_store.py validate dupes.json >/dev/null 2>&1
+python3 store.py validate dupes.json >/dev/null 2>&1
 check "the file is untouched by validation" "$(cat dupes.json)" "$before"
 err "format refuses an invalid document" -- format dupes.json
 check "and leaves it alone" "$(cat dupes.json)" "$before"
@@ -261,16 +261,16 @@ cat > messy.json <<'JSON'
 JSON
 ok "format accepts a valid but disordered document" -- format messy.json
 check "properties come out in canonical order" \
-    "$(python3 label_store.py format messy.json | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)[0]))')" \
+    "$(python3 store.py format messy.json | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)[0]))')" \
     "label,type,instruction,required_labels,recommended_labels"
 check "it is indented for humans" \
-    "$(python3 label_store.py format messy.json | sed -n '3p' | grep -c '^    ')" "1"
+    "$(python3 store.py format messy.json | sed -n '3p' | grep -c '^    ')" "1"
 check "formatting is stable" \
-    "$(python3 label_store.py format messy.json | md5)" \
-    "$(python3 label_store.py format messy.json | md5)"
-python3 label_store.py format messy.json > once.json
+    "$(python3 store.py format messy.json | md5)" \
+    "$(python3 store.py format messy.json | md5)"
+python3 store.py format messy.json > once.json
 cp once.json twice_in.json
-python3 label_store.py format twice_in.json > twice.json
+python3 store.py format twice_in.json > twice.json
 check "and idempotent" "$(md5 -q once.json)" "$(md5 -q twice.json)"
 ok "--write rewrites in place" -- format messy.json --write
 check "the file is now canonical" "$(md5 -q messy.json)" "$(md5 -q once.json)"
@@ -278,26 +278,26 @@ check "the file is now canonical" "$(md5 -q messy.json)" "$(md5 -q once.json)"
 echo
 echo "--- scope: this skill knows nothing about Gmail or email ---"
 check "no Gmail tool is called" \
-    "$(grep -ciE 'search_threads|get_thread|label_message|unlabel_message|list_labels|create_label' "$SCRIPT_DIR/label_store.py")" \
+    "$(grep -ciE 'search_threads|get_thread|label_message|unlabel_message|list_labels|create_label' "$SCRIPT_DIR/store.py")" \
     "0"
 check "no email processing logic" \
-    "$(grep -ciE 'is:unread|in:inbox|labelIds|effective_attention|policy_actions' "$SCRIPT_DIR/label_store.py")" \
+    "$(grep -ciE 'is:unread|in:inbox|labelIds|effective_attention|policy_actions' "$SCRIPT_DIR/store.py")" \
     "0"
 check "no Drive tool is called either" \
-    "$(grep -ciE 'search_files|download_file|create_file|get_file_metadata' "$SCRIPT_DIR/label_store.py")" \
+    "$(grep -ciE 'search_files|download_file|create_file|get_file_metadata' "$SCRIPT_DIR/store.py")" \
     "0"
 check "no network or Drive calls" \
-    "$(grep -ciE 'urllib|requests|http|socket|oauth|credential|token' "$SCRIPT_DIR/label_store.py")" "0"
+    "$(grep -ciE 'urllib|requests|http|socket|oauth|credential|token' "$SCRIPT_DIR/store.py")" "0"
 check "the CLI is just validate and format" \
-    "$(python3 label_store.py --help 2>&1 | grep -o '{[a-z,]*}' | head -1)" "{validate,format}"
+    "$(python3 store.py --help 2>&1 | grep -o '{[a-z,]*}' | head -1)" "{validate,format}"
 # `stamp` used to be in this pattern; matches documents legitimately carry a
 # last_matched_at, so it matched data rather than machinery. The names below are
 # the machinery itself, including the Drive field newest-wins is decided on —
 # which the deterministic half must not know about either.
 check "no revision or conflict machinery is left" \
-    "$(grep -ciE 'revision|conflict|checksum|sha256|hashlib|modifiedTime|mtime' label_store.py)" "0"
+    "$(grep -ciE 'revision|conflict|checksum|sha256|hashlib|modifiedTime|mtime' store.py)" "0"
 check "the canonical location is declared once" \
-    "$(python3 -c 'import label_store;print(label_store.WORKSPACE_FOLDER + "/" + label_store.LABELS_FILE)')" \
+    "$(python3 -c 'import store;print(store.WORKSPACE_FOLDER + "/" + store.LABELS_FILE)')" \
     "Inbox Labeler/labels.json"
 
 echo
@@ -320,31 +320,31 @@ PY
 check "the asymmetry is stated up front" \
     "$(order_check 'not symmetric about the workspace folder' \
         'If `Inbox Labeler` is missing' \
-        'report that no label definitions were found, and **create nothing**' \
+        'report that no Inbox Labeler state was found, and **create nothing**' \
         'create the folder** and carry on, without asking')" \
     "True"
 check "load is read-only and creates nothing" \
-    "$(order_check '## Load labels' 'Loading never writes anything' \
-        'no label definitions were found' 'Do not create it')" "True"
+    "$(order_check '## Load state' 'Loading never writes anything' \
+        'no Inbox Labeler state was found' 'Do not create it')" "True"
 check "save creates the folder when it is missing, without asking" \
-    "$(order_check '## Save labels' 'Saving creates the workspace when it has to' \
+    "$(order_check '## Save state' 'Saving creates the workspace when it has to' \
         'It does not exist' 'create it, without asking' \
         'application/vnd.google-apps.folder' 'do not turn it into a question')" \
     "True"
 check "save reuses an existing folder" \
-    "$(order_check '## Save labels' 'It exists' 'Never create a second folder of the same name')" \
+    "$(order_check '## Save state' 'It exists' 'Never create a second folder of the same name')" \
     "True"
 check "several folders is still a question" \
-    "$(order_check '## Save labels' 'Several exist' 'stop and ask which one')" "True"
+    "$(order_check '## Save state' 'Several exist' 'stop and ask which one')" "True"
 check "the report says whether the folder was created" \
-    "$(order_check '## Save labels' 'whether the folder had to be created')" "True"
+    "$(order_check '## Save state' 'whether the folder had to be created')" "True"
 
 echo
 echo "--- matches documents ---"
 
 # merrors_for <file> — the validation errors for a matches document, one per line
 merrors_for() {
-    python3 label_store.py validate "$1" --kind matches 2>/dev/null \
+    python3 store.py validate "$1" --kind matches 2>/dev/null \
         | python3 -c 'import json,sys;[print(e) for e in json.load(sys.stdin)["errors"]]'
 }
 mhas_error() { merrors_for "$1" | grep -qF "$2" && echo yes || echo no; }
@@ -366,10 +366,10 @@ JSON
 ok "a matches document validates" -- validate matches-valid.json --kind matches
 check "a valid matches document has no errors" "$(merror_count matches-valid.json)" "0"
 check "validate reports which kind it checked" \
-    "$(python3 label_store.py validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])')" \
+    "$(python3 store.py validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])')" \
     "matches"
 check "the count is the labels with a history" \
-    "$(python3 label_store.py validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
+    "$(python3 store.py validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["labels"])')" \
     "2"
 
 cat > matches-empty.json <<'JSON'
@@ -450,7 +450,7 @@ check "checking a matches file as labels reports the shape, not nonsense" \
 check "checking a labels file as matches reports the shape, not nonsense" \
     "$(mhas_error valid.json "must be a JSON object keyed by label")" "yes"
 check "kind defaults to labels, so existing calls are unchanged" \
-    "$(python3 label_store.py validate valid.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])')" \
+    "$(python3 store.py validate valid.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])')" \
     "labels"
 
 echo
@@ -462,17 +462,17 @@ cat > matches-messy.json <<'JSON'
 }
 JSON
 check "labels come out alphabetically, ignoring case" \
-    "$(python3 label_store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)))')" \
+    "$(python3 store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)))')" \
     "Invoices,newsletter"
 check "days come out oldest first" \
-    "$(python3 label_store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["newsletter"]["daily_matches"]))')" \
+    "$(python3 store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["newsletter"]["daily_matches"]))')" \
     "2026-08-01,2026-08-20"
 check "last_matched_at comes before the counts" \
-    "$(python3 label_store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["Invoices"]))')" \
+    "$(python3 store.py format matches-messy.json --kind matches | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)["Invoices"]))')" \
     "last_matched_at,daily_matches"
 check "formatting a matches document is idempotent" \
-    "$(python3 label_store.py format matches-messy.json --kind matches | md5)" \
-    "$(python3 label_store.py format matches-messy.json --kind matches | md5)"
+    "$(python3 store.py format matches-messy.json --kind matches | md5)" \
+    "$(python3 store.py format matches-messy.json --kind matches | md5)"
 err "an invalid matches document is never formatted" -- format matches-leak.json --kind matches
 
 echo
@@ -488,7 +488,7 @@ check "the privacy boundary is stated up front" \
         'neither needs nor adds any of that')" "True"
 
 check "loading the history follows loading the definitions" \
-    "$(order_check '## Load labels' 'Then load the match history' \
+    "$(order_check '## Load state' 'Then load the match history' \
         'None in the folder' 'no match history stored yet' 'change nothing' \
         'not an error and not a warning')" "True"
 check "a remote history replaces the local one, and that is said plainly" \
@@ -501,7 +501,7 @@ check "an invalid remote history leaves the local one alone" \
     "True"
 
 check "saving the history follows saving the definitions" \
-    "$(order_check '## Save labels' 'Then save the match history, if there is one' \
+    "$(order_check '## Save state' 'Then save the match history, if there is one' \
         'nothing to save' 'no match history to save yet' 'treat the save as complete')" "True"
 check "no empty history is invented just to upload one" \
     "$(order_check 'Then save the match history' 'Never invent an empty one')" "True"
@@ -518,12 +518,12 @@ check "the matches checks are documented" \
 echo
 echo "--- reachable through every skill path ---"
 for entry in skills .claude/skills .agents/skills; do
-    check "label_store.py runs through $entry/" \
-        "$(python3 "$REPO_ROOT/$entry/gdrive-label-store/label_store.py" \
+    check "store.py runs through $entry/" \
+        "$(python3 "$REPO_ROOT/$entry/gdrive-store/store.py" \
             validate matches-valid.json --kind matches >/dev/null 2>&1 && echo yes)" \
         "yes"
     check "the same document validates the same way through $entry/" \
-        "$(python3 "$REPO_ROOT/$entry/gdrive-label-store/label_store.py" \
+        "$(python3 "$REPO_ROOT/$entry/gdrive-store/store.py" \
             validate matches-valid.json --kind matches | python3 -c 'import json,sys;print(json.load(sys.stdin)["ok"])')" \
         "True"
 done

@@ -484,7 +484,7 @@ something by hand, say — run `matches.py record` for those labels with that me
 timestamp, and change nothing else.
 
 It begins with a precondition — label definitions must be available, loaded from the Google
-Drive Label Store if they are not here yet. See
+Drive Store if they are not here yet. See
 [step zero](#step-zero-make-sure-labels-are-available). It stops after ten messages; see
 [every run handles at most ten messages](#every-run-handles-at-most-ten-messages).
 
@@ -527,7 +527,7 @@ store's — the store loads and saves the files, it does not decide when to.
      go near Drive; the local store is what this run uses.
    - **Empty** → nothing is loaded yet. Go to step 2. (`labels.py` creates an empty store on
      first use, so an empty list means *not loaded*, not *no labels exist*.)
-2. **Load from the Google Drive Label Store.** Use the `gdrive-label-store` skill, which finds
+2. **Load from the Google Drive Store.** Use the `gdrive-store` skill, which finds
    the workspace folder, picks the newest `labels.json` and validates it before returning
    anything. Do not reach into Drive yourself and do not reimplement its rules.
 3. **The store reports that no definitions exist** — no workspace folder, no `labels.json` in
@@ -824,7 +824,7 @@ Rules while processing (`process`):
   definitions. An empty rulebook does not mean "nothing matches" — it means the run should not
   have started, and treating the two alike would mark real mail as `IL/no-match`.
 - **Loading is the store's job, deciding is yours.** The Inbox Labeler decides *whether* to
-  load, *when*, and what to do with each outcome. The `gdrive-label-store` skill only finds,
+  load, *when*, and what to do with each outcome. The `gdrive-store` skill only finds,
   validates and returns the file. Never put processing rules into it, and never bypass it by
   calling Drive tools from here.
 - **Detection first, derived second, always.** A derived label is never evaluated before the

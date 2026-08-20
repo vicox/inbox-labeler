@@ -1,9 +1,9 @@
 ---
-name: gdrive-label-store
+name: gdrive-store
 description: Load and save the Inbox Labeler's state — its label definitions in labels.json and its match statistics in matches.json — in the Google Drive folder "Inbox Labeler". The canonical version of each is the most recently modified one there. Use when the user wants to fetch labels or match history from Drive, check them, or write changes back. Not a general Google Drive integration and not involved in email processing.
 ---
 
-# Google Drive Label Store
+# Google Drive Store
 
 The Inbox Labeler's state lives in Google Drive:
 
@@ -16,10 +16,12 @@ Inbox Labeler/
 The folder is the product workspace, so **always locate the folder first, then the files inside
 it** — never search Drive-wide for `labels.json` or `matches.json`.
 
-| File | | Holds |
-| --- | --- | --- |
-| `labels.json` | **required** | the policy: every label, its type, its instruction, its attention |
-| `matches.json` | **optional** | how often each label has matched: a label, a day, a count |
+| File | | Is | Holds |
+| --- | --- | --- | --- |
+| `labels.json` | **required** | the **policy** | every label, its type, its instruction, its attention |
+| `matches.json` | **optional** | the **match history** | how often each label has matched: a label, a day, a count |
+
+The two together are the Inbox Labeler's **state**, and that is what this skill loads and saves.
 
 **`matches.json` may simply not exist**, in Drive or locally, and that is a normal state rather
 than a fault. A mailbox that has never been processed has no history, and someone who has used
@@ -38,7 +40,7 @@ The two operations are not symmetric about the workspace folder, on purpose:
 
 | | If `Inbox Labeler` is missing |
 | --- | --- |
-| **load** | report that no label definitions were found, and **create nothing** |
+| **load** | report that no Inbox Labeler state was found, and **create nothing** |
 | **save** | **create the folder** and carry on, without asking |
 
 A load is read-only: it either finds something to read or says there is nothing. A save has
@@ -63,22 +65,22 @@ exist and the later one is canonical, so nothing is lost and no conflict handlin
 | Half | Where it lives | Nature |
 | --- | --- | --- |
 | Drive I/O — find, download, upload | the Drive connector's tools | you call them |
-| Validation and serialisation | `label_store.py` | deterministic, tested |
+| Validation and serialisation | `store.py` | deterministic, tested |
 
-**Never validate by eye and never hand-write the JSON.** `label_store.py` reports *every*
+**Never validate by eye and never hand-write the JSON.** `store.py` reports *every*
 problem in a document rather than the first, and it never repairs anything silently.
 
 ```bash
-python3 label_store.py validate FILE                    # every error, exit 1 if any
-python3 label_store.py format   FILE [--write]          # stable, human-readable JSON
-python3 label_store.py validate FILE --kind matches     # the same, for matches.json
-python3 label_store.py format   FILE --kind matches
+python3 store.py validate FILE                    # every error, exit 1 if any
+python3 store.py format   FILE [--write]          # stable, human-readable JSON
+python3 store.py validate FILE --kind matches     # the same, for matches.json
+python3 store.py format   FILE --kind matches
 ```
 
 `--kind` defaults to `labels`. Pass `--kind matches` for a matches document — the two have
 different shapes, and checking one against the other's schema reports nonsense.
 
-## Load labels
+## Load state
 
 **Loading never writes anything.** It reads, or it reports that there is nothing to read.
 
@@ -86,7 +88,7 @@ different shapes, and checking one against the other's schema reports nonsense.
    ```text
    title = 'Inbox Labeler' and mimeType = 'application/vnd.google-apps.folder'
    ```
-   Empty result → stop and report: *no label definitions were found — the workspace folder
+   Empty result → stop and report: *no Inbox Labeler state was found — the workspace folder
    "Inbox Labeler" does not exist in Drive.* **Do not create it**, even though saving would, and
    do not fall back to another folder. More than one match → stop and ask which one; guessing
    risks reading the wrong workspace.
@@ -104,7 +106,7 @@ different shapes, and checking one against the other's schema reports nonsense.
    natural-language rendering and does not support `application/json`.
 4. **Validate before returning anything.**
    ```bash
-   python3 label_store.py validate /tmp/labels-work/labels.json
+   python3 store.py validate /tmp/inbox-labeler-state/labels.json
    ```
    Non-zero exit → report the errors and **return no labels at all**. An invalid document is
    not a partial success; the Inbox Labeler must never run against one.
@@ -112,7 +114,7 @@ different shapes, and checking one against the other's schema reports nonsense.
 5. **Then load the match history**, the same way and in the same folder: `search_files` with
    `parentId = '<folder id>' and title = 'matches.json'`, newest `modifiedTime` wins,
    `download_file_content`, and validate it with
-   `python3 label_store.py validate /tmp/labels-work/matches.json --kind matches`.
+   `python3 store.py validate /tmp/inbox-labeler-state/matches.json --kind matches`.
    - **None in the folder** → report *no match history stored yet* and **change nothing
      locally**. This is not an error and not a warning: there is simply nothing to apply, so a
      local `data/matches.json` stays exactly as it is.
@@ -132,7 +134,7 @@ saying out loud: matches recorded since the last save are **lost** when a newer 
 down from Drive. Save before loading if a run has happened in between, or accept the older
 counts. Nothing merges the two, and nothing here guesses which one the user wanted.
 
-## Save labels
+## Save state
 
 **Saving creates the workspace when it has to.** That is the one asymmetry with loading, and it
 is deliberate: a load has nothing to read and says so, while a save has something to write and
@@ -141,7 +143,7 @@ needs somewhere to put it.
 1. **Validate.** A document that fails validation is never uploaded.
 2. **Serialise stably**, so a diff between versions shows the real change and nothing else:
    ```bash
-   python3 label_store.py format /tmp/labels-work/labels.json --write
+   python3 store.py format /tmp/inbox-labeler-state/labels.json --write
    ```
 3. **Find the workspace folder**, with the same query the load uses.
    - **It exists** → use it, and add to it. Never create a second folder of the same name.
@@ -180,7 +182,7 @@ needs somewhere to put it.
 Do not try to replace or delete the previous version of either file. There is no
 update-in-place and no delete tool, and the newest file is canonical anyway.
 
-## Validate labels
+## Validation
 
 Everything checked, on every load and before every save:
 

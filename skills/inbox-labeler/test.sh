@@ -649,7 +649,7 @@ check "the limit is fixed, not configurable" \
 check "step zero comes before both commands and covers all five outcomes" \
     "$(order_check '### Step zero: make sure labels are available' \
         'Look locally first' 'Non-empty' 'Empty' \
-        'Load from the Google Drive Label Store' \
+        'Load from the Google Drive Store' \
         'The store reports that no definitions exist' 'Stop.' \
         'The load succeeds' \
         'The load fails for a technical reason' 'Report the error verbatim and stop.')" \
@@ -665,7 +665,7 @@ check "the ownership boundary is stated in the rules" \
     "$(order_check 'Rules while processing' 'No labels, no processing' \
         'Loading is the store' 'deciding is yours' 'Never put processing rules into it')" "True"
 check "the skill defers loading to the store rather than calling Drive" \
-    "$(order_check '### Step zero' 'gdrive-label-store' 'Do not reach into Drive yourself')" "True"
+    "$(order_check '### Step zero' 'gdrive-store' 'Do not reach into Drive yourself')" "True"
 check "no Drive tool is named in the inbox labeler skill" \
     "$(grep -ciE 'search_files|download_file_content|create_file\(|get_file_metadata' "$SCRIPT_DIR/SKILL.md")" \
     "0"

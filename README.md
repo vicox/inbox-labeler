@@ -159,15 +159,17 @@ concepts, not a one-size-fits-all configuration. Copy the labels you want into y
 own mail. It is not imported automatically; nothing in Inbox Labeler ever reads it on its own.
 
 Then say things like "add a label for invoices" or "list my labels" to manage them, and one of
-these two to label mail:
+these two to label mail — there is no third thing to remember, because recording what matched
+happens inside processing:
 
 | Say | What it does |
 | --- | --- |
-| **"process my inbox"** | labels unread inbox mail that hasn't been processed yet, and records what matched |
+| **"process my inbox"** | classifies unread inbox mail that hasn't been processed yet, labels it, and records what matched |
 | **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
 
 Both use Claude's Gmail tools when they are connected — see
-[How processing works](#how-processing-works) for exactly how the two relate.
+[How processing works](#how-processing-works) for exactly how the two relate. Want both? Say
+**"process my inbox, then apply attention."**
 
 Want it to happen without asking every time? A recurring Claude task can say "process my inbox,
 then apply attention" on a schedule — see [Automating it](#automating-it) for the setup.
@@ -449,20 +451,27 @@ definitions stops and reports instead of doing anything.
 
 ## Persistence
 
-Two places, with one of them in charge:
+Inbox Labeler's **state** is two files:
+
+| | | |
+| --- | --- | --- |
+| `labels.json` | **required** | the **policy** — every label, its type, its instruction, its attention |
+| `matches.json` | **optional** | the **match history** — aggregated counts, absent until a run records something |
+
+The `gdrive-store` skill synchronises that state with Google Drive. Two places, with one of them
+in charge:
 
 | | |
 | --- | --- |
 | **Google Drive**, `Inbox Labeler/` | **canonical** — the state of record |
 | `data/` | the local working copy the agent reads while running |
 
-Both files sync: `labels.json`, which is required, and `matches.json`, which is optional and
-simply absent until a run has recorded something. Neither local copy is committed — both are in
-`.gitignore`, so the repository holds only source, documentation and the example file.
+Neither local copy is committed — both are in `.gitignore`, so the repository holds only source,
+documentation and the example file.
 
 **Loading is automatic, saving is not.** Before processing anything, Inbox Labeler checks the
 local copy; if it is empty it loads the definitions from Drive through the
-`gdrive-label-store` skill. If Drive has none either, it stops and says so rather than
+`gdrive-store` skill. If Drive has none either, it stops and says so rather than
 processing with an empty rulebook. Changes you make with the CLI or by asking Claude land in
 the local copy only — say **"save the labels"** to write them back to Drive.
 
@@ -518,12 +527,12 @@ python3 matches.py get "Invoices"        # one label
 A rename carries the counts across and a delete removes them, both driven from `labels.py`, so
 the two files never disagree about which labels exist.
 
-The `gdrive-label-store` skill has its own two commands, for checking a document by hand:
+The `gdrive-store` skill has its own two commands, for checking either file by hand:
 
 ```bash
-cd skills/gdrive-label-store
-python3 label_store.py validate FILE            # every problem at once, not just the first
-python3 label_store.py format   FILE [--write]  # stable, human-readable JSON
+cd skills/gdrive-store
+python3 store.py validate FILE            # every problem at once, not just the first
+python3 store.py format   FILE [--write]  # stable, human-readable JSON
 ```
 
 ## Repository layout
@@ -533,7 +542,7 @@ Two Agent Skills implement Inbox Labeler:
 | Skill | Owns |
 | --- | --- |
 | **`inbox-labeler`** | the labels, and the Gmail work — `process` and `attention` |
-| **`gdrive-label-store`** | the canonical `labels.json` in Google Drive — loading and saving it |
+| **`gdrive-store`** | the canonical state in Google Drive — `labels.json` and `matches.json`, loading and saving both |
 
 ```
 skills/inbox-labeler/
@@ -541,9 +550,9 @@ skills/inbox-labeler/
 ├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
 ├── matches.py            how often each label matches — counts only, never mail
 └── test.sh               the test suite — runs in a temp dir, touches nothing real
-skills/gdrive-label-store/
-├── SKILL.md              how to load and save the canonical labels.json in Drive
-├── label_store.py        validation and stable serialisation
+skills/gdrive-store/
+├── SKILL.md              how to load and save the canonical state in Drive
+├── store.py        validation and stable serialisation
 └── test.sh               its own test suite
 data/
 ├── labels.example.json   documentation only, never read at runtime
@@ -578,7 +587,7 @@ claude        # or: codex
 ```
 
 Confirm with `/skills` in Claude Code or `/skills` in Codex — they appear as `inbox-labeler`
-and `gdrive-label-store` — or just ask "list my labels".
+and `gdrive-store` — or just ask "list my labels".
 
 **To use the skills in every project**, link them into your personal skills directory, which
 is `~/.claude/skills/` for Claude Code and `~/.agents/skills/` for Codex:
@@ -599,7 +608,7 @@ directory, so your own labels are never touched:
 
 ```bash
 skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
-skills/gdrive-label-store/test.sh   # validation and serialisation
+skills/gdrive-store/test.sh   # validation and serialisation, for both files
 ```
 
 Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD

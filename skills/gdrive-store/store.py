@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Google Drive Label Store — the deterministic half.
+"""Google Drive Store — the deterministic half.
 
-This skill manages the label definitions for the Inbox Labeler, kept in the
-Google Drive folder `Inbox Labeler` as files named `labels.json`. The canonical
-definitions are always the most recently modified one.
+This skill manages the Inbox Labeler's persisted state, kept in the Google Drive
+folder `Inbox Labeler`: the policy in `labels.json`, which is required, and the
+match history in `matches.json`, which is optional. The canonical version of
+each is always the most recently modified one.
 
 Drive itself is reached through the Drive connector's tools. This module owns
 the two things that must be deterministic and testable:
 
-    validate      is this a legal label document? — every error, not the first
+    validate      is this a legal document of its kind? — every error, not the first
     format        serialise to stable, human-readable JSON
+
+Both take --kind, which says which of the two documents is being handled.
 
 It never talks to Drive, never touches Gmail, and knows nothing about email or
 labelling behaviour. It reads and writes local files only.
@@ -18,8 +21,8 @@ Every command prints JSON to stdout and exits non-zero with {"ok": false, ...}
 when the document is invalid.
 
 Usage:
-    label_store.py validate FILE
-    label_store.py format FILE [--write]
+    store.py validate FILE [--kind labels|matches]
+    store.py format FILE [--write] [--kind labels|matches]
 """
 
 import argparse
@@ -68,7 +71,7 @@ class StoreError(Exception):
 
 
 def read_document(path):
-    """Read a labels document from disk. Raises on unreadable or invalid JSON."""
+    """Read a document from disk. Raises on unreadable or invalid JSON."""
     file = Path(path)
     if not file.exists():
         raise StoreError("%s does not exist" % file)
@@ -404,7 +407,7 @@ KINDS = {
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Validate and serialise the Inbox Labeler label definitions."
+        description="Validate and serialise the Inbox Labeler's persisted state."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
