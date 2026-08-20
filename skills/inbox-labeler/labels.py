@@ -442,6 +442,23 @@ def create_label(
     return entry
 
 
+def sync_match_store(change):
+    """Apply a label change to the match store too, which is keyed by label text.
+
+    `change` is called with the matches module. That module is imported here
+    rather than at the top of the file because it imports this one; and its
+    failures are re-raised as our own error because running this file as a script
+    leaves matches.py holding a second copy of this module, whose ValidationError
+    is a different class than the one main() catches.
+    """
+    import matches
+
+    try:
+        change(matches)
+    except matches.ValidationError as exc:
+        raise ValidationError(str(exc)) from None
+
+
 def rename_references(labels, old, new):
     """Point every reference to `old` at `new` instead."""
     for other in labels:
@@ -484,6 +501,8 @@ def update_label(
     if cleaned["label"] != previous:
         rename_references(labels, previous, cleaned["label"])
     save_labels(labels)
+    if cleaned["label"] != previous:
+        sync_match_store(lambda m: m.rename_label(previous, cleaned["label"]))
     return entry
 
 
@@ -528,6 +547,7 @@ def delete_label(label):
         )
     labels.remove(entry)
     save_labels(labels)
+    sync_match_store(lambda m: m.delete_label(entry["label"]))
     return entry
 
 

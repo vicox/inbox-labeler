@@ -216,6 +216,16 @@ starting state, not an error. Never edit it by hand: always go through the CLI b
 validates before writing. (`data/labels.example.json` is documentation only — never read from
 or write to it.)
 
+How often each label matches is kept apart from the policy, in `data/matches.json`, written
+only by `matches.py`. `labels.py` never reads it and no label definition ever holds a count.
+
+**Inbox Labeler records that a label matched, never what it matched.** A count carries the
+label, the calendar day taken from the email's own timestamp, and nothing else — no subject, no
+sender, no recipients, no message or thread id, nothing that could lead back to a message. The
+store answers "how often does this label fire" and is unable to answer anything else. Renaming
+a label carries its counts across and deleting one removes them, so the two files never
+disagree about which labels exist.
+
 ## Managing labels
 
 Run these from this skill's directory:
@@ -593,7 +603,21 @@ worth it.
 9. Apply `IL/processed` last, once both stages finished and every business label is in place.
    If either stage is incomplete or a labelling call fails, leave `IL/processed` off so the
    message is picked up again on the next run.
-10. Report a short summary: how many messages were processed, which message got which business
+10. Record what matched, once the message is fully labelled. Run
+
+    ```bash
+    python3 matches.py record --at <the message's own timestamp> <each business label applied>
+    ```
+
+    naming the labels without their `IL/` prefix — one call per message covers all of them, and
+    both stages count. `IL/no-match` and `IL/processed` are Inbox Labeler's own state, not
+    labels, and are never recorded. **The timestamp is the email's own, not the moment you are
+    running**: a message written in March counts towards March, which is what lets a run over
+    old mail line up with the rest of the history. Give it with a UTC offset —
+    `2026-08-20T10:12:00Z` or `2026-08-20T12:12:00+02:00`; without one it is refused rather
+    than guessed. Nothing in the store identifies an email, so a message reported twice is
+    counted twice: report each one once.
+11. Report a short summary: how many messages were processed, which message got which business
     labels and why, which got `IL/no-match`, and anything you were unsure about instead of
     guessing silently. Say which labels came from interpretation when a derived label triggered.
     When a derived label's `required_labels` all matched but the interpretation rejected it, say

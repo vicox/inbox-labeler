@@ -20,9 +20,10 @@ trap 'rm -rf "$WORK"' EXIT
 # to land inside $WORK. Every check below runs from that data directory and
 # reads the store as plain labels.json.
 mkdir -p "$WORK/skills/inbox-labeler" "$WORK/data"
-cp "$SCRIPT_DIR/labels.py" "$WORK/skills/inbox-labeler/"
+cp "$SCRIPT_DIR/labels.py" "$SCRIPT_DIR/matches.py" "$WORK/skills/inbox-labeler/"
 cd "$WORK/data"
 LABELS=../skills/inbox-labeler/labels.py
+MATCHES=../skills/inbox-labeler/matches.py
 # Checks that import labels as a module run from the data directory too.
 export PYTHONPATH="$WORK/skills/inbox-labeler"
 
@@ -768,6 +769,165 @@ check "the processing rules restate it where evaluation happens" \
 check "no guidance tells the agent to compare against the current date" \
     "$(grep -ciE "compare .{0,20}(against|to) (today|the current (date|time))|based on (today|the current date)|if (it|the email) is still" "$SCRIPT_DIR/SKILL.md")" \
     "0"
+
+echo
+echo "--- match statistics ---"
+
+# mok/merr mirror ok/err, for matches.py rather than labels.py.
+mrun() {
+    local want=$1 desc=$2
+    shift 3
+    local out rc
+    out=$(python3 "$MATCHES" "$@" 2>&1)
+    rc=$?
+    if [ "$rc" -eq "$want" ]; then
+        pass=$((pass + 1)); printf 'PASS  %s\n' "$desc"
+    else
+        fail=$((fail + 1))
+        printf 'FAIL  %s (exit %s, wanted %s)\n      %s\n' "$desc" "$rc" "$want" "$out"
+    fi
+}
+mok()  { mrun 0 "$@"; }
+merr() { mrun 1 "$@"; }
+
+count_for() {  # count_for <label> <day> — that day's count, 0 when absent
+    python3 - "$1" "$2" <<'MPY'
+import json, os, sys
+store = json.load(open("matches.json")) if os.path.exists("matches.json") else {}
+print(store.get(sys.argv[1], {}).get("daily_matches", {}).get(sys.argv[2], 0))
+MPY
+}
+
+last_for() {  # last_for <label> — last_matched_at, "-" when absent
+    python3 - "$1" <<'MPY'
+import json, os, sys
+store = json.load(open("matches.json")) if os.path.exists("matches.json") else {}
+print(store.get(sys.argv[1], {}).get("last_matched_at") or "-")
+MPY
+}
+
+days_for() {  # days_for <label> — the recorded days, oldest first
+    python3 - "$1" <<'MPY'
+import json, os, sys
+store = json.load(open("matches.json")) if os.path.exists("matches.json") else {}
+print(",".join(store.get(sys.argv[1], {}).get("daily_matches", {})))
+MPY
+}
+
+# A policy of its own, so the counts below do not depend on what the earlier
+# sections happened to leave behind.
+cat > labels.json <<'MJSON'
+[
+  {"label": "Invoices", "type": "detection", "attention": "normal", "instruction": "an invoice"},
+  {"label": "Large amount", "type": "detection", "attention": "normal", "instruction": "a lot"},
+  {"label": "Large invoice", "type": "derived", "attention": "high", "instruction": "both",
+   "required_labels": ["Invoices", "Large amount"], "recommended_labels": []}
+]
+MJSON
+rm -f matches.json
+
+check "an absent store reads as empty" "$(python3 "$MATCHES" list)" "{}"
+check "reading the store creates it" "$(ls matches.json)" "matches.json"
+
+mok "the first match for a label is recorded" -- record --at 2026-08-19T09:00:00Z "Invoices"
+check "the first match counts one" "$(count_for Invoices 2026-08-19)" "1"
+check "the first match sets last_matched_at" "$(last_for Invoices)" "2026-08-19T09:00:00Z"
+
+mok "a second match on the same day" -- record --at 2026-08-19T17:00:00Z "Invoices"
+check "matches on one day accumulate" "$(count_for Invoices 2026-08-19)" "2"
+check "a later email that day moves last_matched_at" \
+    "$(last_for Invoices)" "2026-08-19T17:00:00Z"
+
+mok "a match on the next day" -- record --at 2026-08-20T10:12:00Z "Invoices"
+check "a different day is counted separately" "$(count_for Invoices 2026-08-20)" "1"
+check "the earlier day is untouched" "$(count_for Invoices 2026-08-19)" "2"
+check "a newer email moves last_matched_at" "$(last_for Invoices)" "2026-08-20T10:12:00Z"
+
+mok "a backfilled email from last year" -- record --at 2025-03-10T12:00:00Z "Invoices"
+check "the backfilled day is counted" "$(count_for Invoices 2025-03-10)" "1"
+check "a backfilled email does not drag last_matched_at backwards" \
+    "$(last_for Invoices)" "2026-08-20T10:12:00Z"
+check "days are stored oldest first" \
+    "$(days_for Invoices)" "2025-03-10,2026-08-19,2026-08-20"
+
+mok "one email matching three labels" -- \
+    record --at 2026-08-20T11:00:00Z "Invoices" "Large amount" "Large invoice"
+check "each label of one email is counted independently" \
+    "$(count_for Invoices 2026-08-20),$(count_for 'Large amount' 2026-08-20),$(count_for 'Large invoice' 2026-08-20)" \
+    "2,1,1"
+merr "the same label twice for one email is rejected" -- \
+    record --at 2026-08-20T11:00:00Z "Invoices" "invoices"
+
+mok "an offset other than UTC is accepted" -- record --at 2026-08-21T01:30:00+02:00 "Large amount"
+check "an offset timestamp counts towards its UTC day" \
+    "$(count_for 'Large amount' 2026-08-20)" "2"
+check "an offset timestamp is stored as UTC" \
+    "$(last_for 'Large amount')" "2026-08-20T23:30:00Z"
+
+merr "a naive timestamp is rejected" -- record --at 2026-08-20T10:12:00 "Invoices"
+merr "a timestamp that is not a timestamp is rejected" -- record --at yesterday "Invoices"
+merr "an unknown label is rejected" -- record --at 2026-08-20T10:12:00Z "Nope"
+check "a rejected record writes nothing" "$(count_for Nope 2026-08-20)" "0"
+
+python3 "$MATCHES" record --at 2026-08-20T12:00:00Z "large AMOUNT" >/dev/null
+check "a label is resolved case-insensitively when recording" \
+    "$(count_for 'Large amount' 2026-08-20)" "3"
+
+mok "get reads one label" -- get "Invoices"
+check "get answers under the spelling labels.json uses" \
+    "$(python3 "$MATCHES" get "INVOICES" | python3 -c 'import json,sys;print(",".join(json.load(sys.stdin)))')" \
+    "Invoices"
+check "list answers with every label that matched" \
+    "$(python3 "$MATCHES" list | python3 -c 'import json,sys;print(",".join(sorted(json.load(sys.stdin))))')" \
+    "Invoices,Large amount,Large invoice"
+merr "get on an unknown label is rejected" -- get "Nope"
+
+ok "a label with history can be renamed" -- update "Invoices" --label "Rechnungen"
+check "renaming carries the counts over" "$(count_for Rechnungen 2026-08-19)" "2"
+check "renaming keeps last_matched_at" "$(last_for Rechnungen)" "2026-08-20T11:00:00Z"
+check "the old name is gone from the match store" "$(count_for Invoices 2026-08-19)" "0"
+check "renaming leaves no orphan behind" \
+    "$(python3 "$MATCHES" list | python3 -c 'import json,sys;print("Invoices" in json.load(sys.stdin))')" \
+    "False"
+
+ok "a label with history can be deleted" -- delete "Large invoice"
+check "deleting removes its counts" "$(last_for 'Large invoice')" "-"
+check "deleting leaves the other labels alone" "$(count_for Rechnungen 2026-08-19)" "2"
+
+# Path resolution. These run against the real repository and only read: the store
+# is asked where it would write, never told to write. Recording here would touch
+# the user's own data/matches.json.
+store_path() {  # store_path <skill directory> [working directory]
+    ( cd "${2:-$REPO_ROOT}" && PYTHONPATH="$1" python3 -c 'import matches; print(matches.STORE)' )
+}
+for entry in skills .claude/skills .agents/skills; do
+    check "the store resolves to data/matches.json through $entry/" \
+        "$(store_path "$REPO_ROOT/$entry/inbox-labeler")" "$REPO_ROOT/data/matches.json"
+    check "matches.py runs through $entry/" \
+        "$(python3 "$REPO_ROOT/$entry/inbox-labeler/matches.py" --help >/dev/null 2>&1 && echo yes)" \
+        "yes"
+done
+check "the store resolves from an unrelated working directory" \
+    "$(store_path "$REPO_ROOT/skills/inbox-labeler" /tmp)" "$REPO_ROOT/data/matches.json"
+
+# Structural, not a grep for words: the module names in prose the things it does
+# not keep, so the guarantee has to be read off what it actually writes.
+check "a stored label carries only a last timestamp and a count per day" \
+    "$(python3 - <<'MPY'
+import json, re
+store = json.load(open("matches.json"))
+fields = {field for entry in store.values() for field in entry}
+days = {day for entry in store.values() for day in entry["daily_matches"]}
+counts = {type(n).__name__ for entry in store.values() for n in entry["daily_matches"].values()}
+print(sorted(fields), all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) for d in days), sorted(counts))
+MPY
+)" \
+    "['daily_matches', 'last_matched_at'] True ['int']"
+check "no day is stored with a count of zero" \
+    "$(python3 -c "import json;print(any(n == 0 for e in json.load(open('matches.json')).values() for n in e['daily_matches'].values()))")" \
+    "False"
+check "the privacy boundary is stated in the module" \
+    "$(grep -c 'No part of an email is stored' "$SCRIPT_DIR/matches.py")" "1"
 
 echo
 printf '%s passed, %s failed\n' "$pass" "$fail"

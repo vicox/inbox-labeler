@@ -473,6 +473,41 @@ Nothing needs to be set up to start: the first `list` or `create` writes an empt
 `data/labels.json`. Deleting `labels.example.json` changes nothing at runtime — see
 [Getting started](#getting-started) for what it's there for.
 
+## What matched, and how often
+
+`data/matches.json` counts how often each label has matched, and is the one thing Inbox Labeler
+keeps after a run. It is written only by `matches.py`; label definitions never hold a count.
+
+**It records that a label matched, not what it matched.** Per label it holds the newest email
+timestamp it has seen and a count per calendar day — nothing more. No subject, no sender, no
+recipients, no message or thread id, nothing that could lead back to a message:
+
+```json
+{
+  "Invoices": {
+    "last_matched_at": "2026-08-20T10:12:00Z",
+    "daily_matches": { "2026-08-19": 1, "2026-08-20": 3 }
+  }
+}
+```
+
+The timestamp is **the email's own**, never the moment of the run, so labelling a year-old
+message raises that year-old day's count. `last_matched_at` only ever moves forward: the newest
+email a label has matched, not the last time the store was written. Days with no matches are
+not stored, and the file is local and gitignored, like `labels.json`.
+
+Recording is part of `process` — see [How processing works](#how-processing-works). By hand:
+
+```bash
+cd skills/inbox-labeler
+python3 matches.py record --at 2026-08-20T10:12:00Z "Invoices" "Large amount"
+python3 matches.py list                  # every label that has ever matched
+python3 matches.py get "Invoices"        # one label
+```
+
+A rename carries the counts across and a delete removes them, both driven from `labels.py`, so
+the two files never disagree about which labels exist.
+
 The `gdrive-label-store` skill has its own two commands, for checking a document by hand:
 
 ```bash
@@ -494,6 +529,7 @@ Two Agent Skills implement Inbox Labeler:
 skills/inbox-labeler/
 ├── SKILL.md              the instructions the agent follows
 ├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
+├── matches.py            how often each label matches — counts only, never mail
 └── test.sh               the test suite — runs in a temp dir, touches nothing real
 skills/gdrive-label-store/
 ├── SKILL.md              how to load and save the canonical labels.json in Drive
@@ -501,8 +537,9 @@ skills/gdrive-label-store/
 └── test.sh               its own test suite
 data/
 ├── labels.example.json   documentation only, never read at runtime
-└── labels.json           the working copy — local, gitignored, created on first use
-web/                      reserved for the web UI; empty for now
+├── labels.json           the working copy — local, gitignored, created on first use
+└── matches.json          match counts — local, gitignored, created on first use
+web/                      the web UI
 README.md
 ```
 

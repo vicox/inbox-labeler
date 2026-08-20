@@ -3,3 +3,6 @@
 
 # the user's own labels; created automatically on first use
 data/labels.json
+
+# the user's own match history; created automatically on first use
+data/matches.json
