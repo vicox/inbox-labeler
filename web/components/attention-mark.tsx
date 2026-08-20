@@ -43,7 +43,9 @@ export function AttentionMark({ attention }: { attention: Attention }) {
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
-      className="absolute top-1/2 right-5 -translate-y-1/2 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
+      // top-4 / h-5 put it on the same line as the label name and the rate,
+      // rather than in the middle of a card that is now two lines tall.
+      className="absolute top-4 right-5 flex h-5 items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
     >
       {attention === "high" ? <Star /> : <EyeOff />}
       {open && <Tooltip title={mark.title} description={mark.description} />}

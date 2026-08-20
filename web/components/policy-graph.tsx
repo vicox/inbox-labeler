@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { matchActivity, type Matches } from "@/lib/activity";
 import {
   byAttention,
   connectionsOf,
@@ -18,6 +19,7 @@ const CARD_GAP = 12;
 
 export function PolicyGraph() {
   const [labels, setLabels] = useState<Label[] | null>(null);
+  const [matches, setMatches] = useState<Matches>({});
   const [error, setError] = useState<string | null>(null);
 
   const [focused, setFocused] = useState<string | null>(null);
@@ -28,7 +30,9 @@ export function PolicyGraph() {
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? "Could not read the policy.");
-        setLabels(body as Label[]);
+        setLabels(body.labels as Label[]);
+        // No history is a normal state, so it never reaches the error branch.
+        setMatches((body.matches ?? {}) as Matches);
       })
       .catch((cause: Error) => setError(cause.message));
   }, []);
@@ -156,10 +160,16 @@ export function PolicyGraph() {
 
   // One parameter only: this goes straight into Array.map, which would pass the
   // index as a second argument and silently offset every card by its position.
+  // One reading of the clock for the whole render, so every card on the page
+  // reports its age against the same moment.
+  const now = new Date();
+
   const card = (label: Label) => (
     <LabelCard
       key={label.label}
       label={label}
+      activity={matchActivity(matches[label.label], now)}
+      lastAt={matches[label.label]?.last_matched_at}
       offset={sideBySide ? offsets.get(label.label) : undefined}
       dimmed={lit.labels !== null && !lit.labels.has(label.label)}
       lit={lit.labels?.has(label.label) ?? false}
