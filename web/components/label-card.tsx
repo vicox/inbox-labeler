@@ -9,9 +9,11 @@ type Props = {
   dimmed: boolean;
   /** Lit because it is focused, or connected to whatever is. */
   lit: boolean;
-  /** One quiet line: how often it matches and when it last did. */
-  activity: string;
-  /** The exact timestamp behind the line, for the native tooltip. */
+  /** About how often it matches, beside the name — null when there is no rate. */
+  rate: string | null;
+  /** When it last matched, under the name, or "Never matched". */
+  last: string;
+  /** The exact timestamp behind `last`, for the native tooltip. */
   lastAt?: string | null;
   onEnter: () => void;
   onLeave: () => void;
@@ -27,17 +29,17 @@ type Props = {
  * cards themselves differ would say it twice — and a derived label's activity is
  * read the same way as a detection label's.
  *
- * The left column is the label: its name, and under it the one line of activity
- * that describes it. The right margin is kept for what the label asks of the
- * reader, which is the attention mark alone — it holds elements of its own rather
- * than being part of the card's button, because it takes hover and focus
- * separately from the card.
+ * The name sits at the left and the rate at the right of the same line, with
+ * when it last matched underneath. The attention mark is further right again, and
+ * holds elements of its own rather than being part of the card's button, because
+ * it takes hover and focus separately from the card.
  */
 export function LabelCard({
   label,
   dimmed,
   lit,
-  activity,
+  rate,
+  last,
   lastAt,
   onEnter,
   onLeave,
@@ -79,16 +81,28 @@ export function LabelCard({
           lit ? "shadow-[0_1px_0_rgba(28,26,23,0.10)]" : "shadow-none",
         ].join(" ")}
       >
-        {/* pr-8 keeps the name clear of the attention mark, which sits on this
-            first line. The line below it runs the full width. */}
-        <span className="block pr-8 text-[15px] leading-5 font-medium tracking-[-0.005em]">
-          {label.label}
+        {/* pr-7 holds this line clear of the attention mark, which sits on it, on
+            every card — so the rates line up down the column whether or not a
+            card carries a mark. The line below runs the full width. */}
+        {/* items-center, and every child in the same 20px line box: the rate and
+            the attention mark then centre on the same axis, which is what makes
+            them read as one line. Aligning the rate on the name's baseline
+            instead drops it visibly below the mark, because it is set smaller. */}
+        <span className="flex items-center justify-between gap-4 pr-7">
+          <span className="text-[15px] leading-5 font-medium tracking-[-0.005em]">
+            {label.label}
+          </span>
+          {rate && (
+            <span className="shrink-0 text-[12px] leading-5 text-ink-faint tabular-nums">
+              {rate}
+            </span>
+          )}
         </span>
         <span
           className="mt-1 block text-[11.5px] leading-4 text-ink-faint tabular-nums"
           title={lastAt ?? undefined}
         >
-          {activity}
+          {last}
         </span>
       </button>
 

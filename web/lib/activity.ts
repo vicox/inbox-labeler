@@ -130,13 +130,18 @@ function ago(days: number): string {
 }
 
 /**
- * The one line of match activity a card shows: how often, and when last, joined
- * by a middle dot. The rate is left out when there is none to give — a label
- * that has never matched says only that, and one whose matches have all aged out
- * of the window says when it last did without pretending to a rate.
+ * The two pieces a card shows: the rate, which sits beside the label's name, and
+ * when it last matched, which sits under it.
+ *
+ * `rate` is null when there is none to give, and the card then shows nothing
+ * beside the name rather than a placeholder. That covers both a label that has
+ * never matched and one whose matches have all aged out of the window — in each
+ * case the line below says what happened, and inventing a rate would not.
  */
-export function matchActivity(entry: MatchEntry | undefined, now: Date): string {
-  const last = lastMatched(entry, now);
+export function matchDisplay(
+  entry: MatchEntry | undefined,
+  now: Date,
+): { rate: string | null; last: string } {
   const rate = matchRate(entry, now);
-  return rate === NO_RATE ? last : `${rate} · ${last}`;
+  return { rate: rate === NO_RATE ? null : rate, last: lastMatched(entry, now) };
 }

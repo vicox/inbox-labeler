@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { matchActivity, type Matches } from "@/lib/activity";
+import { matchDisplay, type Matches } from "@/lib/activity";
 import {
   byAttention,
   connectionsOf,
@@ -168,7 +168,7 @@ export function PolicyGraph() {
     <LabelCard
       key={label.label}
       label={label}
-      activity={matchActivity(matches[label.label], now)}
+      {...matchDisplay(matches[label.label], now)}
       lastAt={matches[label.label]?.last_matched_at}
       offset={sideBySide ? offsets.get(label.label) : undefined}
       dimmed={lit.labels !== null && !lit.labels.has(label.label)}

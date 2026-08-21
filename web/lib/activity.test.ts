@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { lastMatched, matchActivity, matchRate, NO_RATE, type MatchEntry } from "./activity.ts";
+import { lastMatched, matchDisplay, matchRate, NO_RATE, type MatchEntry } from "./activity.ts";
 
 const NOW = new Date("2026-08-20T12:00:00Z");
 const DAY = 86_400_000;
@@ -160,23 +160,26 @@ test("a timestamp in the future reads as today rather than as negative", () => {
   assert.equal(lastMatched({ last_matched_at: at, daily_matches: {} }, NOW), "Last matched today");
 });
 
-// --- the one line a card shows ----------------------------------------------
+// --- what a card is given ---------------------------------------------------
 
-test("activity joins the rate and the day with a middle dot", () => {
+test("a matched label gives a rate to show beside the name", () => {
   const entry = history(Math.round((8 / 30) * 365), 365);
   entry.last_matched_at = daysAgoLocal(0, 9);
-  assert.equal(matchActivity(entry, NOW), "~8/month · Last matched today");
+  assert.deepEqual(matchDisplay(entry, NOW), {
+    rate: "~8/month",
+    last: "Last matched today",
+  });
 });
 
-test("a label that never matched says only that", () => {
-  assert.equal(matchActivity(undefined, NOW), "Never matched");
-  assert.equal(
-    matchActivity({ last_matched_at: null, daily_matches: {} }, NOW),
-    "Never matched",
-  );
+test("a label that never matched gives no rate at all", () => {
+  assert.deepEqual(matchDisplay(undefined, NOW), { rate: null, last: "Never matched" });
+  assert.deepEqual(matchDisplay({ last_matched_at: null, daily_matches: {} }, NOW), {
+    rate: null,
+    last: "Never matched",
+  });
 });
 
-test("no rate leaves out the rate rather than showing a dash", () => {
+test("a rate that has aged out is left off rather than shown as a dash", () => {
   // Matched once, long enough ago that the rate window no longer covers it.
   const at = new Date(NOW.getTime() - 500 * DAY);
   const entry: MatchEntry = {
@@ -184,5 +187,5 @@ test("no rate leaves out the rate rather than showing a dash", () => {
     daily_matches: { [at.toISOString().slice(0, 10)]: 1 },
   };
   assert.equal(matchRate(entry, NOW), NO_RATE);
-  assert.equal(matchActivity(entry, NOW), "Last matched 1y ago");
+  assert.deepEqual(matchDisplay(entry, NOW), { rate: null, last: "Last matched 1y ago" });
 });
