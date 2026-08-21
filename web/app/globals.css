@@ -19,23 +19,18 @@
   --color-derived-rule: #c9dfcf;
   --color-derived-card: #f9fdfa;
 
-  /* What a label asks of you.
-     `high` gets a gold bar down its left edge and keeps its column's own card
-     colour. A tinted surface turned out to scale badly: one such card reads as a
-     priority, six read as a page in a different colour, and the eye has nowhere
-     quiet to rest. A three-pixel accent costs the same attention whether one
-     card carries it or twenty, which is why it can afford to be this saturated —
-     the little area is what buys the strong colour.
-     `none` keeps a surface treatment, because receding is a property of the whole
-     card rather than a mark on it. Each `-quiet` value is its column's own,
-     halfway to the panel behind it — surface and border alike, so the card
-     settles toward its background as a whole instead of one part of it drifting.
-     Staying inside the column's palette is the point: an earlier attempt used a
-     neutral grey, which left the palette and read as switched off rather than as
-     not urgent. Nothing here fades the text or the icons.
-     `normal` gets neither treatment. It is the absence of a request, and the
-     baseline the other two are read against. */
-  --color-attention-high: #d9b877;
+  /* What a label asks of you, where it shows on the card at all.
+     Only `none` does. Receding is a property of the whole card rather than a mark
+     on it, so each `-quiet` value is its column's own, halfway to the panel
+     behind it — surface and border alike, so the card settles toward its
+     background as a whole instead of one part of it drifting. Staying inside the
+     column's palette is the point: an earlier attempt used a neutral grey, which
+     left the palette and read as switched off rather than as not urgent. Nothing
+     here fades the text or the icons.
+     `high` and `normal` share the plain card. A tinted surface for `high` scaled
+     badly — six of them read as a page in another colour — and a gold accent bar
+     that replaced it competed with the star for the same job. The star says it
+     already, and one signal is enough. */
   --color-detection-card-quiet: #fcf2e8;
   --color-detection-rule-quiet: #f1dfcd;
   --color-derived-card-quiet: #f0f6f1;

@@ -53,8 +53,7 @@ export function LabelCard({
 
   // The column owns the palette; attention picks the variant within it. A label
   // asking for no attention settles toward its panel, which is a property of the
-  // whole card. One asking for attention keeps its column's colour and gets the
-  // accent below instead.
+  // whole card. One asking for attention says so with its star and nothing else.
   const quiet = label.attention === "none";
   const surface = detection
     ? quiet
@@ -127,16 +126,6 @@ export function LabelCard({
           {last}
         </span>
       </button>
-
-      {label.attention === "high" && (
-        // Inset from the corners so the card's own radius stays intact, and
-        // positioned rather than bordered so the text on a high card sits exactly
-        // where it sits on every other one.
-        <span
-          aria-hidden
-          className="pointer-events-none absolute top-3 bottom-3 left-0 w-[3px] rounded-r-full bg-attention-high"
-        />
-      )}
 
       <AttentionMark attention={label.attention} />
     </div>
