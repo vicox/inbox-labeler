@@ -62,12 +62,29 @@ export function PolicyGraph() {
 
   // One parameter only: this goes straight into Array.map, which passes the index
   // as a second argument to anything that takes one.
+  /**
+   * The detection labels a derived label is built from. Read off the edge list
+   * rather than the label, so a reference to something that is not in the policy
+   * is filtered out here the same way it is everywhere else.
+   *
+   * Only derived labels carry these. A detection label's own relationships — the
+   * derived labels it feeds — are reachable by pointing at it, which lights them
+   * up, and by opening it.
+   */
+  const referencesOf = (label: Label) =>
+    label.type === "derived"
+      ? connections
+          .filter((c) => c.to === label.label)
+          .map((c) => ({ name: c.from, suggested: c.kind === "recommended" }))
+      : [];
+
   const card = (label: Label) => (
     <LabelCard
       key={label.label}
       label={label}
       {...matchDisplay(matches[label.label], now)}
       lastAt={matches[label.label]?.last_matched_at}
+      references={referencesOf(label)}
       dimmed={lit !== null && !lit.has(label.label)}
       lit={lit?.has(label.label) ?? false}
       onEnter={() => setFocused(label.label)}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { byRelevance, type Attention, type Label } from "./policy.ts";
+import { byRelevance, connectionsOf, type Attention, type Label } from "./policy.ts";
 
 function label(name: string, attention: Attention = "normal"): Label {
   return { label: name, type: "detection", attention, instruction: "x" };
@@ -53,4 +53,51 @@ test("ordering does not disturb the array it was given", () => {
     labels.map((l) => l.label),
     ["b", "a"],
   );
+});
+
+// --- relationships ----------------------------------------------------------
+
+function derived(name: string, required: string[], recommended: string[] = []): Label {
+  return {
+    label: name,
+    type: "derived",
+    attention: "normal",
+    instruction: "x",
+    required_labels: required,
+    recommended_labels: recommended,
+  };
+}
+
+test("both kinds of reference become connections, required first", () => {
+  const policy = [
+    label("Delivery"),
+    label("Imminent"),
+    label("Travel"),
+    derived("Delivery arriving soon", ["Delivery", "Imminent"], ["Travel"]),
+  ];
+  assert.deepEqual(connectionsOf(policy), [
+    { from: "Delivery", to: "Delivery arriving soon", kind: "required" },
+    { from: "Imminent", to: "Delivery arriving soon", kind: "required" },
+    { from: "Travel", to: "Delivery arriving soon", kind: "recommended" },
+  ]);
+});
+
+test("a reference to a label that does not exist is dropped", () => {
+  const policy = [label("Delivery"), derived("Ghosted", ["Delivery", "Nowhere"], ["Nobody"])];
+  assert.deepEqual(connectionsOf(policy), [
+    { from: "Delivery", to: "Ghosted", kind: "required" },
+  ]);
+});
+
+test("a detection label feeding two derived labels appears in both", () => {
+  const policy = [
+    label("Invoices"),
+    label("Large amount"),
+    derived("Large invoice", ["Invoices", "Large amount"]),
+    derived("Any invoice", ["Invoices"]),
+  ];
+  const feeds = connectionsOf(policy)
+    .filter((c) => c.from === "Invoices")
+    .map((c) => c.to);
+  assert.deepEqual(feeds, ["Large invoice", "Any invoice"]);
 });

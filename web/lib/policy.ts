@@ -20,8 +20,12 @@ export type Label = {
   recommended_labels?: string[];
 };
 
-/** One line from a detection label to a derived label that requires it. */
-export type Connection = { from: string; to: string };
+/**
+ * One relationship, from a detection label to a derived label that draws on it.
+ * `kind` says how: a required label gates the derived label, a recommended one is
+ * offered as context.
+ */
+export type Connection = { from: string; to: string; kind: "required" | "recommended" };
 
 /**
  * The order a column is read in, most worth looking at first: what the label
@@ -46,12 +50,18 @@ export function byRelevance(labels: Label[], perDay: (label: Label) => number): 
 }
 
 /**
- * Every required_labels entry becomes one connection. A detection label may feed
- * any number of derived labels and a derived label may require any number of
- * detection labels, so this is a plain many-to-many edge list rather than pairs.
+ * Every reference a derived label makes becomes one connection — required ones
+ * first, then recommended. A detection label may feed any number of derived
+ * labels and a derived label may draw on any number of detection labels, so this
+ * is a plain many-to-many edge list rather than pairs.
  *
- * A required label that names nothing in the policy is dropped: it cannot be
- * drawn, and the UI is not the place to report a broken policy.
+ * Both kinds are here because both are real: a recommended label is used by the
+ * derived label that names it, and leaving it out would hide that from anything
+ * reading this — which side is emphasised on hover, and which relationships a
+ * card can name.
+ *
+ * A reference that names nothing in the policy is dropped. The UI is not the
+ * place to report a broken policy.
  */
 export function connectionsOf(labels: Label[]): Connection[] {
   const detection = new Set(
@@ -60,9 +70,16 @@ export function connectionsOf(labels: Label[]): Connection[] {
   return labels
     .filter((l) => l.type === "derived")
     .flatMap((derived) =>
-      (derived.required_labels ?? [])
-        .filter((required) => detection.has(required))
-        .map((required) => ({ from: required, to: derived.label })),
+      (
+        [
+          ...(derived.required_labels ?? []).map((name) => ({ name, kind: "required" } as const)),
+          ...(derived.recommended_labels ?? []).map(
+            (name) => ({ name, kind: "recommended" } as const),
+          ),
+        ] as { name: string; kind: Connection["kind"] }[]
+      )
+        .filter((reference) => detection.has(reference.name))
+        .map((reference) => ({ from: reference.name, to: derived.label, kind: reference.kind })),
     );
 }
 

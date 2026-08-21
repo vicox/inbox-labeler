@@ -15,6 +15,11 @@ type Props = {
   last: string;
   /** The exact timestamp behind `last`, for the native tooltip. */
   lastAt?: string | null;
+  /**
+   * The detection labels a derived label is built from; empty on a detection
+   * card. `suggested` marks the ones offered as context rather than required.
+   */
+  references: { name: string; suggested?: boolean }[];
   onEnter: () => void;
   onLeave: () => void;
   onOpen: () => void;
@@ -39,13 +44,12 @@ export function LabelCard({
   rate,
   last,
   lastAt,
+  references,
   onEnter,
   onLeave,
   onOpen,
 }: Props) {
   const detection = label.type === "detection";
-  const required = label.required_labels ?? [];
-  const recommended = label.recommended_labels ?? [];
 
   return (
     // Positioned, so the attention mark can sit in the right-hand margin. The
@@ -93,13 +97,14 @@ export function LabelCard({
             </span>
           )}
         </span>
-        {(required.length > 0 || recommended.length > 0) && (
+        {references.length > 0 && (
           <span className="mt-2 flex flex-wrap gap-1.5">
-            {required.map((name) => (
-              <Reference key={name} name={name} />
-            ))}
-            {recommended.map((name) => (
-              <Reference key={name} name={name} suggested />
+            {references.map((reference) => (
+              <Reference
+                key={reference.name}
+                name={reference.name}
+                suggested={reference.suggested}
+              />
             ))}
           </span>
         )}
@@ -119,7 +124,7 @@ export function LabelCard({
 
 /**
  * A detection label a derived label is built from. Carries the detection panel's
- * own colours rather than the card's: it names a label from the other column, and
+ * colours rather than the card's: it names a label from the other column, and
  * that is the whole point of it being here.
  *
  * Required labels all have to match before the derived label is even evaluated;
