@@ -31,7 +31,7 @@ export function LabelDetail({ label, feeds, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim px-5 py-[10vh]"
+      className="fixed inset-0 z-50 flex cursor-pointer items-start justify-center overflow-y-auto bg-scrim px-5 py-[10vh]"
       onClick={onClose}
     >
       <div
@@ -41,7 +41,7 @@ export function LabelDetail({ label, feeds, onClose }: Props) {
         aria-label={label.label}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-xl rounded-2xl border border-rule bg-paper p-9 outline-none"
+        className="w-full max-w-xl cursor-default rounded-2xl border border-rule bg-paper p-9 outline-none"
       >
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -56,7 +56,7 @@ export function LabelDetail({ label, feeds, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="-mr-2 -mt-1 rounded-md px-2 py-1 text-[13px] text-ink-soft transition hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            className="-mr-2 -mt-1 cursor-pointer rounded-md px-2 py-1 text-[13px] text-ink-soft transition hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
           >
             Close
           </button>

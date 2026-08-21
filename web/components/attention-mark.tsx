@@ -45,7 +45,7 @@ export function AttentionMark({ attention }: { attention: Attention }) {
       onBlur={() => setOpen(false)}
       // top-4 / h-5 put it on the same line as the label name and the rate,
       // rather than in the middle of a card that is now two lines tall.
-      className="absolute top-4 right-5 flex h-5 items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
+      className="absolute top-4 right-5 flex h-5 cursor-help items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
     >
       {attention === "high" ? <Star /> : <EyeOff />}
       {open && <Tooltip title={mark.title} description={mark.description} />}

@@ -71,7 +71,7 @@ export function LabelCard({
         onClick={onOpen}
         aria-label={`${label.label}, ${label.type} label`}
         className={[
-          "block w-full rounded-lg border px-5 py-4 text-left",
+          "block w-full cursor-pointer rounded-lg border px-5 py-4 text-left",
           "min-h-[62px] transition-shadow duration-200 ease-out",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
           detection
