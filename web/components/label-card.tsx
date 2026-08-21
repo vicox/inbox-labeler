@@ -27,9 +27,10 @@ type Props = {
  * read the same way as a detection label's.
  *
  * The name sits at the left and the rate at the right of the same line, with
- * when it last matched underneath. The attention mark is further right again, and
- * holds elements of its own rather than being part of the card's button, because
- * it takes hover and focus separately from the card.
+ * when it last matched underneath. A derived label also names the detection
+ * labels it is built from, between the two. The attention mark is further right
+ * again, and holds elements of its own rather than being part of the card's
+ * button, because it takes hover and focus separately from the card.
  */
 export function LabelCard({
   label,
@@ -43,6 +44,8 @@ export function LabelCard({
   onOpen,
 }: Props) {
   const detection = label.type === "detection";
+  const required = label.required_labels ?? [];
+  const recommended = label.recommended_labels ?? [];
 
   return (
     // Positioned, so the attention mark can sit in the right-hand margin. The
@@ -90,8 +93,19 @@ export function LabelCard({
             </span>
           )}
         </span>
+        {(required.length > 0 || recommended.length > 0) && (
+          <span className="mt-2 flex flex-wrap gap-1.5">
+            {required.map((name) => (
+              <Reference key={name} name={name} />
+            ))}
+            {recommended.map((name) => (
+              <Reference key={name} name={name} suggested />
+            ))}
+          </span>
+        )}
+
         <span
-          className="mt-1 block text-[11.5px] leading-4 text-ink-faint tabular-nums"
+          className="mt-2 block text-[11.5px] leading-4 text-ink-faint tabular-nums"
           title={lastAt ?? undefined}
         >
           {last}
@@ -100,5 +114,29 @@ export function LabelCard({
 
       <AttentionMark attention={label.attention} />
     </div>
+  );
+}
+
+/**
+ * A detection label a derived label is built from. Carries the detection panel's
+ * own colours rather than the card's: it names a label from the other column, and
+ * that is the whole point of it being here.
+ *
+ * Required labels all have to match before the derived label is even evaluated;
+ * recommended ones are context, present or not. Dashed says the difference, and
+ * the native tooltip says it in words — the detail panel spells it out in full.
+ */
+function Reference({ name, suggested = false }: { name: string; suggested?: boolean }) {
+  return (
+    <span
+      title={suggested ? "Recommended" : "Required"}
+      className={[
+        "rounded-md border border-detection-rule bg-detection px-2 py-0.5",
+        "text-[11px] leading-4 text-ink-soft",
+        suggested ? "border-dashed" : "",
+      ].join(" ")}
+    >
+      {name}
+    </span>
   );
 }
