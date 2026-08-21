@@ -83,23 +83,17 @@ export function groupByDerived(detection: Label[], derived: Label[]) {
 }
 
 /**
- * What to emphasise while `focused` is hovered or focused: the label itself, the
- * labels on the other side of its connections, and those connections. With
- * nothing focused every label is active and no connection is singled out.
+ * Which labels to emphasise while `focused` is hovered or focused: itself, and
+ * whatever sits on the other side of its relationships. Null means nothing is
+ * focused and every label stands at full strength.
  */
-export function emphasis(focused: string | null, connections: Connection[]) {
-  if (!focused) return { labels: null, connections: new Set<number>() };
+export function emphasis(focused: string | null, connections: Connection[]): Set<string> | null {
+  if (!focused) return null;
 
   const labels = new Set([focused]);
-  const active = new Set<number>();
-  connections.forEach((connection, index) => {
-    if (connection.from === focused) {
-      labels.add(connection.to);
-      active.add(index);
-    } else if (connection.to === focused) {
-      labels.add(connection.from);
-      active.add(index);
-    }
-  });
-  return { labels, connections: active };
+  for (const connection of connections) {
+    if (connection.from === focused) labels.add(connection.to);
+    else if (connection.to === focused) labels.add(connection.from);
+  }
+  return labels;
 }

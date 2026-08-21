@@ -18,9 +18,6 @@ type Props = {
   onEnter: () => void;
   onLeave: () => void;
   onOpen: () => void;
-  cardRef: (element: HTMLElement | null) => void;
-  /** Extra space above, used to line a derived card up with its inputs. */
-  offset?: number;
 };
 
 /**
@@ -44,23 +41,18 @@ export function LabelCard({
   onEnter,
   onLeave,
   onOpen,
-  cardRef,
-  offset,
 }: Props) {
   const detection = label.type === "detection";
 
   return (
-    // Positioned, and after the threads in the DOM, so a thread passing by tucks
-    // behind the card instead of drawing across its face. The relationship hover
-    // sits here rather than on the button so that it covers the right-hand margin
-    // too, and keeps running while the pointer is on the attention mark.
+    // Positioned, so the attention mark can sit in the right-hand margin. The
+    // relationship hover sits here rather than on the button so that it covers
+    // that margin too, and keeps running while the pointer is on the mark.
     <div
-      ref={cardRef}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onFocus={onEnter}
       onBlur={onLeave}
-      style={offset ? { marginTop: offset } : undefined}
       className={[
         "relative transition duration-200 ease-out",
         dimmed ? "opacity-35" : "opacity-100",

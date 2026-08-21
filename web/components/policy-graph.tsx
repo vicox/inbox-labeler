@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { matchDisplay, type Matches } from "@/lib/activity";
 import {
@@ -10,12 +10,8 @@ import {
   groupByDerived,
   type Label,
 } from "@/lib/policy";
-import { Connections, type Anchor } from "./connections";
 import { LabelCard } from "./label-card";
 import { LabelDetail } from "./label-detail";
-
-/** Matches the gap-3 between cards in a column. */
-const CARD_GAP = 12;
 
 export function PolicyGraph() {
   const [labels, setLabels] = useState<Label[] | null>(null);
@@ -45,110 +41,25 @@ export function PolicyGraph() {
     () => byAttention((labels ?? []).filter((l) => l.type === "derived")),
     [labels],
   );
+
+  /**
+   * The relationships are no longer drawn, but they still decide what lights up:
+   * pointing at a label picks out the ones it draws on, or the ones that draw on
+   * it, and fades the rest.
+   */
   const connections = useMemo(() => connectionsOf(labels ?? []), [labels]);
   const lit = useMemo(() => emphasis(focused, connections), [focused, connections]);
 
+  /**
+   * The detection labels a derived label requires come first, grouped and in the
+   * order of the derived column. Reading the two columns side by side follows the
+   * same order, which is what carries the relationship now that nothing is drawn
+   * between them.
+   */
   const { combined, alone } = useMemo(
     () => groupByDerived(detection, derived),
     [detection, derived],
   );
-
-  // --- where the threads attach -------------------------------------------
-  //
-  // The cards are laid out by the browser, so their positions are only known
-  // after paint. Anchors are measured relative to the container the threads are
-  // drawn in, and re-measured whenever anything can have moved.
-
-  const container = useRef<HTMLDivElement>(null);
-  const cards = useRef(new Map<string, HTMLElement>());
-  const [anchors, setAnchors] = useState(new Map<string, Anchor>());
-  const [box, setBox] = useState({ width: 0, height: 0 });
-
-  const measure = useCallback(() => {
-    const element = container.current;
-    if (!element) return;
-    const base = element.getBoundingClientRect();
-    const next = new Map<string, Anchor>();
-    cards.current.forEach((card, name) => {
-      const rect = card.getBoundingClientRect();
-      const top = rect.top - base.top;
-      next.set(name, {
-        left: rect.left - base.left,
-        right: rect.right - base.left,
-        top,
-        height: rect.height,
-        y: top + rect.height / 2,
-      });
-    });
-    setAnchors(next);
-    setBox({ width: base.width, height: base.height });
-  }, []);
-
-  useLayoutEffect(measure, [measure, detection, derived]);
-
-  useEffect(() => {
-    const element = container.current;
-    if (!element) return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    // Final font metrics change every card's height, and with it every anchor.
-    document.fonts?.ready.then(measure).catch(() => {});
-    return () => observer.disconnect();
-  }, [measure]);
-
-  const cardRef = useCallback(
-    (name: string) => (element: HTMLElement | null) => {
-      if (element) cards.current.set(name, element);
-      else cards.current.delete(name);
-    },
-    [],
-  );
-
-  /**
-   * How far each derived card is pushed down, so that its centre sits level with
-   * the middle of the detection labels it requires. Two inputs then meet it from
-   * equal distances above and below, which is what makes a derived label read as
-   * the pair coming together rather than as a continuation of the first one.
-   *
-   * Measured rather than assumed: a card's height depends on its text and on the
-   * final font metrics. Cards are laid out in order and never overlap — where
-   * centring would put one above the card before it, it follows on after it.
-   */
-  const offsets = useMemo(() => {
-    const result = new Map<string, number>();
-    const columnTop = combined.length ? anchors.get(combined[0].label)?.top : undefined;
-    if (columnTop === undefined) return result;
-
-    let previousBottom: number | null = null;
-    for (const judgement of derived) {
-      const self = anchors.get(judgement.label);
-      if (!self) return new Map<string, number>();
-
-      const inputs = (judgement.required_labels ?? [])
-        .map((required) => anchors.get(required))
-        .filter((anchor): anchor is Anchor => anchor !== undefined);
-
-      const from = previousBottom === null ? columnTop : previousBottom + CARD_GAP;
-      const target = inputs.length
-        ? inputs.reduce((sum, anchor) => sum + anchor.y, 0) / inputs.length - self.height / 2
-        : from;
-      const top = Math.max(target, from);
-
-      result.set(judgement.label, top - from);
-      previousBottom = top + self.height;
-    }
-    return result;
-  }, [anchors, derived, combined]);
-
-  // Threads only make sense while the two panels stand side by side.
-  const [sideBySide, setSideBySide] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia("(min-width: 768px)");
-    const sync = () => setSideBySide(query.matches);
-    sync();
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
-  }, []);
 
   if (error) return <Notice>{error}</Notice>;
   if (!labels) return <Notice>Reading the policy…</Notice>;
@@ -158,63 +69,49 @@ export function PolicyGraph() {
     ? connections.filter((c) => c.from === openedLabel.label).map((c) => c.to)
     : [];
 
-  // One parameter only: this goes straight into Array.map, which would pass the
-  // index as a second argument and silently offset every card by its position.
   // One reading of the clock for the whole render, so every card on the page
   // reports its age against the same moment.
   const now = new Date();
 
+  // One parameter only: this goes straight into Array.map, which passes the index
+  // as a second argument to anything that takes one.
   const card = (label: Label) => (
     <LabelCard
       key={label.label}
       label={label}
       {...matchDisplay(matches[label.label], now)}
       lastAt={matches[label.label]?.last_matched_at}
-      offset={sideBySide ? offsets.get(label.label) : undefined}
-      dimmed={lit.labels !== null && !lit.labels.has(label.label)}
-      lit={lit.labels?.has(label.label) ?? false}
+      dimmed={lit !== null && !lit.has(label.label)}
+      lit={lit?.has(label.label) ?? false}
       onEnter={() => setFocused(label.label)}
       onLeave={() => setFocused(null)}
       onOpen={() => setOpened(label.label)}
-      cardRef={cardRef(label.label)}
     />
   );
 
   return (
     <>
-      <div ref={container} className="relative">
-        {/* Before the panels in the DOM: the panel surfaces paint under the
-            threads, and the cards — being positioned and later — over them. */}
-        {sideBySide && (
-          <Connections
-            connections={connections}
-            anchors={anchors}
-            lit={lit.connections}
-            width={box.width}
-            height={box.height}
-          />
-        )}
+      {/* No items-start: the two panels stay the same height whichever of them
+          holds more labels. */}
+      <div className="grid gap-6 md:grid-cols-2 md:gap-x-24">
+        <Panel
+          tone="detection"
+          title="Detection"
+          note="What's in the email?"
+          count={detection.length}
+        >
+          {combined.map(card)}
+          {alone.map(card)}
+        </Panel>
 
-        <div className="grid gap-6 md:grid-cols-2 md:gap-x-24">
-          <Panel
-            tone="detection"
-            title="Detection"
-            note="What's in the email?"
-            count={detection.length}
-          >
-            {combined.map(card)}
-            {alone.map(card)}
-          </Panel>
-
-          <Panel
-            tone="derived"
-            title="Derived"
-            note="What does it mean to you?"
-            count={derived.length}
-          >
-            {derived.map(card)}
-          </Panel>
-        </div>
+        <Panel
+          tone="derived"
+          title="Derived"
+          note="What does it mean to you?"
+          count={derived.length}
+        >
+          {derived.map(card)}
+        </Panel>
       </div>
 
       {openedLabel && (
@@ -256,7 +153,6 @@ function Panel({
     </section>
   );
 }
-
 
 function Notice({ children }: { children: React.ReactNode }) {
   return <p className="py-24 text-center text-[14px] text-ink-soft">{children}</p>;
