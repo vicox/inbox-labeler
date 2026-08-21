@@ -51,6 +51,19 @@ export function LabelCard({
 }: Props) {
   const detection = label.type === "detection";
 
+  // The column owns the palette; attention picks the variant within it. A label
+  // asking for no attention settles toward its panel, which is a property of the
+  // whole card. One asking for attention keeps its column's colour and gets the
+  // accent below instead.
+  const quiet = label.attention === "none";
+  const surface = detection
+    ? quiet
+      ? "border-detection-rule-quiet bg-detection-card-quiet"
+      : "border-detection-rule bg-detection-card"
+    : quiet
+      ? "border-derived-rule-quiet bg-derived-card-quiet"
+      : "border-derived-rule bg-derived-card";
+
   return (
     // Positioned, so the attention mark can sit in the right-hand margin. The
     // relationship hover sits here rather than on the button so that it covers
@@ -74,9 +87,7 @@ export function LabelCard({
           "block w-full cursor-pointer rounded-lg border px-5 py-4 text-left",
           "min-h-[62px] transition-shadow duration-200 ease-out",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-          detection
-            ? "border-detection-rule bg-detection-card"
-            : "border-derived-rule bg-derived-card",
+          surface,
           lit ? "shadow-[0_1px_0_rgba(28,26,23,0.10)]" : "shadow-none",
         ].join(" ")}
       >
@@ -116,6 +127,16 @@ export function LabelCard({
           {last}
         </span>
       </button>
+
+      {label.attention === "high" && (
+        // Inset from the corners so the card's own radius stays intact, and
+        // positioned rather than bordered so the text on a high card sits exactly
+        // where it sits on every other one.
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-3 bottom-3 left-0 w-[3px] rounded-r-full bg-attention-high"
+        />
+      )}
 
       <AttentionMark attention={label.attention} />
     </div>
