@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { lastMatched, matchDisplay, matchRate, NO_RATE, type MatchEntry } from "./activity.ts";
+import {
+  lastMatched,
+  matchDisplay,
+  matchesPerDay,
+  matchRate,
+  NO_RATE,
+  type MatchEntry,
+} from "./activity.ts";
 
 const NOW = new Date("2026-08-20T12:00:00Z");
 const DAY = 86_400_000;
@@ -75,6 +82,21 @@ test("more than nine a month is shown per week instead", () => {
 
 test("more than nine a year is shown per month instead", () => {
   assert.equal(matchRate(history(12, 365), NOW), "~1/month");
+});
+
+test("the number behind the rate is exposed for ordering", () => {
+  // Five a day over a full year, and nothing at all.
+  assert.equal(matchesPerDay(history(5 * 365, 365), NOW), 5);
+  assert.equal(matchesPerDay(undefined, NOW), 0);
+  assert.equal(matchesPerDay({ last_matched_at: null, daily_matches: {} }, NOW), 0);
+});
+
+test("two labels that read the same rate can still be told apart", () => {
+  // Both round to the same displayed rate; the raw numbers differ.
+  const busier = history(100, 365);
+  const quieter = history(97, 365);
+  assert.equal(matchRate(busier, NOW), matchRate(quieter, NOW));
+  assert.ok(matchesPerDay(busier, NOW) > matchesPerDay(quieter, NOW));
 });
 
 // --- rate: the window it measures over --------------------------------------

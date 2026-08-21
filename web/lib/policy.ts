@@ -24,12 +24,24 @@ export type Label = {
 export type Connection = { from: string; to: string };
 
 /**
- * Order by attention, high first. Labels of equal attention keep the order they
- * have in the file, so the policy still reads the way its author wrote it.
+ * The order a column is read in, most worth looking at first: what the label
+ * asks of you, then how often it fires, then its name.
+ *
+ * Attention leads because it is the label's own declaration about itself. The
+ * rate breaks the ties within a level, so a busy label is not buried among quiet
+ * ones. The name breaks what is left, which is what puts every label that has
+ * never matched into a predictable alphabetical block at the foot of its level
+ * rather than in file order nobody can see.
+ *
+ * `perDay` is passed in rather than read here: how often a label matches is not
+ * something the policy knows.
  */
-export function byAttention(labels: Label[]): Label[] {
+export function byRelevance(labels: Label[], perDay: (label: Label) => number): Label[] {
   return [...labels].sort(
-    (a, b) => ATTENTION_ORDER.indexOf(a.attention) - ATTENTION_ORDER.indexOf(b.attention),
+    (a, b) =>
+      ATTENTION_ORDER.indexOf(a.attention) - ATTENTION_ORDER.indexOf(b.attention) ||
+      perDay(b) - perDay(a) ||
+      a.label.localeCompare(b.label),
   );
 }
 
@@ -52,34 +64,6 @@ export function connectionsOf(labels: Label[]): Connection[] {
         .filter((required) => detection.has(required))
         .map((required) => ({ from: required, to: derived.label })),
     );
-}
-
-/**
- * Split the detection labels into the ones a derived label requires and the ones
- * none does, and order the first group by the derived labels themselves: the
- * inputs of the first derived label come first, then those of the second, and so
- * on. Reading the two columns side by side then follows the same order, and each
- * derived label's inputs sit together.
- *
- * A detection label required by several derived labels appears once, with the
- * first that requires it. The labels no derived label requires keep the order
- * they were given.
- */
-export function groupByDerived(detection: Label[], derived: Label[]) {
-  const byName = new Map(detection.map((label) => [label.label, label]));
-  const combined: Label[] = [];
-  const taken = new Set<string>();
-
-  for (const judgement of derived) {
-    for (const required of judgement.required_labels ?? []) {
-      const label = byName.get(required);
-      if (!label || taken.has(required)) continue;
-      taken.add(required);
-      combined.push(label);
-    }
-  }
-
-  return { combined, alone: detection.filter((label) => !taken.has(label.label)) };
 }
 
 /**

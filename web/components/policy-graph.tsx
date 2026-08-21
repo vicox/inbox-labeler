@@ -2,14 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { matchDisplay, type Matches } from "@/lib/activity";
-import {
-  byAttention,
-  connectionsOf,
-  emphasis,
-  groupByDerived,
-  type Label,
-} from "@/lib/policy";
+import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
+import { byRelevance, connectionsOf, emphasis, type Label } from "@/lib/policy";
 import { LabelCard } from "./label-card";
 import { LabelDetail } from "./label-detail";
 
@@ -33,15 +27,6 @@ export function PolicyGraph() {
       .catch((cause: Error) => setError(cause.message));
   }, []);
 
-  const detection = useMemo(
-    () => byAttention((labels ?? []).filter((l) => l.type === "detection")),
-    [labels],
-  );
-  const derived = useMemo(
-    () => byAttention((labels ?? []).filter((l) => l.type === "derived")),
-    [labels],
-  );
-
   /**
    * The relationships are no longer drawn, but they still decide what lights up:
    * pointing at a label picks out the ones it draws on, or the ones that draw on
@@ -49,17 +34,6 @@ export function PolicyGraph() {
    */
   const connections = useMemo(() => connectionsOf(labels ?? []), [labels]);
   const lit = useMemo(() => emphasis(focused, connections), [focused, connections]);
-
-  /**
-   * The detection labels a derived label requires come first, grouped and in the
-   * order of the derived column. Reading the two columns side by side follows the
-   * same order, which is what carries the relationship now that nothing is drawn
-   * between them.
-   */
-  const { combined, alone } = useMemo(
-    () => groupByDerived(detection, derived),
-    [detection, derived],
-  );
 
   if (error) return <Notice>{error}</Notice>;
   if (!labels) return <Notice>Reading the policy…</Notice>;
@@ -70,8 +44,21 @@ export function PolicyGraph() {
     : [];
 
   // One reading of the clock for the whole render, so every card on the page
-  // reports its age against the same moment.
+  // reports its age against the same moment, and both columns order against it.
   const now = new Date();
+
+  // Ordered here rather than memoised: the order depends on `now`, which changes
+  // every render, so memoising it would only add a dependency that never holds.
+  // Twenty-five labels cost nothing to sort.
+  const rate = (label: Label) => matchesPerDay(matches[label.label], now);
+  const detection = byRelevance(
+    labels.filter((l) => l.type === "detection"),
+    rate,
+  );
+  const derived = byRelevance(
+    labels.filter((l) => l.type === "derived"),
+    rate,
+  );
 
   // One parameter only: this goes straight into Array.map, which passes the index
   // as a second argument to anything that takes one.
@@ -100,8 +87,7 @@ export function PolicyGraph() {
           note="What's in the email?"
           count={detection.length}
         >
-          {combined.map(card)}
-          {alone.map(card)}
+          {detection.map(card)}
         </Panel>
 
         <Panel

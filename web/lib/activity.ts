@@ -52,6 +52,33 @@ function dayIndex(day: string): number {
 }
 
 /**
+ * A label's matches per day over the window, or 0 when it has no history in it.
+ *
+ * The number behind matchRate, and what the columns are ordered by — the
+ * formatted rate rounds to a single digit, so two labels that read the same can
+ * still be told apart here.
+ */
+export function matchesPerDay(entry: MatchEntry | undefined, now: Date): number {
+  const daily = entry?.daily_matches;
+  if (!daily) return 0;
+  const days = Object.keys(daily);
+  if (!days.length) return 0;
+
+  const today = Math.floor(now.getTime() / DAY);
+  const earliest = Math.min(...days.map(dayIndex));
+  const observed = today - earliest + 1;
+  const window = Math.min(WINDOW_DAYS, Math.max(MIN_WINDOW_DAYS, observed));
+  const from = today - window + 1;
+
+  let total = 0;
+  for (const day of days) {
+    const index = dayIndex(day);
+    if (index >= from && index <= today) total += daily[day];
+  }
+  return total > 0 ? total / window : 0;
+}
+
+/**
  * A label's match rate, as one small number and a unit — "~3/day", "~4/year", or
  * "—" when there is too little to report.
  *
@@ -64,24 +91,7 @@ function dayIndex(day: string): number {
  * days before the label's first match are not counted at all.
  */
 export function matchRate(entry: MatchEntry | undefined, now: Date): string {
-  const daily = entry?.daily_matches;
-  const days = daily ? Object.keys(daily) : [];
-  if (!days.length) return NO_RATE;
-
-  const today = Math.floor(now.getTime() / DAY);
-  const earliest = Math.min(...days.map(dayIndex));
-  const observed = today - earliest + 1;
-  const window = Math.min(WINDOW_DAYS, Math.max(MIN_WINDOW_DAYS, observed));
-  const from = today - window + 1;
-
-  let total = 0;
-  for (const day of days) {
-    const index = dayIndex(day);
-    if (index >= from && index <= today) total += daily![day];
-  }
-  if (total <= 0) return NO_RATE;
-
-  const perDay = total / window;
+  const perDay = matchesPerDay(entry, now);
   // Below roughly one a year there is no unit left that says anything useful.
   if (perDay * WINDOW_DAYS < 1) return NO_RATE;
 
