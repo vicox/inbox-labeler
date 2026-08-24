@@ -8,7 +8,7 @@ import test from "node:test";
  * needs a real Google account and real credentials. Everything on either side of
  * it can be: registration, the request validation, the consent step, and the
  * token exchange with its PKCE check, its single-use codes and its refresh
- * rotation. The seam is `store.issueCode`, which is exactly what the provider
+ * rotation. The seam is the store's `issueCode`, which is exactly what the provider
  * callback does once it has verified an identity — so these tests stand in for
  * the callback's output rather than skipping past the flow.
  */
@@ -20,7 +20,7 @@ process.env.GOOGLE_CLIENT_SECRET = "test-google-client-secret";
 const { handleRegistration } = await import("./registration.ts");
 const { handleAuthorize, handleConsent } = await import("./authorization.ts");
 const { handleToken } = await import("./exchange.ts");
-const { store } = await import("./store.ts");
+const { oauthStore } = await import("./store.ts");
 const { createPkce } = await import("./pkce.ts");
 const { deployment, signingKey } = await import("./config.ts");
 const { accessTokenVerifier } = await import("./tokens.ts");
@@ -197,8 +197,8 @@ test("a forged approval reference is refused", async () => {
 // Picking up where the provider callback leaves off: a code issued against a
 // verified identity.
 
-function issueCodeFor(clientId: string, challenge: string, userId = "google:alice") {
-  return store.issueCode({
+async function issueCodeFor(clientId: string, challenge: string, userId = "google:alice") {
+  return (await oauthStore()).issueCode({
     clientId,
     redirectUri: REDIRECT_URI,
     codeChallenge: challenge,
@@ -211,7 +211,7 @@ function issueCodeFor(clientId: string, challenge: string, userId = "google:alic
 test("a code plus its verifier buys an access token bound to this MCP endpoint", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
 
   const { status, body, headers } = await token({
     grant_type: "authorization_code",
@@ -236,7 +236,7 @@ test("a code plus its verifier buys an access token bound to this MCP endpoint",
 test("a code is redeemable once", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
   const exchange = () =>
     token({
       grant_type: "authorization_code",
@@ -257,7 +257,7 @@ test("a code without the right verifier is worthless", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
   const other = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
 
   const { status, body } = await token({
     grant_type: "authorization_code",
@@ -274,7 +274,7 @@ test("a code without the right verifier is worthless", async () => {
 test("a code with no verifier at all is refused", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
 
   const { status } = await token({
     grant_type: "authorization_code",
@@ -289,7 +289,7 @@ test("another client cannot redeem someone else's code", async () => {
   const { body: mine } = await register();
   const { body: theirs } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(mine.client_id, pkce.challenge);
+  const code = await issueCodeFor(mine.client_id, pkce.challenge);
 
   const { status, body } = await token({
     grant_type: "authorization_code",
@@ -306,7 +306,7 @@ test("another client cannot redeem someone else's code", async () => {
 test("the redirect URI must be repeated and must match", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
 
   assert.equal(
     (
@@ -325,7 +325,7 @@ test("the redirect URI must be repeated and must match", async () => {
 test("a code cannot be retargeted at another resource", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
 
   const { status, body } = await token({
     grant_type: "authorization_code",
@@ -343,7 +343,7 @@ test("a code cannot be retargeted at another resource", async () => {
 test("a refresh token is exchanged for a new pair, and retires itself", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge, "google:bob");
+  const code = await issueCodeFor(client.client_id, pkce.challenge, "google:bob");
 
   const first = await token({
     grant_type: "authorization_code",
@@ -378,7 +378,7 @@ test("a refresh token is exchanged for a new pair, and retires itself", async ()
 test("a refresh token cannot be widened", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
   const first = await token({
     grant_type: "authorization_code",
     client_id: client.client_id,
@@ -429,7 +429,7 @@ test("the token endpoint requires a client and a grant type", async () => {
 test("a token response carries no signing secret", async () => {
   const { body: client } = await register();
   const pkce = createPkce();
-  const code = issueCodeFor(client.client_id, pkce.challenge);
+  const code = await issueCodeFor(client.client_id, pkce.challenge);
   const { body } = await token({
     grant_type: "authorization_code",
     client_id: client.client_id,

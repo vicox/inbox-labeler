@@ -35,6 +35,9 @@ yarn-error.log*
 # except the committed template, which holds names and never values
 !.env.example
 
+# the development OAuth store: a local database, and the credentials in it
+.oauth-store/
+
 # vercel
 .vercel
 

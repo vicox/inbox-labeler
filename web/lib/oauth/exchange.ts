@@ -1,7 +1,7 @@
 import { ConfigurationError, deployment, signingKey, type Deployment } from "./config.ts";
 import { verifyCodeChallenge } from "./pkce.ts";
 import { json, oauthError } from "./responses.ts";
-import { store } from "./store.ts";
+import { oauthStore } from "./store.ts";
 import { ACCESS_TOKEN_TTL_SECONDS, mintAccessToken } from "./tokens.ts";
 
 /**
@@ -73,7 +73,7 @@ async function authorizationCodeGrant(
   const code = field("code");
   if (!code) return oauthError("invalid_request", "code is required.", 400);
 
-  const granted = store.redeemCode(code);
+  const granted = await (await oauthStore()).redeemCode(code);
   if (!granted) {
     // One answer for never-existed, expired and already-redeemed. To a
     // legitimate client they mean the same thing — start again — and telling
@@ -127,7 +127,7 @@ async function refreshTokenGrant(
   const presented = field("refresh_token");
   if (!presented) return oauthError("invalid_request", "refresh_token is required.", 400);
 
-  const granted = store.redeemRefreshToken(presented);
+  const granted = await (await oauthStore()).redeemRefreshToken(presented);
   if (!granted) {
     return oauthError("invalid_grant", "The refresh token is invalid, expired, or already used.", 400);
   }
@@ -172,7 +172,7 @@ async function issue(
 ): Promise<Response> {
   const { token } = await mintAccessToken(config, key, { id: grant.userId }, grant.clientId, grant.scope);
 
-  const refreshToken = store.issueRefreshToken({
+  const refreshToken = await (await oauthStore()).issueRefreshToken({
     clientId: grant.clientId,
     userId: grant.userId,
     scope: grant.scope,

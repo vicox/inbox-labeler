@@ -1,7 +1,7 @@
 import { validateRegistration } from "./clients.ts";
 import { ConfigurationError, deployment } from "./config.ts";
 import { json, oauthError } from "./responses.ts";
-import { store } from "./store.ts";
+import { oauthStore } from "./store.ts";
 
 /**
  * Dynamic Client Registration, per RFC 7591.
@@ -47,7 +47,7 @@ export async function handleRegistration(request: Request): Promise<Response> {
   const validated = validateRegistration(body);
   if ("error" in validated) return json(validated, 400);
 
-  const client = store.registerClient({
+  const client = await (await oauthStore()).registerClient({
     redirectUris: validated.redirectUris,
     clientName: validated.clientName,
   });

@@ -1,32 +1,24 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+
+import { ConfigurationError } from "./config.ts";
 
 /**
- * The short-lived state an OAuth flow needs between requests: registered
- * clients, logins in progress, authorization codes and refresh tokens.
+ * The OAuth flow state that has to outlive a request, and the contract every
+ * adapter implements.
  *
- * Access tokens are deliberately absent. They are signed documents that carry
- * everything needed to check them, so the MCP endpoint — the hot path, and the
- * one that has to work on every instance — validates a request without reading
- * anything from here. What is left is the flow state that genuinely cannot be
- * stateless, because its correctness *is* the record of what has already
- * happened: an authorization code has to be refusable the second time it is
- * presented, and a rotated refresh token has to stop working. A signed value
- * cannot express "already used".
+ * Access tokens are deliberately absent, and that is the line this module draws.
+ * They are signed documents carrying everything needed to check them, so the MCP
+ * endpoint — the hot path, and the one that has to give the same answer on every
+ * instance — validates a request from the token and the key alone, reading
+ * nothing from here. What is left is the state whose correctness *is* the record
+ * of what has already happened: an authorization code must be refusable the
+ * second time it is presented, and a rotated refresh token must stop working. No
+ * signed value can express "already used", so those four things are stored.
  *
- * ## This store is memory, and that is a real limitation
- *
- * It lives in one process. Restart it and pending logins, unredeemed codes,
- * refresh tokens and client registrations are gone; run two instances and each
- * has its own. Neither breaks an access token already in a client's hands —
- * those keep working until they expire, because nothing here is consulted to
- * validate one — but a client mid-flow gets an error and has to start again,
- * and a client that registered against one instance is unknown to the others.
- *
- * So this is enough to develop and test the flow against, and not enough to
- * host it. Making it durable is a storage decision that belongs with the one
- * InboxLabeler's own per-user state will need, which is why it is not being
- * guessed at here. Everything below goes through this one interface so that
- * choice lands in one file.
+ * Everything below is an interface rather than an implementation because the
+ * protocol code must not know which database it is talking to — `authorization`,
+ * `callback`, `exchange` and `registration` depend only on this file, so a
+ * self-hosted deployment can add an adapter without any of them changing.
  */
 
 /** A client that registered itself, per RFC 7591. */
@@ -51,13 +43,13 @@ export type RegisteredClient = {
  * flow pauses twice — once for the user to approve the client, once for the
  * identity provider to authenticate them:
  *
- *     GET  /oauth/authorize   park   ─►  reference travels in the consent form
+ *     GET  /oauth/authorize   park       ─►  reference travels in the consent form
  *     POST /oauth/authorize   take, park ─►  reference travels as the provider's `state`
  *     GET  /oauth/callback    take
  *
  * Each reference is unguessable and spent on first use, which is what makes the
  * first one a CSRF token for the consent form as well as a lookup key: a page
- * that has not been served the form cannot forge a submission of it.
+ * that was never served the form cannot forge a submission of it.
  */
 export type PendingLogin = {
   clientId: string;
@@ -97,156 +89,143 @@ export type RefreshToken = {
 /**
  * How long each kind of record lives.
  *
- * An authorization code gets one minute: it is handed straight from the
- * redirect to the token request, so the only thing a longer window buys is a
- * wider replay opportunity. OAuth 2.1 recommends a maximum of ten minutes and
- * short-lived beyond that; a minute is comfortably inside it. A login in
- * progress gets ten, because a real person is typing a password in the middle
- * of it. A refresh token gets thirty days, long enough that a client which
- * checks in occasionally is not thrown back to a browser, and short enough that
- * an abandoned one lapses on its own.
+ * An authorization code gets one minute: it is handed straight from the redirect
+ * to the token request, so the only thing a longer window buys is a wider replay
+ * opportunity. OAuth 2.1 recommends a maximum of ten minutes and short-lived
+ * beyond that; a minute is comfortably inside it. A login in progress gets ten,
+ * because a real person is signing in during it. A refresh token gets thirty
+ * days, long enough that a client which checks in occasionally is not thrown
+ * back to a browser, and short enough that an abandoned one lapses on its own.
  */
 export const AUTHORIZATION_CODE_TTL_MS = 60_000;
 export const PENDING_LOGIN_TTL_MS = 10 * 60_000;
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 
 /**
+ * The store, as the protocol code sees it.
+ *
+ * Two shapes of operation, and the difference between them is the whole point of
+ * this task. `issue*` and `park*` mint a reference and return it. `take*` and
+ * `redeem*` **spend** one: they return the record and make it unusable in the
+ * same indivisible step, so a second presentation of the same value finds
+ * nothing. An adapter that implements those as a read followed by a write is
+ * wrong, however carefully it is written — between the two, a concurrent request
+ * on another instance can read the same row and both callers succeed.
+ *
+ * `now` is an explicit parameter throughout rather than read from the clock
+ * inside. It keeps expiry testable without waiting, and every TTL here is
+ * minutes or days, so an application clock is precise enough for the comparison.
+ */
+export type OAuthStore = {
+  registerClient(client: Omit<RegisteredClient, "clientId" | "registeredAt">): Promise<RegisteredClient>;
+  client(clientId: string): Promise<RegisteredClient | undefined>;
+
+  /** Parks a request and returns the single-use reference that resumes it. */
+  parkLogin(login: Omit<PendingLogin, "expiresAt">): Promise<string>;
+  /** Resumes a parked request, spending its reference. */
+  takeLogin(reference: string, now?: number): Promise<PendingLogin | undefined>;
+
+  issueCode(code: Omit<AuthorizationCode, "expiresAt">): Promise<string>;
+  /** Redeems a code, atomically and exactly once. */
+  redeemCode(code: string, now?: number): Promise<AuthorizationCode | undefined>;
+
+  issueRefreshToken(token: Omit<RefreshToken, "expiresAt">): Promise<string>;
+  /** Rotates a refresh token, atomically and exactly once. */
+  redeemRefreshToken(token: string, now?: number): Promise<RefreshToken | undefined>;
+
+  /**
+   * Deletes expired records, returning how many went.
+   *
+   * Never load-bearing: every read above filters on expiry itself, so a store
+   * that is never cleaned is still correct, only larger. See the adapter for
+   * when this runs on its own.
+   */
+  cleanup(now?: number): Promise<number>;
+};
+
+/**
  * A reference to something in the store: unguessable, and meaningless on its
  * own.
  *
- * 32 bytes from the system CSPRNG. Authorization codes and refresh tokens are
- * bearer credentials, so the only thing standing between an attacker and
- * someone else's grant is that the value cannot be guessed or derived — which
- * is also why they carry no structure. Base64url, because every one of them
- * travels in a URL or a form body.
+ * 32 bytes from the system CSPRNG. Authorization codes, refresh tokens and the
+ * flow references are all bearer credentials, so the only thing between an
+ * attacker and someone else's grant is that the value cannot be guessed or
+ * derived — which is also why they carry no structure. Base64url, because every
+ * one of them travels in a URL or a form body.
  */
-function reference(): string {
+export function reference(): string {
   return randomBytes(32).toString("base64url");
 }
 
 /**
- * A record kept until it expires.
+ * What a store actually keeps: the SHA-256 of a reference, never the reference.
  *
- * Expiry is checked on read rather than swept on a timer. A record past its
- * expiry is indistinguishable from one that was never there, which is the
- * behaviour every caller wants, and it means there is no background job whose
- * failure could quietly leave stale grants redeemable.
+ * A row is found by hashing what the client presented and looking that up, so a
+ * copy of the database is not a set of working credentials. Whoever reads it
+ * learns that a grant exists and cannot redeem it.
+ *
+ * A plain hash rather than a password KDF, deliberately. Slow hashing exists to
+ * make guessing a *low-entropy* secret expensive; these references are 32 bytes
+ * of CSPRNG output, so there is nothing to guess and a KDF would only add
+ * latency to every token request. What matters here is that the function is
+ * one-way and that lookup stays a single indexed probe.
  */
-class Expiring<T extends { expiresAt: number }> {
-  private readonly records = new Map<string, T>();
-
-  put(record: T): string {
-    const key = reference();
-    this.records.set(key, record);
-    this.sweep();
-    return key;
-  }
-
-  get(key: string, now: number): T | undefined {
-    const record = this.records.get(key);
-    if (!record) return undefined;
-    if (record.expiresAt <= now) {
-      this.records.delete(key);
-      return undefined;
-    }
-    return record;
-  }
-
-  /**
-   * Reads a record and removes it in the same step.
-   *
-   * The two halves are inseparable on purpose. This is what makes an
-   * authorization code single-use and a refresh token rotate: a second
-   * presentation of the same value finds nothing, because taking it *is*
-   * spending it. Splitting them into a get and a later delete would leave a
-   * window where two concurrent redemptions both succeed.
-   */
-  take(key: string, now: number): T | undefined {
-    const record = this.get(key, now);
-    if (record) this.records.delete(key);
-    return record;
-  }
-
-  /** Drops whatever has already expired, so an idle process stops growing. */
-  private sweep(): void {
-    const now = Date.now();
-    for (const [key, record] of this.records) {
-      if (record.expiresAt <= now) this.records.delete(key);
-    }
-  }
-
-  /** Test seam: how many records are held, expired ones included. */
-  get size(): number {
-    return this.records.size;
-  }
+export function referenceHash(value: string): Buffer {
+  return createHash("sha256").update(value, "utf8").digest();
 }
 
 /**
- * One store, holding the four kinds of flow state.
+ * The store this deployment uses, opened once.
  *
- * Exposed as a class so a test can work against its own instance instead of
- * whatever earlier tests left in a shared one; the module-level `store` below
- * is the single instance the routes use.
+ * Cached as a promise rather than a value so that concurrent first requests
+ * share one connection pool and one migration run instead of racing to build
+ * their own.
  */
-export class OAuthStore {
-  private readonly clients = new Map<string, RegisteredClient>();
-  private readonly logins = new Expiring<PendingLogin>();
-  private readonly codes = new Expiring<AuthorizationCode>();
-  private readonly refreshTokens = new Expiring<RefreshToken>();
+let opening: Promise<OAuthStore> | undefined;
 
-  /**
-   * Registers a client and returns its id.
-   *
-   * The id is a fresh random reference rather than anything derived from the
-   * client's metadata: two clients that register identical metadata are still
-   * two clients, and a client id that could be predicted from a name would let
-   * one impersonate another at the token endpoint.
-   */
-  registerClient(client: Omit<RegisteredClient, "clientId" | "registeredAt">): RegisteredClient {
-    const registered: RegisteredClient = {
-      ...client,
-      clientId: reference(),
-      registeredAt: Date.now(),
-    };
-    this.clients.set(registered.clientId, registered);
-    return registered;
-  }
-
-  client(clientId: string): RegisteredClient | undefined {
-    return this.clients.get(clientId);
-  }
-
-  /** Parks a request and returns the single-use reference that resumes it. */
-  parkLogin(login: Omit<PendingLogin, "expiresAt">): string {
-    return this.logins.put({ ...login, expiresAt: Date.now() + PENDING_LOGIN_TTL_MS });
-  }
-
-  /** Resumes a parked request, spending its reference. */
-  takeLogin(reference: string, now = Date.now()): PendingLogin | undefined {
-    return this.logins.take(reference, now);
-  }
-
-  issueCode(code: Omit<AuthorizationCode, "expiresAt">): string {
-    return this.codes.put({ ...code, expiresAt: Date.now() + AUTHORIZATION_CODE_TTL_MS });
-  }
-
-  redeemCode(code: string, now = Date.now()): AuthorizationCode | undefined {
-    return this.codes.take(code, now);
-  }
-
-  issueRefreshToken(token: Omit<RefreshToken, "expiresAt">): string {
-    return this.refreshTokens.put({ ...token, expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS });
-  }
-
-  redeemRefreshToken(token: string, now = Date.now()): RefreshToken | undefined {
-    return this.refreshTokens.take(token, now);
-  }
+export function oauthStore(): Promise<OAuthStore> {
+  opening ??= open();
+  return opening;
 }
 
 /**
- * The instance the route handlers share.
+ * Chooses the adapter, and refuses to guess in production.
  *
- * Module state, which in development means Next.js can discard it on a reload —
- * one more reason the store above says what it says about being memory.
+ * `DATABASE_URL` is the switch. With it, Postgres; without it, the embedded
+ * Postgres that makes `npm run dev` work with nothing installed. In production
+ * its absence is a configuration error rather than a fallback — quietly running
+ * a hosted deployment on a store that a restart or a second instance would
+ * invalidate is exactly the failure this store exists to remove, and it is worse
+ * for being silent.
+ *
+ * Both adapters are loaded on demand, so a deployment pays for neither the
+ * driver it does not use nor the connection it does not open until a request
+ * actually needs the store.
  */
-export const store = new OAuthStore();
+async function open(): Promise<OAuthStore> {
+  const url = process.env.DATABASE_URL?.trim();
+
+  const { migrate, sqlOAuthStore } = await import("./store/sql.ts");
+
+  if (url) {
+    const { postgresDriver } = await import("./store/postgres.ts");
+    const driver = await postgresDriver(url);
+    // Migrating here as well as from `npm run db:migrate` is belt and braces: a
+    // deploy should run the command in its own step, and an instance that comes
+    // up against an un-migrated database should still work rather than serve
+    // errors until someone notices.
+    await migrate(driver);
+    return sqlOAuthStore(driver);
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new ConfigurationError(
+      "DATABASE_URL is not set. The OAuth flow needs durable storage in production: a restart or a second instance would otherwise invalidate every login in progress. See web/.env.example.",
+    );
+  }
+
+  const { embeddedDriver } = await import("./store/pglite.ts");
+  const driver = await embeddedDriver(process.env.OAUTH_STORE_DIR);
+  await migrate(driver);
+  return sqlOAuthStore(driver);
+}

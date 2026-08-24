@@ -6,7 +6,7 @@ import { consentPage } from "./consent.ts";
 import { challengeFor, createPkce } from "./pkce.ts";
 import { identityProvider } from "./provider.ts";
 import { errorPage } from "./responses.ts";
-import { store } from "./store.ts";
+import { oauthStore } from "./store.ts";
 
 /**
  * The authorization endpoint: two steps at one URL.
@@ -31,9 +31,10 @@ export async function handleAuthorize(request: Request): Promise<Response> {
     return configurationFault(error);
   }
 
+  const store = await oauthStore();
   const params = new URL(request.url).searchParams;
   const clientId = params.get("client_id");
-  const client = clientId ? store.client(clientId) : undefined;
+  const client = clientId ? await store.client(clientId) : undefined;
 
   const validated = validateAuthorization(params, client, config);
 
@@ -49,7 +50,7 @@ export async function handleAuthorize(request: Request): Promise<Response> {
   // means the values checked on the way back were fixed before the user was
   // sent anywhere.
   const { verifier } = createPkce();
-  const reference = store.parkLogin({
+  const reference = await store.parkLogin({
     clientId: validated.clientId,
     redirectUri: validated.redirectUri,
     codeChallenge: validated.codeChallenge,
@@ -111,7 +112,8 @@ export async function handleConsent(request: Request): Promise<Response> {
     return errorPage("invalid_request", "The approval form was incomplete.", 400);
   }
 
-  const login = store.takeLogin(reference);
+  const store = await oauthStore();
+  const login = await store.takeLogin(reference);
   if (!login) {
     return errorPage(
       "invalid_request",
@@ -141,7 +143,7 @@ export async function handleConsent(request: Request): Promise<Response> {
   // Approved. Park it again; the new reference is what travels as the
   // provider's `state`, so a value the provider echoes back can only have come
   // from an approval that happened.
-  const state = store.parkLogin(login);
+  const state = await store.parkLogin(login);
 
   try {
     return redirect(

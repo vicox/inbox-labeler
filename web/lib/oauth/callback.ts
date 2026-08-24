@@ -3,7 +3,7 @@ import { ConfigurationError, deployment } from "./config.ts";
 import { IdentityError } from "./google.ts";
 import { identityProvider } from "./provider.ts";
 import { errorPage } from "./responses.ts";
-import { store } from "./store.ts";
+import { oauthStore } from "./store.ts";
 
 /**
  * Where the identity provider returns the user, and where the flow rejoins the
@@ -33,7 +33,7 @@ export async function handleProviderCallback(request: Request): Promise<Response
     return errorPage("invalid_request", "The sign-in response carried no state.", 400);
   }
 
-  const login = store.takeLogin(reference);
+  const login = await (await oauthStore()).takeLogin(reference);
   if (!login) {
     return errorPage(
       "invalid_request",
@@ -93,7 +93,7 @@ export async function handleProviderCallback(request: Request): Promise<Response
   // code challenge travels with it so the token endpoint can require the client
   // that began the flow to finish it, and the resource travels with it so the
   // token minted at the end is bound to the audience that was asked for.
-  const code = store.issueCode({
+  const code = await (await oauthStore()).issueCode({
     clientId: login.clientId,
     redirectUri: login.redirectUri,
     codeChallenge: login.codeChallenge,

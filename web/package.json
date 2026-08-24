@@ -8,18 +8,22 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"lib/**/*.test.ts\""
+    "test": "node --test \"lib/**/*.test.ts\"",
+    "db:migrate": "node lib/oauth/store/migrate-cli.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.7",
     "@modelcontextprotocol/server": "^2.0.0",
     "jose": "^6.2.10",
     "next": "16.3.1",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

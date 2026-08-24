@@ -598,6 +598,8 @@ file documents each variable in full; in short:
 | `OAUTH_SIGNING_SECRET` | what access tokens are signed with. At least 32 bytes — `openssl rand -base64 48` |
 | `GOOGLE_CLIENT_ID` | a Google OAuth 2.0 "Web application" client |
 | `GOOGLE_CLIENT_SECRET` | its secret |
+| `DATABASE_URL` | Postgres, holding the OAuth flow state. **Required in production**; unset in development, which uses an embedded Postgres instead |
+| `OAUTH_STORE_DIR` | development only: where that embedded database keeps its files. Unset means in-memory |
 
 The Google client needs one authorised redirect URI, matching `MCP_PUBLIC_URL`:
 `http://localhost:3000/oauth/callback` locally. Only the `openid` scope is requested,
@@ -605,6 +607,47 @@ so Inbox Labeler learns the account's stable subject and neither its address nor
 profile.
 
 `.env.local` is gitignored. `.env.example` holds names and never values.
+
+### Where OAuth state lives
+
+Four things have to outlive a request: registered clients, logins in progress,
+authorization codes and refresh tokens. They are in **Postgres**, and the reason is
+narrower than "it needs a database" — it is that two of them must be spendable
+exactly once. An authorization code presented twice, by two instances, in the same
+millisecond, may be honoured once; so may a refresh token. Each is one statement:
+
+```sql
+DELETE FROM oauth_authorization_codes
+ WHERE code_hash = $1 AND expires_at > $2
+ RETURNING …
+```
+
+Locating the row, checking its expiry, removing it and returning it happen
+indivisibly, so the database settles the race and no application-level lock exists to
+get wrong. A read followed by a delete would look equivalent and would not be.
+
+**Access tokens are not in there.** They stay signed, self-contained JWTs, so `/mcp`
+validates one from the token and the signing key alone — no query, and the same
+answer on every instance.
+
+What a client holds is never stored: rows are keyed by the SHA-256 of the code or
+token, so a copy of the database is not a set of working credentials.
+
+In development `DATABASE_URL` is unset and the same schema runs on an embedded
+Postgres — the real thing compiled to WebAssembly — so `npm install && npm run dev`
+needs no database installed and the SQL under test is the SQL that ships. Production
+is a real Postgres and **fails at startup without one**, rather than falling back to
+a store that a restart or a second instance would invalidate.
+
+Initialise or update the schema, before the new code serves traffic:
+
+```bash
+npm run db:migrate     # idempotent, and safe to run from several instances at once
+```
+
+Expired rows are deleted opportunistically after writes, and `npm run db:migrate` is
+the only step a deploy needs. Cleanup is never load-bearing: every read filters on
+expiry, so an expired code is refused whether or not anything has swept it.
 
 ### Running it
 
@@ -676,13 +719,6 @@ tunnel makes a non-loopback HTTP origin acceptable.
 
 ### What is not finished
 
-- **The OAuth flow's state is in memory.** Registered clients, pending logins,
-  authorization codes and refresh tokens live in one process: restart it and a client
-  must register and authorize again, and two instances do not share any of it. Access
-  tokens are unaffected — they are signed and self-contained, so `/mcp` validates one
-  without consulting anything — but the endpoint is not yet ready to be hosted
-  across instances. Durable storage is the same decision as per-user label storage,
-  and is deliberately left to be made once.
 - **Tokens cannot be revoked before they expire**, which follows from their being
   self-contained. They last an hour; rotating `OAUTH_SIGNING_SECRET` invalidates all
   of them at once.
@@ -719,6 +755,7 @@ web/
     ├── identity.ts       who an authenticated request belongs to — one stable id
     ├── mcp/              the MCP server, its one tool, and the auth boundary
     └── oauth/            the authorization server: discovery, grants, tokens
+        └── store/        the durable OAuth state: one SQL adapter, two drivers
 README.md
 ```
 
