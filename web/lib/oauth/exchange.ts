@@ -1,6 +1,6 @@
-import { ConfigurationError, deployment, signingKey, type Deployment } from "./config.ts";
+import { deployment, signingKey, type Deployment } from "./config.ts";
 import { verifyCodeChallenge } from "./pkce.ts";
-import { json, oauthError } from "./responses.ts";
+import { configurationFault, json, oauthError } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 import { ACCESS_TOKEN_TTL_SECONDS, mintAccessToken } from "./tokens.ts";
 
@@ -27,8 +27,7 @@ export async function handleToken(request: Request): Promise<Response> {
     config = deployment();
     key = signingKey();
   } catch (error) {
-    if (error instanceof ConfigurationError) return oauthError("server_error", error.message, 500);
-    throw error;
+    return configurationFault(error);
   }
 
   let form: FormData;

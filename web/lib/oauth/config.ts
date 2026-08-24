@@ -125,11 +125,25 @@ export function signingKey(): Uint8Array {
  * A deployment that is missing something it needs.
  *
  * Its own type so a route can answer 500 for it and keep 400 for a client that
- * sent a bad request — the two look alike at the point they are caught and
- * mean opposite things to whoever has to fix them.
+ * sent a bad request — the two look alike at the point they are caught and mean
+ * opposite things to whoever has to fix them.
+ *
+ * It writes itself to stderr on construction, which is unusual and deliberate.
+ * The message never reaches a client — a public endpoint naming its own
+ * environment variables tells whoever is probing how the deployment is put
+ * together — so the log is the only place an operator can learn what is wrong.
+ * Logging where the error is *made* rather than where it is caught is what makes
+ * that true on every path, including the ones that surface as a framework or SDK
+ * error nobody here shapes. Nothing sensitive can be in it: this is raised before
+ * any credential is read, and it names variables rather than values.
  */
 export class ConfigurationError extends Error {
   override readonly name = "ConfigurationError";
+
+  constructor(message: string) {
+    super(message);
+    console.error(`[inboxlabeler] configuration error: ${message}`);
+  }
 }
 
 /**

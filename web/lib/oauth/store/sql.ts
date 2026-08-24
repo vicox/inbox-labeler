@@ -1,3 +1,5 @@
+import type { SqlDriver } from "../../db/driver.ts";
+import type { SchemaModule } from "../../db/migrate.ts";
 import {
   AUTHORIZATION_CODE_TTL_MS,
   PENDING_LOGIN_TTL_MS,
@@ -30,33 +32,6 @@ import {
  */
 
 /**
- * The little a store needs from a database driver.
- *
- * Deliberately smaller than any real client's API, so that adding an adapter is
- * a day's work rather than a port and nothing in this file can reach for a
- * driver-specific feature.
- *
- * `query` and `exec` are separate because the wire protocol separates them.
- * `query` carries bound parameters, which makes it a prepared statement and
- * therefore exactly one command — every value the store handles goes through it,
- * always bound and never interpolated. `exec` runs a multi-statement script with
- * no parameters, which is what a migration is; putting DDL through `query`
- * fails, and putting a parameter through `exec` is impossible, so the split
- * keeps both honest.
- */
-export type SqlDriver = {
-  query<Row>(sql: string, params?: readonly unknown[]): Promise<Row[]>;
-  /** Runs a parameterless script, which may contain several statements. */
-  exec(sql: string): Promise<void>;
-  /** Runs `work` in a transaction, rolling back if it throws. */
-  transaction<T>(work: (tx: Pick<SqlDriver, "query" | "exec">) => Promise<T>): Promise<T>;
-  close(): Promise<void>;
-};
-
-/** Postgres' unique-violation SQLSTATE, which the migration guard relies on. */
-const UNIQUE_VIOLATION = "23505";
-
-/**
  * The schema, as ordered migrations.
  *
  * SQL lives in this file rather than in `.sql` files on disk on purpose: a
@@ -75,9 +50,11 @@ const UNIQUE_VIOLATION = "23505";
  * is validated by the protocol layer before the row is written, and checked
  * again when it is spent.
  */
-const MIGRATIONS: readonly { version: number; sql: string }[] = [
-  {
-    version: 1,
+export const OAUTH_SCHEMA: SchemaModule = {
+  module: "oauth",
+  migrations: [
+    {
+      version: 1,
     sql: `
       CREATE TABLE oauth_clients (
         client_id     text PRIMARY KEY,
@@ -126,46 +103,9 @@ const MIGRATIONS: readonly { version: number; sql: string }[] = [
       );
       CREATE INDEX oauth_refresh_tokens_expires_at ON oauth_refresh_tokens (expires_at);
     `,
-  },
-];
-
-/**
- * Brings the schema up to date, safely from several instances at once.
- *
- * The guard is the migrations table's own primary key, not a lock. Each
- * migration inserts its version and runs its DDL in one transaction: two
- * instances starting together both try the insert, one blocks until the other
- * commits and then fails on the unique index, and rolls back — taking its DDL
- * with it, because Postgres rolls back DDL like anything else. What is left is
- * exactly one application of each version, with no advisory lock to acquire, to
- * hold, or to leak.
- *
- * Idempotent, so it is safe to run on every deploy and safe to run twice.
- */
-export async function migrate(driver: SqlDriver): Promise<number> {
-  await driver.exec(`
-    CREATE TABLE IF NOT EXISTS oauth_schema_migrations (
-      version    integer PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    );
-  `);
-
-  let applied = 0;
-  for (const migration of MIGRATIONS) {
-    try {
-      await driver.transaction(async (tx) => {
-        await tx.query("INSERT INTO oauth_schema_migrations (version) VALUES ($1)", [migration.version]);
-        await tx.exec(migration.sql);
-      });
-      applied += 1;
-    } catch (error) {
-      // Another instance got there first. Any other failure is a real problem
-      // and must not be mistaken for one.
-      if ((error as { code?: string }).code !== UNIQUE_VIOLATION) throw error;
-    }
-  }
-  return applied;
-}
+    },
+  ],
+};
 
 export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
   /**

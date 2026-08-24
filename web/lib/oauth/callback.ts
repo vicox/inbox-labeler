@@ -2,7 +2,7 @@ import { codeRedirect, errorRedirect, type Redirectable } from "./authorization-
 import { ConfigurationError, deployment } from "./config.ts";
 import { IdentityError } from "./google.ts";
 import { identityProvider } from "./provider.ts";
-import { errorPage } from "./responses.ts";
+import { configurationFault, errorPage } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 
 /**
@@ -23,8 +23,7 @@ export async function handleProviderCallback(request: Request): Promise<Response
   try {
     config = deployment();
   } catch (error) {
-    if (error instanceof ConfigurationError) return errorPage("server_error", error.message, 500);
-    throw error;
+    return configurationFault(error, "text");
   }
 
   const params = new URL(request.url).searchParams;
@@ -79,7 +78,7 @@ export async function handleProviderCallback(request: Request): Promise<Response
       nonce: login.nonce,
     });
   } catch (error) {
-    if (error instanceof ConfigurationError) return errorPage("server_error", error.message, 500);
+    if (error instanceof ConfigurationError) return configurationFault(error, "text");
     if (error instanceof IdentityError) {
       // The reason stays here. It describes how an identity token failed to
       // verify, which is useful to whoever runs this and is not the client's

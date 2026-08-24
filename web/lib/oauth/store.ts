@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { ConfigurationError } from "./config.ts";
+import { database } from "../db.ts";
+import { migrate } from "../db/migrate.ts";
 
 /**
  * The OAuth flow state that has to outlive a request, and the contract every
@@ -189,43 +190,21 @@ export function oauthStore(): Promise<OAuthStore> {
 }
 
 /**
- * Chooses the adapter, and refuses to guess in production.
+ * Opens the store on the shared connection.
  *
- * `DATABASE_URL` is the switch. With it, Postgres; without it, the embedded
- * Postgres that makes `npm run dev` work with nothing installed. In production
- * its absence is a configuration error rather than a fallback — quietly running
- * a hosted deployment on a store that a restart or a second instance would
- * invalidate is exactly the failure this store exists to remove, and it is worse
- * for being silent.
- *
- * Both adapters are loaded on demand, so a deployment pays for neither the
- * driver it does not use nor the connection it does not open until a request
- * actually needs the store.
+ * Choosing the driver and refusing to run without durable storage in production
+ * both moved to `lib/db.ts`, because they are the database's business rather than
+ * OAuth's and the product store needs the same answer. What is left here is this
+ * schema and this adapter.
  */
 async function open(): Promise<OAuthStore> {
-  const url = process.env.DATABASE_URL?.trim();
+  const driver = await database();
+  const { OAUTH_SCHEMA, sqlOAuthStore } = await import("./store/sql.ts");
 
-  const { migrate, sqlOAuthStore } = await import("./store/sql.ts");
-
-  if (url) {
-    const { postgresDriver } = await import("./store/postgres.ts");
-    const driver = await postgresDriver(url);
-    // Migrating here as well as from `npm run db:migrate` is belt and braces: a
-    // deploy should run the command in its own step, and an instance that comes
-    // up against an un-migrated database should still work rather than serve
-    // errors until someone notices.
-    await migrate(driver);
-    return sqlOAuthStore(driver);
-  }
-
-  if (process.env.NODE_ENV === "production") {
-    throw new ConfigurationError(
-      "DATABASE_URL is not set. The OAuth flow needs durable storage in production: a restart or a second instance would otherwise invalidate every login in progress. See web/.env.example.",
-    );
-  }
-
-  const { embeddedDriver } = await import("./store/pglite.ts");
-  const driver = await embeddedDriver(process.env.OAUTH_STORE_DIR);
-  await migrate(driver);
+  // Migrating here as well as from `npm run db:migrate` is belt and braces: a
+  // deploy should run the command in its own step, and an instance that comes up
+  // against an un-migrated database should still work rather than serve errors
+  // until someone notices.
+  await migrate(driver, OAUTH_SCHEMA);
   return sqlOAuthStore(driver);
 }

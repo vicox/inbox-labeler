@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 
 import { errorRedirect, validateAuthorization } from "./authorization-request.ts";
-import { ConfigurationError, deployment } from "./config.ts";
+import { deployment } from "./config.ts";
 import { consentPage } from "./consent.ts";
 import { challengeFor, createPkce } from "./pkce.ts";
 import { identityProvider } from "./provider.ts";
-import { errorPage } from "./responses.ts";
+import { configurationFault, errorPage } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 
 /**
@@ -28,7 +28,7 @@ export async function handleAuthorize(request: Request): Promise<Response> {
   try {
     config = deployment();
   } catch (error) {
-    return configurationFault(error);
+    return configurationFault(error, "text");
   }
 
   const store = await oauthStore();
@@ -97,7 +97,7 @@ export async function handleConsent(request: Request): Promise<Response> {
   try {
     config = deployment();
   } catch (error) {
-    return configurationFault(error);
+    return configurationFault(error, "text");
   }
 
   let form: FormData;
@@ -155,7 +155,7 @@ export async function handleConsent(request: Request): Promise<Response> {
       }),
     );
   } catch (error) {
-    return configurationFault(error);
+    return configurationFault(error, "text");
   }
 }
 
@@ -173,7 +173,4 @@ function redirect(location: string): Response {
   });
 }
 
-function configurationFault(error: unknown): Response {
-  if (error instanceof ConfigurationError) return errorPage("server_error", error.message, 500);
-  throw error;
-}
+

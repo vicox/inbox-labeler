@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 
-import type { SqlDriver } from "./sql.ts";
+import type { SqlDriver, Transaction } from "./driver.ts";
 
 /**
  * Postgres, for anything hosted.
@@ -41,7 +41,7 @@ export async function postgresDriver(connectionString: string): Promise<SqlDrive
       await pool.query(sql);
     },
 
-    async transaction<T>(work: (tx: Pick<SqlDriver, "query" | "exec">) => Promise<T>): Promise<T> {
+    async transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
       // A transaction has to run on one connection, so it is checked out of the
       // pool rather than going through it — `pool.query` would be free to spread
       // the statements over several connections, and BEGIN on one of them

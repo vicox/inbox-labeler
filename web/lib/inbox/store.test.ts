@@ -1,0 +1,776 @@
+import assert from "node:assert/strict";
+import test, { after, describe } from "node:test";
+
+import type { SqlDriver } from "../db/driver.ts";
+import { migrate } from "../db/migrate.ts";
+import { embeddedDriver } from "../db/pglite.ts";
+import { LabelError } from "./labels.ts";
+import { INBOX_SCHEMA } from "./store/schema.ts";
+import { sqlProductStore } from "./store/sql.ts";
+import type { ProductStore } from "./store.ts";
+
+/**
+ * InboxLabeler's per-user state, driven the way the MCP tools drive it.
+ *
+ * The suite runs against the embedded Postgres always, and a real Postgres too
+ * when `TEST_DATABASE_URL` is set — the same reason as the OAuth store: one run
+ * proves the statements are right, the other proves they are right on a server
+ * with real connections and real row locks.
+ *
+ * Two themes run through it. One is that a user's state is theirs: every read is
+ * scoped, and the store takes no argument that could say otherwise. The other is
+ * that the operations which touch more than one table cannot be caught halfway —
+ * a rename carries the history, a delete takes it, a bad label records nothing.
+ */
+
+const ALICE = { id: "google:alice" };
+const BOB = { id: "google:bob" };
+
+const drivers: { name: string; open: () => Promise<SqlDriver> }[] = [
+  { name: "embedded postgres", open: () => embeddedDriver() },
+];
+
+if (process.env.TEST_DATABASE_URL) {
+  drivers.push({
+    name: "postgres",
+    open: async () => {
+      const { postgresDriver } = await import("../db/postgres.ts");
+      return postgresDriver(process.env.TEST_DATABASE_URL!);
+    },
+  });
+}
+
+/** The message a rejected operation came back with, or "accepted". */
+async function refusal(work: Promise<unknown>): Promise<string> {
+  try {
+    await work;
+    return "accepted";
+  } catch (error) {
+    if (error instanceof LabelError) return error.message;
+    throw error;
+  }
+}
+
+for (const driver of drivers) {
+  describe(driver.name, () => {
+    const opened: SqlDriver[] = [];
+
+    /** Two stores on one database, so isolation is tested rather than assumed. */
+    async function fresh(): Promise<{ alice: ProductStore; bob: ProductStore; sql: SqlDriver }> {
+      const sql = await driver.open();
+      opened.push(sql);
+      await migrate(sql, INBOX_SCHEMA);
+      await sql.exec(`
+        TRUNCATE inbox_label_references, inbox_label_daily_matches,
+                 inbox_label_match_state, inbox_labels;
+      `);
+      return { alice: sqlProductStore(sql, ALICE), bob: sqlProductStore(sql, BOB), sql };
+    }
+
+    after(async () => {
+      for (const sql of opened) await sql.close().catch(() => {});
+    });
+
+    /** A detection label, which most tests need one of. */
+    const detection = (store: ProductStore, label: string, attention = "normal") =>
+      store.createLabel({ label, instruction: `whether ${label} applies`, attention });
+
+    // --- new users --------------------------------------------------------
+
+    test("a new user starts with nothing, and is not seeded with examples", async () => {
+      const { alice } = await fresh();
+
+      assert.deepEqual(await alice.labels(), []);
+      assert.deepEqual(await alice.matches(), {});
+    });
+
+    // --- isolation --------------------------------------------------------
+
+    test("two users can use the same label name independently", async () => {
+      const { alice, bob } = await fresh();
+
+      await alice.createLabel({ label: "Invoices", instruction: "Alice's invoices" });
+      await bob.createLabel({ label: "Invoices", instruction: "Bob's invoices" });
+
+      assert.equal((await alice.label("Invoices")).instruction, "Alice's invoices");
+      assert.equal((await bob.label("Invoices")).instruction, "Bob's invoices");
+    });
+
+    test("user A cannot see user B's labels", async () => {
+      const { alice, bob } = await fresh();
+      await detection(bob, "Bob only");
+
+      assert.deepEqual(await alice.labels(), []);
+      assert.match(await refusal(alice.label("Bob only")), /^no label "Bob only"/);
+    });
+
+    test("user A cannot see user B's matches", async () => {
+      const { alice, bob } = await fresh();
+      await detection(bob, "Invoices");
+      await bob.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      assert.deepEqual(await alice.matches(), {});
+
+      // Alice having a label of the same name must not let her read Bob's counts.
+      await detection(alice, "Invoices");
+      assert.deepEqual(await alice.matchesFor("Invoices"), {
+        Invoices: { last_matched_at: null, daily_matches: {} },
+      });
+    });
+
+    test("deleting one user's label leaves the other's alone", async () => {
+      const { alice, bob } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(bob, "Invoices");
+
+      await alice.deleteLabel("Invoices");
+
+      assert.deepEqual(await alice.labels(), []);
+      assert.equal((await bob.label("Invoices")).label, "Invoices");
+    });
+
+    test("one user's rename does not touch another's label of the same name", async () => {
+      const { alice, bob } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(bob, "Invoices");
+      await bob.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      await alice.updateLabel("Invoices", { label: "Bills" });
+
+      assert.equal((await alice.label("Bills")).label, "Bills");
+      assert.equal((await bob.label("Invoices")).label, "Invoices");
+      assert.ok((await bob.matches()).Invoices, "Bob's history stayed where it was");
+    });
+
+    // --- creating ---------------------------------------------------------
+
+    test("a created label carries the defaults the local CLI gives it", async () => {
+      const { alice } = await fresh();
+      const entry = await alice.createLabel({ label: "Invoices", instruction: "an invoice" });
+
+      assert.deepEqual(entry, {
+        label: "Invoices",
+        type: "detection",
+        attention: "normal",
+        instruction: "an invoice",
+      });
+    });
+
+    test("a label's text is trimmed and its inner whitespace collapsed", async () => {
+      const { alice } = await fresh();
+      const entry = await alice.createLabel({ label: "  Large   amount ", instruction: "big" });
+
+      assert.equal(entry.label, "Large amount");
+      assert.equal((await alice.label("large amount")).label, "Large amount", "found ignoring case");
+    });
+
+    test("labels are unique ignoring case", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.match(
+        await refusal(alice.createLabel({ label: "invoices", instruction: "again" })),
+        /already exists — labels are unique, ignoring case/,
+      );
+    });
+
+    test("the label rules match the local implementation's", async () => {
+      const { alice } = await fresh();
+      const create = (label: string) => alice.createLabel({ label, instruction: "x" });
+
+      assert.match(await refusal(create("")), /label must not be empty/);
+      assert.match(await refusal(create("IL/Invoices")), /stored without the IL\/ prefix/);
+      assert.match(await refusal(create("il/Invoices")), /stored without the IL\/ prefix/);
+      assert.match(await refusal(create("/Invoices")), /must not start or end with '\/'/);
+      assert.match(await refusal(create("Invoices/")), /must not start or end with '\/'/);
+      assert.match(await refusal(create("a//b")), /contain '\/\/'/);
+      assert.match(await refusal(create("processed")), /reserved system label/);
+      assert.match(await refusal(create("NO-MATCH")), /reserved system label/);
+      assert.match(
+        await refusal(alice.createLabel({ label: "Empty", instruction: "  " })),
+        /instruction must not be empty/,
+      );
+      assert.match(
+        await refusal(alice.createLabel({ label: "Odd", instruction: "x", attention: "urgent" })),
+        /unknown attention "urgent"/,
+      );
+      assert.match(
+        await refusal(alice.createLabel({ label: "Odd", instruction: "x", type: "guessed" })),
+        /unknown label type "guessed"/,
+      );
+    });
+
+    test("reference lists are refused on a detection label", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.match(
+        await refusal(
+          alice.createLabel({ label: "Odd", instruction: "x", required_labels: ["Invoices"] }),
+        ),
+        /required_labels applies to derived labels, not to a detection label/,
+      );
+    });
+
+    // --- derived labels ---------------------------------------------------
+
+    test("a derived label names existing detection labels", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Large amount");
+
+      const derived = await alice.createLabel({
+        label: "Large invoice",
+        type: "derived",
+        instruction: "a large invoice",
+        attention: "high",
+        required_labels: ["invoices", "Large amount"],
+        recommended_labels: [],
+      });
+
+      assert.deepEqual(derived, {
+        label: "Large invoice",
+        type: "derived",
+        attention: "high",
+        instruction: "a large invoice",
+        // Spelled the way the labels they point at are spelled, not the way they
+        // were typed.
+        required_labels: ["Invoices", "Large amount"],
+        recommended_labels: [],
+      });
+    });
+
+    test("a reference to a label that does not exist is refused", async () => {
+      const { alice } = await fresh();
+
+      assert.match(
+        await refusal(
+          alice.createLabel({
+            label: "Derived",
+            type: "derived",
+            instruction: "x",
+            required_labels: ["Nothing"],
+          }),
+        ),
+        /required_labels references "Nothing", which is not an existing label/,
+      );
+    });
+
+    test("a derived label may not reference another derived label", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await alice.createLabel({
+        label: "Large invoice",
+        type: "derived",
+        instruction: "x",
+        required_labels: ["Invoices"],
+      });
+
+      assert.match(
+        await refusal(
+          alice.createLabel({
+            label: "Chained",
+            type: "derived",
+            instruction: "x",
+            required_labels: ["Large invoice"],
+          }),
+        ),
+        /may only reference detection labels, and "Large invoice" is a derived label/,
+      );
+    });
+
+    test("a reference named twice collapses to one", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      const derived = await alice.createLabel({
+        label: "Derived",
+        type: "derived",
+        instruction: "x",
+        required_labels: ["Invoices", "invoices"],
+      });
+
+      assert.deepEqual(derived.required_labels, ["Invoices"]);
+    });
+
+    // --- updating ---------------------------------------------------------
+
+    test("an update with no changes is refused", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.match(await refusal(alice.updateLabel("Invoices", {})), /nothing to update/);
+    });
+
+    test("a label's type is immutable", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.match(
+        await refusal(alice.updateLabel("Invoices", { type: "derived" })),
+        /type is immutable/,
+      );
+    });
+
+    test("editable fields are edited and the rest left alone", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      const updated = await alice.updateLabel("Invoices", {
+        instruction: "an invoice, bill or receipt",
+        attention: "high",
+      });
+
+      assert.equal(updated.instruction, "an invoice, bill or receipt");
+      assert.equal(updated.attention, "high");
+      assert.equal(updated.label, "Invoices");
+    });
+
+    test("renaming onto an existing label is refused", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Bills");
+
+      assert.match(await refusal(alice.updateLabel("Invoices", { label: "Bills" })), /already exists/);
+    });
+
+    test("a rename rewrites every reference to the label", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Large amount");
+      await detection(alice, "Invoices");
+      await alice.createLabel({
+        label: "Large invoice",
+        type: "derived",
+        instruction: "x",
+        required_labels: ["Invoices", "Large amount"],
+        recommended_labels: ["Large amount"],
+      });
+
+      await alice.updateLabel("Large amount", { label: "Big amount" });
+
+      const derived = await alice.label("Large invoice");
+      assert.deepEqual(derived.required_labels, ["Invoices", "Big amount"]);
+      assert.deepEqual(derived.recommended_labels, ["Big amount"]);
+    });
+
+    test("updating a derived label replaces its reference lists rather than adding", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Large amount");
+      await alice.createLabel({
+        label: "Derived",
+        type: "derived",
+        instruction: "x",
+        required_labels: ["Invoices", "Large amount"],
+      });
+
+      const updated = await alice.updateLabel("Derived", { required_labels: ["Invoices"] });
+      assert.deepEqual(updated.required_labels, ["Invoices"]);
+
+      const cleared = await alice.updateLabel("Derived", { required_labels: [] });
+      assert.deepEqual(cleared.required_labels, []);
+    });
+
+    // --- rename and delete carry the history ------------------------------
+
+    test("a rename carries the match history with it", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await alice.recordMatches(["Invoices"], "2026-08-18T09:00:00Z");
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      await alice.updateLabel("Invoices", { label: "Bills" });
+
+      const matches = await alice.matches();
+      assert.equal(matches.Invoices, undefined, "nothing is left under the old name");
+      assert.deepEqual(matches.Bills, {
+        last_matched_at: "2026-08-20T10:12:00Z",
+        daily_matches: { "2026-08-18": 1, "2026-08-20": 1 },
+      });
+    });
+
+    test("no counter is lost to a rename, however many days it spans", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      for (const day of ["2026-08-01", "2026-08-02", "2026-08-03"]) {
+        await alice.recordMatches(["Invoices"], `${day}T10:00:00Z`);
+        await alice.recordMatches(["Invoices"], `${day}T11:00:00Z`);
+      }
+
+      const before = (await alice.matches()).Invoices;
+      await alice.updateLabel("Invoices", { label: "Bills" });
+      const after = (await alice.matches()).Bills;
+
+      assert.deepEqual(after, before, "the history is the same history");
+      assert.equal(
+        Object.values(after.daily_matches).reduce((sum, n) => sum + n, 0),
+        6,
+      );
+    });
+
+    test("deleting a label removes its match history", async () => {
+      const { alice, sql } = await fresh();
+      await detection(alice, "Invoices");
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      await alice.deleteLabel("Invoices");
+
+      assert.deepEqual(await alice.matches(), {});
+      for (const table of ["inbox_label_daily_matches", "inbox_label_match_state"]) {
+        const rows = await sql.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
+        assert.equal(rows[0].n, 0, `${table} left nothing orphaned`);
+      }
+    });
+
+    test("a referenced detection label cannot be deleted", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await alice.createLabel({
+        label: "Large invoice",
+        type: "derived",
+        instruction: "x",
+        required_labels: ["Invoices"],
+      });
+
+      assert.match(
+        await refusal(alice.deleteLabel("Invoices")),
+        /cannot delete detection label "Invoices": it is referenced by derived label "Large invoice"/,
+      );
+      assert.ok(await alice.label("Invoices"), "and it is still there");
+    });
+
+    test("a reserved label cannot be deleted", async () => {
+      const { alice } = await fresh();
+
+      assert.match(await refusal(alice.deleteLabel("processed")), /reserved system label/);
+    });
+
+    // --- rollback ---------------------------------------------------------
+
+    test("a failed rename leaves everything as it was", async () => {
+      const { alice, sql } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Bills");
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      // Refused because "Bills" exists — after the transaction has already read
+      // and begun to work.
+      await refusal(alice.updateLabel("Invoices", { label: "Bills", attention: "high" }));
+
+      const entry = await alice.label("Invoices");
+      assert.equal(entry.attention, "normal", "the other change rolled back too");
+      assert.ok((await alice.matches()).Invoices, "and the history is still under the old name");
+
+      const rows = await sql.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM inbox_labels WHERE user_id = $1",
+        [ALICE.id],
+      );
+      assert.equal(rows[0].n, 2);
+    });
+
+    test("a failed create leaves no half-built derived label", async () => {
+      const { alice, sql } = await fresh();
+      await detection(alice, "Invoices");
+
+      await refusal(
+        alice.createLabel({
+          label: "Derived",
+          type: "derived",
+          instruction: "x",
+          required_labels: ["Invoices", "Nothing"],
+        }),
+      );
+
+      assert.equal(await refusal(alice.label("Derived")), 'no label "Derived" (use get_labels to see them)');
+      const rows = await sql.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM inbox_label_references",
+      );
+      assert.equal(rows[0].n, 0, "no reference row survived");
+    });
+
+    // --- recording matches ------------------------------------------------
+
+    test("recording a match counts it against the email's own UTC day", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      const recorded = await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      assert.equal(recorded.email_timestamp, "2026-08-20T10:12:00Z");
+      assert.equal(recorded.day, "2026-08-20");
+      assert.deepEqual(recorded.labels, {
+        Invoices: { last_matched_at: "2026-08-20T10:12:00Z", daily_matches: { "2026-08-20": 1 } },
+      });
+    });
+
+    test("an offset is converted to UTC before the day is decided", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      // 01:30 in +02:00 is the previous day in UTC, which is the day that counts.
+      const recorded = await alice.recordMatches(["Invoices"], "2026-08-21T01:30:00+02:00");
+
+      assert.equal(recorded.day, "2026-08-20");
+      assert.equal(recorded.email_timestamp, "2026-08-20T23:30:00Z");
+    });
+
+    test("a timestamp without an offset is refused, because the day would be a guess", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.match(
+        await refusal(alice.recordMatches(["Invoices"], "2026-08-20T10:12:00")),
+        /has no UTC offset, so the day it counts towards would be a guess/,
+      );
+      assert.match(
+        await refusal(alice.recordMatches(["Invoices"], "2026-08-20")),
+        /is not an ISO 8601 timestamp/,
+      );
+      assert.match(
+        await refusal(alice.recordMatches(["Invoices"], "not a date")),
+        /is not an ISO 8601 timestamp/,
+      );
+    });
+
+    test("recording an unknown label is refused", async () => {
+      const { alice } = await fresh();
+
+      assert.match(
+        await refusal(alice.recordMatches(["Nothing"], "2026-08-20T10:12:00Z")),
+        /^no label "Nothing"/,
+      );
+      assert.match(await refusal(alice.recordMatches([], "2026-08-20T10:12:00Z")), /no labels given/);
+    });
+
+    test("the same label twice for one email is refused", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.match(
+        await refusal(alice.recordMatches(["Invoices", "invoices"], "2026-08-20T10:12:00Z")),
+        /was given twice for the same email/,
+      );
+    });
+
+    test("multiple labels for one email are all recorded, atomically", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Large amount");
+      await alice.createLabel({
+        label: "Large invoice",
+        type: "derived",
+        instruction: "x",
+        required_labels: ["Invoices", "Large amount"],
+      });
+
+      const recorded = await alice.recordMatches(
+        ["Invoices", "Large amount", "Large invoice"],
+        "2026-08-20T10:12:00Z",
+      );
+
+      assert.deepEqual(Object.keys(recorded.labels), ["Invoices", "Large amount", "Large invoice"]);
+      for (const history of Object.values(recorded.labels)) {
+        assert.deepEqual(history.daily_matches, { "2026-08-20": 1 });
+      }
+    });
+
+    test("if one label is invalid, none of the others is recorded", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Large amount");
+
+      await refusal(
+        alice.recordMatches(["Invoices", "Large amount", "Nothing"], "2026-08-20T10:12:00Z"),
+      );
+
+      assert.deepEqual(await alice.matches(), {}, "nothing was recorded at all");
+    });
+
+    test("repeated matches on one day add up, and a new day is its own count", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      await alice.recordMatches(["Invoices"], "2026-08-20T09:00:00Z");
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:00:00Z");
+      await alice.recordMatches(["Invoices"], "2026-08-21T10:00:00Z");
+
+      assert.deepEqual((await alice.matches()).Invoices, {
+        last_matched_at: "2026-08-21T10:00:00Z",
+        daily_matches: { "2026-08-20": 2, "2026-08-21": 1 },
+      });
+    });
+
+    test("the same email reported twice counts twice: there is no deduplication", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      assert.deepEqual((await alice.matches()).Invoices.daily_matches, { "2026-08-20": 2 });
+    });
+
+    test("an older email raises its own day but never moves last_matched_at backwards", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+      await alice.recordMatches(["Invoices"], "2026-06-01T08:00:00Z");
+
+      assert.deepEqual((await alice.matches()).Invoices, {
+        last_matched_at: "2026-08-20T10:12:00Z",
+        daily_matches: { "2026-06-01": 1, "2026-08-20": 1 },
+      });
+    });
+
+    test("a newer email does move it forward", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+      await alice.recordMatches(["Invoices"], "2026-08-22T07:00:00Z");
+
+      assert.equal((await alice.matches()).Invoices.last_matched_at, "2026-08-22T07:00:00Z");
+    });
+
+    test("a label with no history reads as never matched, not as missing", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      assert.deepEqual(await alice.matchesFor("Invoices"), {
+        Invoices: { last_matched_at: null, daily_matches: {} },
+      });
+      assert.deepEqual(await alice.matches(), {}, "and it is absent from the whole history");
+    });
+
+    test("asking for the history of a label that does not exist is refused", async () => {
+      const { alice } = await fresh();
+
+      assert.match(await refusal(alice.matchesFor("Nothing")), /^no label "Nothing"/);
+    });
+
+    // --- concurrency ------------------------------------------------------
+
+    test("simultaneous recordings of one label and day lose no counts", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      await Promise.all(
+        Array.from({ length: 20 }, () => alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z")),
+      );
+
+      assert.deepEqual((await alice.matches()).Invoices.daily_matches, { "2026-08-20": 20 });
+    });
+
+    test("simultaneous recordings across labels and days lose no counts", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(alice, "Large amount");
+
+      await Promise.all([
+        ...Array.from({ length: 10 }, () =>
+          alice.recordMatches(["Invoices", "Large amount"], "2026-08-20T10:00:00Z"),
+        ),
+        ...Array.from({ length: 5 }, () => alice.recordMatches(["Invoices"], "2026-08-21T10:00:00Z")),
+      ]);
+
+      const matches = await alice.matches();
+      assert.deepEqual(matches.Invoices.daily_matches, { "2026-08-20": 10, "2026-08-21": 5 });
+      assert.deepEqual(matches["Large amount"].daily_matches, { "2026-08-20": 10 });
+    });
+
+    test("simultaneous recordings settle last_matched_at on the newest", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoices");
+
+      const stamps = [
+        "2026-08-18T10:00:00Z",
+        "2026-08-22T10:00:00Z",
+        "2026-08-19T10:00:00Z",
+        "2026-08-21T10:00:00Z",
+      ];
+      await Promise.all(stamps.map((at) => alice.recordMatches(["Invoices"], at)));
+
+      assert.equal((await alice.matches()).Invoices.last_matched_at, "2026-08-22T10:00:00Z");
+    });
+
+    test("two users recording at once do not touch each other's counts", async () => {
+      const { alice, bob } = await fresh();
+      await detection(alice, "Invoices");
+      await detection(bob, "Invoices");
+
+      await Promise.all([
+        ...Array.from({ length: 8 }, () => alice.recordMatches(["Invoices"], "2026-08-20T10:00:00Z")),
+        ...Array.from({ length: 3 }, () => bob.recordMatches(["Invoices"], "2026-08-20T10:00:00Z")),
+      ]);
+
+      assert.deepEqual((await alice.matches()).Invoices.daily_matches, { "2026-08-20": 8 });
+      assert.deepEqual((await bob.matches()).Invoices.daily_matches, { "2026-08-20": 3 });
+    });
+
+    // --- privacy ----------------------------------------------------------
+
+    test("the match tables have nowhere to put anything about an email", async () => {
+      const { sql } = await fresh();
+
+      const columns = async (table: string) =>
+        (
+          await sql.query<{ column_name: string }>(
+            `SELECT column_name FROM information_schema.columns
+              WHERE table_name = $1 ORDER BY column_name`,
+            [table],
+          )
+        ).map((row) => row.column_name);
+
+      assert.deepEqual(await columns("inbox_label_daily_matches"), [
+        "count",
+        "day",
+        "label",
+        "user_id",
+      ]);
+      assert.deepEqual(await columns("inbox_label_match_state"), [
+        "label",
+        "last_matched_at",
+        "user_id",
+      ]);
+    });
+
+    test("no table in the product schema could hold an email or identify one", async () => {
+      const { sql } = await fresh();
+
+      const rows = await sql.query<{ table_name: string; column_name: string }>(
+        `SELECT table_name, column_name FROM information_schema.columns
+          WHERE table_name LIKE 'inbox_%'`,
+      );
+      const forbidden =
+        /subject|sender|from|to|recipient|cc|bcc|body|snippet|message|thread|attach|gmail|mime|header/i;
+
+      for (const row of rows) {
+        assert.equal(
+          forbidden.test(row.column_name),
+          false,
+          `${row.table_name}.${row.column_name} looks like email data`,
+        );
+      }
+      // And no per-email table at all: four tables, none of them an event log.
+      const tables = [...new Set(rows.map((row) => row.table_name))].sort();
+      assert.deepEqual(tables, [
+        "inbox_label_daily_matches",
+        "inbox_label_match_state",
+        "inbox_label_references",
+        "inbox_labels",
+      ]);
+    });
+
+    test("a day with no matches is absent rather than stored as zero", async () => {
+      const { alice, sql } = await fresh();
+      await detection(alice, "Invoices");
+      await alice.recordMatches(["Invoices"], "2026-08-20T10:12:00Z");
+
+      const rows = await sql.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM inbox_label_daily_matches WHERE count = 0",
+      );
+      assert.equal(rows[0].n, 0);
+      assert.deepEqual(Object.keys((await alice.matches()).Invoices.daily_matches), ["2026-08-20"]);
+    });
+  });
+}

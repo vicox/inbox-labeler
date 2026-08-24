@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 
-import type { SqlDriver } from "./sql.ts";
+import type { SqlDriver, Transaction } from "./driver.ts";
 
 /**
  * Postgres embedded in the process, for development and tests.
@@ -42,7 +42,7 @@ export async function embeddedDriver(dataDir?: string): Promise<SqlDriver> {
       await db.exec(sql);
     },
 
-    async transaction<T>(work: (tx: Pick<SqlDriver, "query" | "exec">) => Promise<T>): Promise<T> {
+    async transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
       return db.transaction(async (tx) => {
         return work({
           async query<Row>(sql: string, params: readonly unknown[] = []): Promise<Row[]> {

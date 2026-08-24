@@ -11,8 +11,10 @@ import {
   referenceHash,
   type OAuthStore,
 } from "./store.ts";
-import { migrate, sqlOAuthStore, type SqlDriver } from "./store/sql.ts";
-import { embeddedDriver } from "./store/pglite.ts";
+import { embeddedDriver } from "../db/pglite.ts";
+import type { SqlDriver } from "../db/driver.ts";
+import { migrate } from "../db/migrate.ts";
+import { OAUTH_SCHEMA, sqlOAuthStore } from "./store/sql.ts";
 
 /**
  * The durable store, driven the way the OAuth endpoints drive it.
@@ -57,7 +59,7 @@ if (process.env.TEST_DATABASE_URL) {
   drivers.push({
     name: "postgres",
     open: async () => {
-      const { postgresDriver } = await import("./store/postgres.ts");
+      const { postgresDriver } = await import("../db/postgres.ts");
       return postgresDriver(process.env.TEST_DATABASE_URL!);
     },
   });
@@ -81,7 +83,7 @@ for (const driver of drivers) {
     async function fresh(): Promise<{ store: OAuthStore; driver: SqlDriver }> {
       const sql = await driver.open();
       opened.push(sql);
-      await migrate(sql);
+      await migrate(sql, OAUTH_SCHEMA);
       await sql.exec(`
         TRUNCATE oauth_clients, oauth_pending_logins,
                  oauth_authorization_codes, oauth_refresh_tokens;
@@ -156,7 +158,7 @@ for (const driver of drivers) {
         if (driver.name !== "embedded postgres") return;
 
         const first = await embeddedDriver(directory);
-        await migrate(first);
+        await migrate(first, OAUTH_SCHEMA);
         const registered = await sqlOAuthStore(first).registerClient({
           redirectUris: ["https://client.example/cb"],
         });
@@ -167,7 +169,7 @@ for (const driver of drivers) {
         await first.close();
 
         const second = await embeddedDriver(directory);
-        await migrate(second);
+        await migrate(second, OAUTH_SCHEMA);
         try {
           const seen = await sqlOAuthStore(second).client(registered.clientId);
           assert.equal(seen?.clientId, registered.clientId, "the client survived");
@@ -474,20 +476,21 @@ for (const driver of drivers) {
     test("migrating twice is not an error and applies nothing the second time", async () => {
       const { driver: sql } = await fresh();
 
-      assert.equal(await migrate(sql), 0, "everything was applied when the store opened");
+      assert.equal(await migrate(sql, OAUTH_SCHEMA), 0, "everything was applied when the store opened");
     });
 
     test("concurrent migrations settle on one application of each version", async () => {
       const { driver: sql } = await fresh();
 
-      const results = await Promise.all(Array.from({ length: 5 }, () => migrate(sql)));
+      const results = await Promise.all(Array.from({ length: 5 }, () => migrate(sql, OAUTH_SCHEMA)));
 
       assert.deepEqual(results, [0, 0, 0, 0, 0], "all no-ops once the schema is current");
       const rows = await sql.query<{ version: number }>(
-        "SELECT version FROM oauth_schema_migrations ORDER BY version",
+        "SELECT version FROM schema_migrations WHERE module = $1 ORDER BY version",
+        ["oauth"],
       );
       assert.deepEqual(
-        rows.map((row) => row.version),
+        rows.map((row: { version: number }) => row.version),
         [1],
       );
     });

@@ -7,7 +7,9 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { userRef, type AuthenticatedUser } from "../identity.ts";
-import { ConfigurationError, MCP_SCOPE, deployment, signingKey } from "../oauth/config.ts";
+import { inboxStore } from "../inbox/store.ts";
+import { MCP_SCOPE, deployment, signingKey } from "../oauth/config.ts";
+import { configurationFault } from "../oauth/responses.ts";
 import { accessTokenVerifier } from "../oauth/tokens.ts";
 import { inboxLabelerMcpServer } from "./server.ts";
 
@@ -48,9 +50,15 @@ import { inboxLabelerMcpServer } from "./server.ts";
 let handler: McpHttpHandler | undefined;
 
 function mcpHandler(): McpHttpHandler {
-  handler ??= createMcpHandler((ctx) => {
+  handler ??= createMcpHandler(async (ctx) => {
     const user = authenticatedUser(ctx.authInfo);
-    return inboxLabelerMcpServer({ user, reference: userRef(user, signingKey()) });
+    // The store is opened for this user before any tool exists to call it, so a
+    // tool has no opportunity to name a different one. See lib/inbox/store.ts.
+    return inboxLabelerMcpServer({
+      user,
+      reference: userRef(user, signingKey()),
+      store: await inboxStore(user),
+    });
   });
   return handler;
 }
@@ -91,9 +99,9 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
   } catch (error) {
     // A deployment that cannot check a token must refuse every request rather
     // than let one through unchecked. It is our fault, not the client's, so it
-    // is a 500 and it does not pretend to be an authorization decision.
-    if (error instanceof ConfigurationError) return configurationFault(error);
-    throw error;
+    // is a 500 and it does not pretend to be an authorization decision — and it
+    // says nothing about what is misconfigured, which is the operator's business.
+    return configurationFault(error);
   }
 
   const rejected = originValidationResponse(request, allowedOrigins);
@@ -119,11 +127,4 @@ function authenticatedUser(authInfo: AuthInfo | undefined): AuthenticatedUser {
     throw new Error("An MCP server was built without an authenticated user.");
   }
   return { id: userId };
-}
-
-function configurationFault(error: ConfigurationError): Response {
-  return Response.json(
-    { error: "server_error", error_description: error.message },
-    { status: 500, headers: { "cache-control": "no-store" } },
-  );
 }

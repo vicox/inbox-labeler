@@ -1,6 +1,6 @@
 import { validateRegistration } from "./clients.ts";
-import { ConfigurationError, deployment } from "./config.ts";
-import { json, oauthError } from "./responses.ts";
+import { deployment } from "./config.ts";
+import { configurationFault, json, oauthError } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 
 /**
@@ -28,10 +28,7 @@ export async function handleRegistration(request: Request): Promise<Response> {
   try {
     ({ registrationEndpoint } = deployment());
   } catch (error) {
-    if (error instanceof ConfigurationError) {
-      return oauthError("server_error", error.message, 500);
-    }
-    throw error;
+    return configurationFault(error);
   }
 
   let body: unknown;

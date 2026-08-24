@@ -1,7 +1,8 @@
 import { oauthMetadataResponse } from "@modelcontextprotocol/server";
 
-import { ConfigurationError, deployment } from "./config.ts";
+import { deployment } from "./config.ts";
 import { authMetadataOptions } from "./metadata.ts";
+import { configurationFault } from "./responses.ts";
 
 /**
  * Serves whichever discovery document a request is asking for.
@@ -20,13 +21,7 @@ export function discoveryResponse(request: Request): Response {
   try {
     response = oauthMetadataResponse(request, authMetadataOptions(deployment()));
   } catch (error) {
-    if (error instanceof ConfigurationError) {
-      return Response.json(
-        { error: "server_error", error_description: error.message },
-        { status: 500, headers: { "cache-control": "no-store" } },
-      );
-    }
-    throw error;
+    return configurationFault(error);
   }
 
   return (

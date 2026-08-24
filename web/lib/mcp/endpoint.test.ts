@@ -48,7 +48,13 @@ type RpcResponse = {
   result?: {
     supportedVersions?: string[];
     capabilities?: { tools?: unknown };
-    tools?: { name: string; title?: string; description?: string; annotations?: { readOnlyHint?: boolean } }[];
+    tools?: {
+      name: string;
+      title?: string;
+      description?: string;
+      inputSchema?: unknown;
+      annotations?: { readOnlyHint?: boolean };
+    }[];
     structuredContent?: ServerInfo;
     _meta?: Record<string, { name?: string }>;
   };
@@ -123,21 +129,44 @@ test("an authenticated client can discover the server and its protocol revision"
   assert.ok(json.result?.capabilities?.tools, "tools are advertised");
 });
 
-test("get_server_info is discoverable, and is the only tool", async () => {
+test("every tool is discoverable, and only the intended ones", async () => {
   const { status, json } = await call("tools/list", { token: await accessToken() });
 
   assert.equal(status, 200);
   const tools = json.result?.tools;
   assert.ok(tools);
-  assert.deepEqual(
-    tools.map((tool) => tool.name),
-    ["get_server_info"],
-  );
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+    "create_label",
+    "delete_label",
+    "get_labels",
+    "get_matches",
+    "get_server_info",
+    "record_matches",
+    "update_label",
+  ]);
 
-  const [tool] = tools;
-  assert.equal(tool.title, "Server information");
-  assert.ok(tool.description);
-  assert.equal(tool.annotations?.readOnlyHint, true);
+  const info = tools.find((tool) => tool.name === "get_server_info");
+  assert.equal(info?.title, "Server information");
+  assert.equal(info?.annotations?.readOnlyHint, true);
+});
+
+test("no tool accepts a user id, so a client cannot name someone else", async () => {
+  const { json } = await call("tools/list", { token: await accessToken() });
+  const tools = json.result?.tools ?? [];
+
+  assert.ok(tools.length > 1);
+  for (const tool of tools) {
+    const properties = Object.keys(
+      (tool.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {},
+    );
+    for (const property of properties) {
+      assert.equal(
+        /user|owner|account|subject|tenant/i.test(property),
+        false,
+        `${tool.name}.${property} would let a client choose whose state to touch`,
+      );
+    }
+  }
 });
 
 test("a legacy client that still opens with initialize is served too", async () => {

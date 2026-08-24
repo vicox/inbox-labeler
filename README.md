@@ -553,11 +553,26 @@ inboxlabeler.com
 └── /mcp                 the MCP endpoint, OAuth-protected
 ```
 
-**This is the foundation, not the feature.** There is exactly one tool,
-`get_server_info`, and it reports that the endpoint is reachable and who is calling.
-Nothing here reads or writes `labels.json` or `matches.json` — the tools that will
-are a separate step. What is finished is the path a client has to walk before any of
-that is possible:
+A connected client can manage the labels and read the match history of whichever
+Inbox Labeler user authenticated — the same model the CLI works on, for a hosted
+account rather than a local file:
+
+| Tool | |
+| --- | --- |
+| `get_labels` | every label this user has defined |
+| `create_label` | define one, detection or derived |
+| `update_label` | change one, including renaming it |
+| `delete_label` | remove one, and its match history with it |
+| `get_matches` | how often each label has matched |
+| `record_matches` | record that an email matched these labels |
+| `get_server_info` | that the endpoint is reachable, and who is calling |
+
+**Processing a mailbox is not here.** Nothing in the endpoint reads mail, classifies
+it, or applies attention — `process` and `attention` remain the local skill's work.
+These tools are the state those runs would read and write, which is why
+`record_matches` takes the labels that matched rather than an email.
+
+Every request is attributed to one user before a tool is reached:
 
 ```text
 MCP client
@@ -571,6 +586,8 @@ Consent                          this client, named, before anything is forwarde
 Google sign-in                   which Google account you are, and nothing else
   ↓  authorization code → access token, audience-bound to /mcp
 /mcp                             a request attributed to one Inbox Labeler user
+  ↓
+that user's labels and matches   and nobody else's: see Per-user state below
 ```
 
 Inbox Labeler is its own OAuth 2.1 authorization server for its own endpoint, and
@@ -598,8 +615,8 @@ file documents each variable in full; in short:
 | `OAUTH_SIGNING_SECRET` | what access tokens are signed with. At least 32 bytes — `openssl rand -base64 48` |
 | `GOOGLE_CLIENT_ID` | a Google OAuth 2.0 "Web application" client |
 | `GOOGLE_CLIENT_SECRET` | its secret |
-| `DATABASE_URL` | Postgres, holding the OAuth flow state. **Required in production**; unset in development, which uses an embedded Postgres instead |
-| `OAUTH_STORE_DIR` | development only: where that embedded database keeps its files. Unset means in-memory |
+| `DATABASE_URL` | Postgres, holding the OAuth flow state and each user's labels and matches. **Required in production**; unset in development, which uses an embedded Postgres instead |
+| `DEV_DATABASE_DIR` | development only: where that embedded database keeps its files. Unset means in-memory |
 
 The Google client needs one authorised redirect URI, matching `MCP_PUBLIC_URL`:
 `http://localhost:3000/oauth/callback` locally. Only the `openid` scope is requested,
@@ -608,7 +625,7 @@ profile.
 
 `.env.local` is gitignored. `.env.example` holds names and never values.
 
-### Where OAuth state lives
+### Where hosted state lives
 
 Four things have to outlive a request: registered clients, logins in progress,
 authorization codes and refresh tokens. They are in **Postgres**, and the reason is
@@ -649,6 +666,54 @@ Expired rows are deleted opportunistically after writes, and `npm run db:migrate
 the only step a deploy needs. Cleanup is never load-bearing: every read filters on
 expiry, so an expired code is refused whether or not anything has swept it.
 
+### Per-user state
+
+The labels and match history a connected client works on are that user's, in the
+same Postgres but under their own tables. `AuthenticatedUser.id` — the stable,
+provider-qualified subject the OAuth boundary produces — is the ownership boundary,
+and it leads every key:
+
+```text
+inbox_labels                  (user_id, label)  policy: type, attention, instruction
+inbox_label_references        which detection labels a derived label builds on
+inbox_label_daily_matches     (user_id, label, day) → count
+inbox_label_match_state       (user_id, label) → last_matched_at
+```
+
+The store is opened *for* a user and takes no user argument afterwards, so no tool
+schema has a `user_id` field and there is nowhere for a client to name someone else.
+Two users may both have an `Invoices`; neither can see the other's.
+
+The label text is the key here as it is in the files, and the foreign keys are
+`ON UPDATE CASCADE`. That is what makes the two hard operations single statements
+rather than careful sequences:
+
+- **Renaming** a label carries its match history and every reference to it, with no
+  moment in between where the policy is under one name and its counts under another.
+- **Deleting** one takes its history with it, and is refused while another label
+  references it.
+
+`record_matches` increments with an upsert and settles `last_matched_at` with
+`GREATEST`, both inside the statement — so simultaneous recordings cannot lose a
+count, and a backfilled old email raises its own day without dragging the
+newest-seen timestamp backwards.
+
+**Only aggregates are stored.** A label, a UTC day, a count, and one timestamp. There
+is no column for a subject, sender, recipient, body, message id, thread id or
+attachment, and no table with a row per email — the store can answer "how often does
+this label fire" and is structurally unable to answer anything about a message.
+
+A new user starts empty. [`labels.example.json`](data/labels.example.json) is
+documentation, and nothing in Inbox Labeler has ever read it on its own — locally or
+here — so a first `get_labels` returns an empty list rather than labels somebody else
+chose.
+
+The local [`labels.py`](skills/inbox-labeler/labels.py) and
+[`matches.py`](skills/inbox-labeler/matches.py) remain the semantic reference and
+remain supported: the file-based workflow is unchanged, and
+`web/lib/inbox/parity.test.ts` reads the Python source to check the two have not
+drifted apart on what a label is.
+
 ### Running it
 
 ```bash
@@ -666,9 +731,11 @@ curl -s localhost:3000/.well-known/oauth-authorization-server
 ```
 
 `/mcp` and the token endpoint do need `OAUTH_SIGNING_SECRET`, because without it no
-token can be signed or checked. Until it is set they answer `500` and say so, rather
-than letting a request through unvalidated. With it set, an unauthenticated call is a
-`401` whose challenge points back at the metadata above:
+token can be signed or checked. Until it is set they answer `500` rather than letting
+a request through unvalidated — the response says only that the server is
+misconfigured, and the reason is on stderr, where `next dev` is already printing.
+With it set, an unauthenticated call is a `401` whose challenge points back at the
+metadata above:
 
 ```bash
 curl -si -X POST localhost:3000/mcp -d '{}' | grep -i www-authenticate
@@ -717,6 +784,95 @@ OAuth flow otherwise requires HTTPS, so the discovery documents refuse a plain-H
 origin anywhere else — no tunnel is needed to develop against `localhost`, and no
 tunnel makes a non-loopback HTTP origin acceptable.
 
+### Deploying it
+
+Vercel for the application, Neon for the database. There is no `vercel.json` and no
+build script of its own: Next.js is detected, `next build` is the build, and the
+route handlers become functions. The only project setting that is not a default is
+the root directory, because the application lives in `web/`.
+
+**1. Neon.** Create a project and a database, then copy the **pooled** connection
+string — the host with `-pooler` in it. Each serverless instance keeps its own small
+pool, so many instances pointed at the direct endpoint would exhaust the compute's
+connection limit; the pooler is built for that shape. Keep the `?sslmode=require`
+Neon's string already carries: that is what turns TLS on.
+
+**2. Vercel.** Import the repository and set **Root Directory** to `web`. Then add
+the environment variables from [`web/.env.example`](web/.env.example) — five of them
+are required in production:
+
+| | |
+| --- | --- |
+| `DATABASE_URL` | the pooled Neon string — **secret** |
+| `MCP_PUBLIC_URL` | `https://inboxlabeler.com` |
+| `OAUTH_SIGNING_SECRET` | `openssl rand -base64 48` — **secret** |
+| `GOOGLE_CLIENT_ID` | the Google client |
+| `GOOGLE_CLIENT_SECRET` | its secret — **secret** |
+
+`MCP_PUBLIC_URL` must be the canonical domain rather than a per-deployment hostname:
+the issuer and a token's audience are compared literally by clients, so a preview URL
+would mint tokens nothing accepts at the real one. Preview deployments are therefore
+not usable for a real OAuth flow, which is a consequence worth knowing rather than a
+problem to fix.
+
+**3. Google.** In the same Cloud project as the OAuth client, add exactly:
+
+```text
+Authorised JavaScript origin   https://inboxlabeler.com
+Authorised redirect URI        https://inboxlabeler.com/oauth/callback
+```
+
+Neither is written down in the application. The callback URL is derived from
+`MCP_PUBLIC_URL`, so pointing the deployment at a different domain needs no code
+change — only the matching entry here.
+
+**4. Migrate.** Once, against the production database, before the new code serves:
+
+```bash
+cd web
+DATABASE_URL='<the pooled Neon string>' npm run db:migrate
+```
+
+It is idempotent and safe to run twice or from two places at once, and it prints what
+it applied. Opening a store migrates too, so a forgotten run is not an outage — but
+only the command can be ordered in a deploy. A failure exits non-zero with the
+Postgres error rather than continuing.
+
+**5. Check it.** These need no credentials and no client:
+
+```bash
+curl -s https://inboxlabeler.com/.well-known/oauth-protected-resource/mcp
+curl -s https://inboxlabeler.com/.well-known/oauth-authorization-server
+curl -si -X POST https://inboxlabeler.com/mcp -d '{}' | grep -i www-authenticate
+```
+
+The first two must name `https://inboxlabeler.com` throughout, and the third must be
+a `401` whose challenge points back at the first. A `500` instead means a required
+variable is missing — the response says only that the server is misconfigured, and
+the specific variable is in the Vercel function logs, because a public endpoint
+should not tell a stranger how a deployment is put together.
+
+### Connecting ChatGPT
+
+Add a connector pointing at:
+
+```text
+https://inboxlabeler.com/mcp
+```
+
+Nothing else is configured. The client reads the `401`, follows it to the protected
+resource metadata, finds the authorization server, registers itself, and opens the
+browser for the consent page and Google sign-in. After that its tools are
+`get_labels`, `create_label`, `update_label`, `delete_label`, `get_matches`,
+`record_matches` and `get_server_info`, all acting on the account that signed in.
+
+**One known gap in the hosted deployment.** The web UI at `/` reads
+`data/labels.json` from the filesystem, which is the local workflow's file and is not
+part of a Vercel deployment — so the page renders its "No policy yet" notice there,
+while the MCP endpoint works normally against Postgres. Giving the UI the hosted,
+per-user state means signing users in on the web as well, which is its own piece of
+work and deliberately not part of this one.
+
 ### What is not finished
 
 - **Tokens cannot be revoked before they expire**, which follows from their being
@@ -753,9 +909,10 @@ web/
 ├── app/                  the web UI, and the MCP and OAuth routes
 └── lib/
     ├── identity.ts       who an authenticated request belongs to — one stable id
-    ├── mcp/              the MCP server, its one tool, and the auth boundary
+    ├── db.ts, db/        one Postgres connection, and the migrations for both schemas
+    ├── mcp/              the MCP server, its tools, and the auth boundary
+    ├── inbox/            per-user labels and match history — labels.py's semantics
     └── oauth/            the authorization server: discovery, grants, tokens
-        └── store/        the durable OAuth state: one SQL adapter, two drivers
 README.md
 ```
 
