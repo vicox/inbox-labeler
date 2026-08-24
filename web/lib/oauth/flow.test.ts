@@ -186,7 +186,11 @@ test("approving forwards to Google, carrying our own PKCE and nonce", async () =
   assert.equal(response.status, 302);
   const location = new URL(response.headers.get("location")!);
   assert.equal(location.origin + location.pathname, "https://accounts.google.com/o/oauth2/v2/auth");
-  assert.equal(location.searchParams.get("scope"), "openid", "no email, no profile");
+  assert.equal(
+    location.searchParams.get("scope"),
+    "openid email",
+    "the address the access list is checked against, and no profile",
+  );
   assert.equal(location.searchParams.get("code_challenge_method"), "S256");
   assert.ok(location.searchParams.get("nonce"));
   assert.ok(location.searchParams.get("state"));

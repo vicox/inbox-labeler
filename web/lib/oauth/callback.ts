@@ -1,8 +1,9 @@
 import { codeRedirect, errorRedirect, type Redirectable } from "./authorization-request.ts";
 import { ConfigurationError, deployment } from "./config.ts";
+import { AccessDeniedError } from "./access.ts";
 import { IdentityError } from "./google.ts";
 import { wrongOrigin } from "./origin.ts";
-import { identityProvider } from "./provider.ts";
+import { identifyUser } from "./provider.ts";
 import { configurationFault, errorPage } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 
@@ -75,7 +76,7 @@ export async function handleProviderCallback(request: Request): Promise<Response
 
   let user;
   try {
-    user = await identityProvider().identify({
+    user = await identifyUser({
       code: providerCode,
       redirectUri: config.callbackEndpoint,
       codeVerifier: login.providerCodeVerifier,
@@ -83,6 +84,12 @@ export async function handleProviderCallback(request: Request): Promise<Response
     });
   } catch (error) {
     if (error instanceof ConfigurationError) return configurationFault(error, "text");
+    // Authenticated, and still not permitted. Said plainly, because the person
+    // reading it can act on it and it gives nothing away — they know their own
+    // address, and whether it is on somebody's list is not a secret from them.
+    if (error instanceof AccessDeniedError) {
+      return toClient("access_denied", "This Google account is not permitted to use this InboxLabeler deployment.");
+    }
     if (error instanceof IdentityError) {
       // The reason stays here. It describes how an identity token failed to
       // verify, which is useful to whoever runs this and is not the client's

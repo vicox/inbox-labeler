@@ -1,8 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
-import type { AuthenticatedUser } from "../identity.ts";
 import { ConfigurationError } from "./config.ts";
-import type { IdentityProvider } from "./provider.ts";
+import type { IdentityProvider, VerifiedIdentity } from "./provider.ts";
 
 /**
  * Google as the identity provider: the only file that knows Google exists.
@@ -13,11 +12,15 @@ import type { IdentityProvider } from "./provider.ts";
  * of the OAuth layer stays provider-agnostic and a second provider is a sibling
  * file rather than a change here.
  *
- * Note what is *not* asked for. The scope is `openid` alone: enough to learn
- * that a real Google account authenticated and which one it was, and nothing
- * more. Email and profile are one word away and deliberately not requested —
- * InboxLabeler does not need them to decide whose labels these are, and data
- * that is never collected cannot leak.
+ * Note what is *not* asked for. The scope is `openid email`: enough to learn that
+ * a real Google account authenticated, which one it was, and the address needed
+ * to answer whether it is on this deployment's access list. `profile` is one word
+ * away and deliberately not requested — a name and a picture would tell
+ * InboxLabeler nothing it needs, and data that is never collected cannot leak.
+ *
+ * The address is used and dropped. It leaves this module only as far as the seam
+ * in `provider.ts`, which asks the access list about it and returns the identity
+ * alone; nothing stores it, and no token or MCP result carries it.
  */
 
 /**
@@ -62,7 +65,7 @@ export function google(): IdentityProvider {
         client_id: credentials().clientId,
         redirect_uri: redirectUri,
         response_type: "code",
-        scope: "openid",
+        scope: "openid email",
         state,
         nonce,
         code_challenge: codeChallenge,
@@ -117,7 +120,11 @@ export function google(): IdentityProvider {
  * for some other session could be replayed into this one, and it would verify
  * perfectly.
  */
-async function identityFrom(idToken: string, audience: string, nonce: string): Promise<AuthenticatedUser> {
+async function identityFrom(
+  idToken: string,
+  audience: string,
+  nonce: string,
+): Promise<VerifiedIdentity> {
   let payload;
   try {
     ({ payload } = await jwtVerify(idToken, keys, { issuer: ISSUERS, audience }));
@@ -125,6 +132,21 @@ async function identityFrom(idToken: string, audience: string, nonce: string): P
     throw new IdentityError("Google's identity token did not verify.");
   }
 
+  return identityFromClaims(payload, nonce);
+}
+
+/**
+ * The claims a verified identity token has to carry, and what they mean.
+ *
+ * Separate from the verification above so that what is required of the *claims*
+ * can be stated — and tested — without forging a signature Google alone can make.
+ * Reaching this function means the token's signature, issuer, audience and expiry
+ * have already been checked; what is left is whether it says enough to act on.
+ */
+export function identityFromClaims(
+  payload: Record<string, unknown>,
+  nonce: string,
+): VerifiedIdentity {
   if (payload.nonce !== nonce) {
     throw new IdentityError("Google's identity token belongs to a different login.");
   }
@@ -132,11 +154,25 @@ async function identityFrom(idToken: string, audience: string, nonce: string): P
     throw new IdentityError("Google's identity token carried no subject.");
   }
 
+  // An address is only evidence of anything if Google says it verified it.
+  // `email_verified` false means the account holder typed an address and never
+  // proved it, so an allowlist checked against it would be an allowlist anyone
+  // could put themselves on.
+  if (typeof payload.email !== "string" || !payload.email.trim()) {
+    throw new IdentityError("Google's identity token carried no email address.");
+  }
+  if (payload.email_verified !== true) {
+    throw new IdentityError("Google has not verified this account's email address.");
+  }
+
   // `sub` is Google's stable, opaque identifier for the account: it survives a
   // change of email address, which is exactly the property a storage key needs
   // and exactly the one an address lacks. Qualified with the provider name so
   // it can never collide with a subject minted elsewhere.
-  return { id: `google:${payload.sub}` };
+  return {
+    user: { id: `google:${payload.sub}` },
+    email: payload.email.trim().toLowerCase(),
+  };
 }
 
 /**

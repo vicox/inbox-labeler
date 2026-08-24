@@ -616,14 +616,74 @@ file documents each variable in full; in short:
 | `GOOGLE_CLIENT_ID` | a Google OAuth 2.0 "Web application" client |
 | `GOOGLE_CLIENT_SECRET` | its secret |
 | `DATABASE_URL` | Postgres, holding the OAuth flow state and each user's labels and matches. **Required in production**; unset in development, which uses an embedded Postgres instead |
+| `ALLOWED_EMAILS` | optional: comma-separated addresses allowed to sign in. Unset means any verified Google account may — see [Who may sign in](#who-may-sign-in) |
 | `DEV_DATABASE_DIR` | development only: where that embedded database keeps its files. Unset means in-memory |
 
 The Google client needs one authorised redirect URI, matching `MCP_PUBLIC_URL`:
-`http://localhost:3000/oauth/callback` locally. Only the `openid` scope is requested,
-so Inbox Labeler learns the account's stable subject and neither its address nor its
-profile.
+`http://localhost:3000/oauth/callback` locally. The scopes are `openid email` — the
+address is read to check the access list below and then dropped, and `profile` is
+not requested, so Inbox Labeler never learns a name or a picture.
 
 `.env.local` is gitignored. `.env.example` holds names and never values.
+
+### Who may sign in
+
+Signing in requires a Google account, and Google will vouch for anybody's.
+`ALLOWED_EMAILS` is the whole of Inbox Labeler's access control, and how a private
+beta is closed. It is **optional**, and has exactly two behaviours:
+
+| `ALLOWED_EMAILS` | Who may authenticate |
+| --- | --- |
+| configured | only the listed addresses |
+| unset or empty | any Google account with a verified email address |
+
+To close it, list the addresses, comma-separated:
+
+```bash
+ALLOWED_EMAILS=georg@example.com,tester@example.com
+```
+
+Matching ignores case and surrounding space on both sides, so
+`Georg@Example.COM ` and `georg@example.com` are the same person. An address must
+also be one Google has marked verified — an unverified one is an address the
+account holder typed rather than proved, so a list checked against it would be a
+list anyone could join.
+
+The check sits at the identity boundary, right after Google establishes who signed
+in and before Inbox Labeler issues anything. A rejected account never receives an
+authorization code, let alone a token — it authenticates with Google
+successfully and comes away with nothing.
+
+```text
+Google callback  →  verify identity  →  check the list  →  AuthenticatedUser
+```
+
+**The address decides access, not identity.** The user is still the Google
+subject, which survives them changing their address — so a beta tester who renames
+their account keeps their labels. Nothing stores the address, and no token,
+database row or MCP result carries it.
+
+#### Why an empty list is not an error
+
+Leaving `ALLOWED_EMAILS` unset accepts every Google account, and that is a
+decision rather than a gap. It is what makes the variable optional, and it buys
+three things worth having in a V1:
+
+- **A local checkout works after `npm install`**, with no list to invent or keep
+  up to date.
+- **Closing the beta is one variable**, set in one place, with nothing else to
+  change or deploy.
+- **There is one rule, not one per environment.** Requiring the list only in
+  production would mean the behaviour you tested locally is not the behaviour that
+  runs — and an access rule that differs by environment is the kind that is
+  discovered rather than reviewed.
+
+Reading an empty string as "nobody" was the other option, and it is worse: an
+unset variable is somebody who has not chosen yet, not somebody who has chosen to
+lock everyone — including themselves — out of their own deployment.
+
+So a hosted deployment with no list is open to every Google account. Set the
+variable when the answer is "these people".
 
 ### Where hosted state lives
 
@@ -808,6 +868,10 @@ are required in production:
 | `OAUTH_SIGNING_SECRET` | `openssl rand -base64 48` — **secret** |
 | `GOOGLE_CLIENT_ID` | the Google client |
 | `GOOGLE_CLIENT_SECRET` | its secret — **secret** |
+
+`ALLOWED_EMAILS` is optional and separate from those: with it, only the listed
+addresses may sign in; without it, any Google account with a verified email may.
+Both are intended — see [Who may sign in](#who-may-sign-in).
 
 `MCP_PUBLIC_URL` must be the canonical domain rather than a per-deployment hostname:
 the issuer and a token's audience are compared literally by clients, so a preview URL

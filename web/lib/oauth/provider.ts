@@ -1,4 +1,5 @@
 import type { AuthenticatedUser } from "../identity.ts";
+import { requireAllowed } from "./access.ts";
 import { google } from "./google.ts";
 
 /**
@@ -19,6 +20,24 @@ import { google } from "./google.ts";
  * implementation. Adding a second provider is a second file and a branch in
  * `identityProvider`, and nothing else moves.
  */
+/**
+ * What a provider establishes about the person who signed in.
+ *
+ * Two things, and only one of them travels further. `user` is the identity —
+ * stable, opaque, the thing that will decide whose labels these are. `email` is
+ * an attribute used to answer one question, at the seam below, and then dropped:
+ * it is never stored, never in a token, and never visible to an MCP client.
+ *
+ * They are separate fields rather than one because they are not the same
+ * property. An address is what a person can be told to put on an access list; a
+ * subject is what survives them changing that address.
+ */
+export type VerifiedIdentity = {
+  user: AuthenticatedUser;
+  /** Verified and normalised. Used to decide access, then discarded. */
+  email: string;
+};
+
 export type IdentityProvider = {
   /**
    * Names the provider, and prefixes the ids it mints. Part of the identity:
@@ -53,7 +72,7 @@ export type IdentityProvider = {
     redirectUri: string;
     codeVerifier: string;
     nonce: string;
-  }): Promise<AuthenticatedUser>;
+  }): Promise<VerifiedIdentity>;
 };
 
 /**
@@ -66,4 +85,36 @@ export type IdentityProvider = {
  */
 export function identityProvider(): IdentityProvider {
   return google();
+}
+
+/**
+ * Establishes who signed in, and whether they are allowed to.
+ *
+ * The one way in. A provider verifies the identity; this applies the deployment's
+ * access list to it and returns what the rest of the flow is allowed to know —
+ * the user, and nothing else. Putting the check here rather than inside the
+ * provider means a second provider inherits it instead of having to remember it,
+ * and putting it here rather than in the callback means the address never crosses
+ * out of this layer at all.
+ *
+ * It runs before InboxLabeler has issued anything. A rejected address never
+ * reaches an authorization code, let alone a token.
+ */
+export async function identifyUser(
+  response: {
+    code: string;
+    redirectUri: string;
+    codeVerifier: string;
+    nonce: string;
+  },
+  // The configured provider by default. Named so that a test can hand this seam
+  // a provider it controls and check what happens to the identity it returns,
+  // which is otherwise only reachable by signing a token as Google.
+  provider: IdentityProvider = identityProvider(),
+): Promise<AuthenticatedUser> {
+  const { user, email } = await provider.identify(response);
+
+  requireAllowed(email);
+
+  return user;
 }
