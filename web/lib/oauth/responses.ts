@@ -46,11 +46,15 @@ export function oauthError(error: string, description: string, status: number): 
  * text body cannot become a scripting bug if a value from the request is
  * repeated in it.
  */
-export function errorPage(error: string, description: string, status: number): Response {
-  return new Response(`${error}\n\n${description}\n`, {
-    status,
-    headers: { "content-type": "text/plain; charset=utf-8", ...NO_STORE },
-  });
+export function errorPage(
+  error: string,
+  description: string,
+  status: number,
+  setCookie?: string,
+): Response {
+  const headers = new Headers({ "content-type": "text/plain; charset=utf-8", ...NO_STORE });
+  if (setCookie) headers.append("set-cookie", setCookie);
+  return new Response(`${error}\n\n${description}\n`, { status, headers });
 }
 
 /**

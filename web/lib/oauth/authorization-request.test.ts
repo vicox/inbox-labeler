@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { codeRedirect, errorRedirect, validateAuthorization } from "./authorization-request.ts";
 import type { Deployment } from "./config.ts";
+import { sameResource } from "./resource.ts";
 import type { RegisteredClient } from "./store.ts";
 
 const DEPLOYMENT: Deployment = {
@@ -125,9 +126,23 @@ test("a token cannot be requested for another resource", () => {
   assert.equal(decide(request({ resource: "https://inboxlabeler.example/other" })), "redirectable:invalid_target");
 });
 
-test("the resource may be spelled with a trailing slash or a recased host", () => {
-  assert.equal(decide(request({ resource: "https://inboxlabeler.example/mcp/" })), "ok");
+test("the scheme and host are compared case-insensitively, as URIs are", () => {
   assert.equal(decide(request({ resource: "HTTPS://INBOXLABELER.EXAMPLE/mcp" })), "ok");
+  assert.equal(decide(request({ resource: "https://InboxLabeler.Example/mcp" })), "ok");
+});
+
+test("the path is compared exactly, because it names which server on the host", () => {
+  // A trailing slash and a different case are both different paths. Two MCP
+  // servers can share a host, so normalising the path away would let a grant for
+  // one be honoured for the other.
+  assert.equal(decide(request({ resource: "https://inboxlabeler.example/mcp/" })), "redirectable:invalid_target");
+  assert.equal(decide(request({ resource: "https://inboxlabeler.example/MCP" })), "redirectable:invalid_target");
+});
+
+test("a trailing slash on an empty path is not a difference", () => {
+  // The one liberty the specification does grant: https://host and https://host/
+  // are the same resource.
+  assert.ok(sameResource("https://inboxlabeler.example", "https://inboxlabeler.example/"));
 });
 
 test("a resource with a fragment is not canonical and is refused", () => {

@@ -1,6 +1,7 @@
 import { codeRedirect, errorRedirect, type Redirectable } from "./authorization-request.ts";
 import { ConfigurationError, deployment } from "./config.ts";
 import { IdentityError } from "./google.ts";
+import { wrongOrigin } from "./origin.ts";
 import { identityProvider } from "./provider.ts";
 import { configurationFault, errorPage } from "./responses.ts";
 import { oauthStore } from "./store.ts";
@@ -26,13 +27,16 @@ export async function handleProviderCallback(request: Request): Promise<Response
     return configurationFault(error, "text");
   }
 
+  const misdirected = wrongOrigin(request, config, "text");
+  if (misdirected) return misdirected;
+
   const params = new URL(request.url).searchParams;
   const reference = params.get("state");
   if (!reference) {
     return errorPage("invalid_request", "The sign-in response carried no state.", 400);
   }
 
-  const login = await (await oauthStore()).takeLogin(reference);
+  const login = await (await oauthStore()).takeLogin(reference, null);
   if (!login) {
     return errorPage(
       "invalid_request",

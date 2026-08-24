@@ -17,6 +17,28 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 export type Pkce = { verifier: string; challenge: string };
 
 /**
+ * The alphabet RFC 7636 allows in a verifier: unreserved URI characters.
+ *
+ * Written out because the point of checking is to reject what is outside it. A
+ * value carrying anything else is not a verifier a conforming client produced, so
+ * there is nothing to be gained by trying to make sense of it.
+ */
+const VERIFIER_CHARACTERS = /^[A-Za-z0-9\-._~]+$/u;
+
+/** And the alphabet a base64url challenge is written in — no padding. */
+const CHALLENGE_CHARACTERS = /^[A-Za-z0-9\-_]+$/u;
+
+/** RFC 7636 section 4.1: a verifier is between 43 and 128 characters. */
+const VERIFIER_MIN = 43;
+const VERIFIER_MAX = 128;
+
+/**
+ * An S256 challenge is the base64url of a SHA-256 digest, so its length is not a
+ * range: 32 bytes is always 43 unpadded base64url characters.
+ */
+const S256_CHALLENGE_LENGTH = 43;
+
+/**
  * A fresh verifier, and its challenge.
  *
  * 32 random bytes, base64url — 43 characters, the shortest RFC 7636 allows,
@@ -31,6 +53,53 @@ export function createPkce(): Pkce {
 /** S256: the base64url SHA-256 of the verifier's ASCII bytes. */
 export function challengeFor(verifier: string): string {
   return createHash("sha256").update(verifier, "ascii").digest("base64url");
+}
+
+/**
+ * Checks a code challenge, returning it, or explains what is wrong with it.
+ *
+ * Only S256 exists here, and an S256 challenge has exactly one shape: 43
+ * characters of base64url. Anything else was not produced by hashing a verifier,
+ * so accepting it would mean storing a challenge no verifier can ever satisfy —
+ * a flow that fails at the token endpoint instead of at the request that was
+ * actually malformed.
+ */
+export function checkCodeChallenge(value: unknown): { challenge: string } | { error: string } {
+  const challenge = typeof value === "string" ? value : "";
+
+  if (challenge.length !== S256_CHALLENGE_LENGTH) {
+    return {
+      error:
+        `code_challenge must be ${S256_CHALLENGE_LENGTH} characters: the base64url of a SHA-256 digest.`,
+    };
+  }
+  if (!CHALLENGE_CHARACTERS.test(challenge)) {
+    return { error: "code_challenge must be base64url, without padding." };
+  }
+  return { challenge };
+}
+
+/**
+ * Checks a code verifier against RFC 7636's own limits.
+ *
+ * Length and alphabet, before the value is hashed. A verifier outside them cannot
+ * be the one a conforming client generated, and checking here means a malformed
+ * request is refused as malformed rather than as a mismatched proof — which is
+ * the difference between a client that can fix itself and one that cannot see
+ * why it is failing.
+ */
+export function checkCodeVerifier(value: unknown): { verifier: string } | { error: string } {
+  const verifier = typeof value === "string" ? value : "";
+
+  if (verifier.length < VERIFIER_MIN || verifier.length > VERIFIER_MAX) {
+    return {
+      error: `code_verifier must be between ${VERIFIER_MIN} and ${VERIFIER_MAX} characters.`,
+    };
+  }
+  if (!VERIFIER_CHARACTERS.test(verifier)) {
+    return { error: "code_verifier may only contain A-Z a-z 0-9 and the characters - . _ ~" };
+  }
+  return { verifier };
 }
 
 /**

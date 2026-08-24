@@ -12,7 +12,12 @@ import type { SqlDriver } from "./db/driver.ts";
  * only shows up once several instances are running.
  *
  * Cached as a promise rather than a value so that concurrent first requests
- * share one pool and one migration run instead of racing to build their own.
+ * share one pool instead of racing to build their own — but only once it has
+ * resolved. A rejected promise is forgotten, because caching one would turn a
+ * single transient failure into a permanently broken instance: a database that
+ * was briefly waking up, or a pool that timed out on the very first request,
+ * would poison every request afterwards until the instance happened to be
+ * recycled.
  *
  * `ConfigurationError` comes from the OAuth configuration module because that is
  * where this deployment's configuration lives; the error means the same thing
@@ -22,7 +27,10 @@ import type { SqlDriver } from "./db/driver.ts";
 let opening: Promise<SqlDriver> | undefined;
 
 export function database(): Promise<SqlDriver> {
-  opening ??= open();
+  opening ??= open().catch((error: unknown) => {
+    opening = undefined;
+    throw error;
+  });
   return opening;
 }
 

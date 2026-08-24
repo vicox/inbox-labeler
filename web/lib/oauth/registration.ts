@@ -1,5 +1,12 @@
-import { validateRegistration } from "./clients.ts";
+import { MAX_REGISTRATION_BYTES, validateRegistration } from "./clients.ts";
 import { deployment } from "./config.ts";
+import { wrongOrigin } from "./origin.ts";
+import {
+  REGISTRATIONS_PER_WINDOW,
+  REGISTRATION_WINDOW_MS,
+  callerAddress,
+  tooManyRequests,
+} from "./rate-limit.ts";
 import { configurationFault, json, oauthError } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 
@@ -24,16 +31,44 @@ import { oauthStore } from "./store.ts";
  * offering only the newer one would leave this endpoint unreachable in practice.
  */
 export async function handleRegistration(request: Request): Promise<Response> {
-  let registrationEndpoint: string;
+  let config;
   try {
-    ({ registrationEndpoint } = deployment());
+    config = deployment();
   } catch (error) {
     return configurationFault(error);
   }
 
+  const misdirected = wrongOrigin(request, config);
+  if (misdirected) return misdirected;
+
+  const store = await oauthStore();
+  const allowed = await store.consumeRateLimit(
+    `register:${callerAddress(request)}`,
+    REGISTRATIONS_PER_WINDOW,
+    REGISTRATION_WINDOW_MS,
+  );
+  if (!allowed) return tooManyRequests("client registrations");
+
+  // The size cap is applied to the bytes, before anything is parsed: the body is
+  // the one part of the request whose cost is paid before its shape is known.
+  // Content-Length is checked first because it is free, and the read is checked
+  // again because a chunked request may not have declared one.
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_REGISTRATION_BYTES) {
+    return oversized();
+  }
+
+  let text: string;
+  try {
+    text = await request.text();
+  } catch {
+    return oauthError("invalid_client_metadata", "The request body could not be read.", 400);
+  }
+  if (Buffer.byteLength(text, "utf8") > MAX_REGISTRATION_BYTES) return oversized();
+
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(text);
   } catch {
     return oauthError("invalid_client_metadata", "The request body must be JSON.", 400);
   }
@@ -61,8 +96,16 @@ export async function handleRegistration(request: Request): Promise<Response> {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
-      registration_client_uri: registrationEndpoint,
+      registration_client_uri: config.registrationEndpoint,
     },
     201,
+  );
+}
+
+function oversized(): Response {
+  return oauthError(
+    "invalid_client_metadata",
+    `A client registration may be at most ${MAX_REGISTRATION_BYTES} bytes.`,
+    413,
   );
 }

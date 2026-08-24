@@ -78,14 +78,47 @@ export type AuthorizationCode = {
   expiresAt: number;
 };
 
-/** An issued refresh token, replaced by a new one each time it is used. */
-export type RefreshToken = {
+/**
+ * What a refresh token stands for: the authorization, not the credential.
+ *
+ * These are the properties of the grant, so they live on the family rather than
+ * on whichever token currently represents it. Rotating produces a new credential
+ * for the same grant, and nothing here changes.
+ */
+export type RefreshGrant = {
   clientId: string;
   scope: string;
   resource: string;
   userId: string;
-  expiresAt: number;
 };
+
+/**
+ * The outcome of presenting a refresh token.
+ *
+ * Three outcomes and not two, because "this token has already been rotated" is
+ * different from "there is no such token" in what it means, even though a client
+ * is told the same thing either way. A spent token in a live family is evidence
+ * that either the client or somebody holding a stolen copy is replaying it, and
+ * the only safe response is to end the family — the legitimate holder can start
+ * again, and the thief has nothing.
+ */
+export type RefreshRotation =
+  | { outcome: "rotated"; grant: RefreshGrant; refreshToken: string }
+  | { outcome: "unknown" }
+  | { outcome: "replayed"; grant: RefreshGrant }
+  | { outcome: "refused"; grant: RefreshGrant; refusal: RefreshRefusal };
+
+/**
+ * Why a grant was not acceptable for this request.
+ *
+ * The store does not decide this — it is handed a check and reports what the
+ * check said. What the store guarantees is *when* the check runs: before the
+ * token is spent, inside the transaction that would spend it. A request naming
+ * the wrong client, resource or scope therefore leaves the token exactly as it
+ * was, which is the difference between refusing a request and consuming
+ * somebody's credential on the way to refusing it.
+ */
+export type RefreshRefusal = { error: string; description: string };
 
 /**
  * How long each kind of record lives.
@@ -101,6 +134,16 @@ export type RefreshToken = {
 export const AUTHORIZATION_CODE_TTL_MS = 60_000;
 export const PENDING_LOGIN_TTL_MS = 10 * 60_000;
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * How long a rate-limit bucket is kept after anyone last touched it.
+ *
+ * A bucket has a window rather than a lifetime, so it is aged out instead of
+ * expiring: a day is comfortably longer than any window this server uses, and
+ * keeping them for ever would let the table grow with every address that has
+ * ever called an open endpoint.
+ */
+export const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60_000;
 
 /**
  * The store, as the protocol code sees it.
@@ -121,18 +164,65 @@ export type OAuthStore = {
   registerClient(client: Omit<RegisteredClient, "clientId" | "registeredAt">): Promise<RegisteredClient>;
   client(clientId: string): Promise<RegisteredClient | undefined>;
 
-  /** Parks a request and returns the single-use reference that resumes it. */
-  parkLogin(login: Omit<PendingLogin, "expiresAt">): Promise<string>;
-  /** Resumes a parked request, spending its reference. */
-  takeLogin(reference: string, now?: number): Promise<PendingLogin | undefined>;
+  /**
+   * Parks a request and returns the single-use reference that resumes it.
+   *
+   * `consentSession` binds the record to one browser: the value is given to that
+   * browser as a cookie, and only a request carrying it back can resume this
+   * record. Omitted for the second park, where the reference travels as the
+   * identity provider's `state` and there is no form to protect.
+   */
+  parkLogin(login: Omit<PendingLogin, "expiresAt">, consentSession?: string): Promise<string>;
+  /**
+   * Resumes a parked request, spending its reference.
+   *
+   * `consentSession` is what the caller's browser presented, or null when the
+   * record is not expected to carry a binding. It is matched as part of the same
+   * statement that spends the reference, so a mismatch finds nothing — the check
+   * cannot be forgotten at a call site, because there is no call without it.
+   */
+  takeLogin(
+    reference: string,
+    consentSession: string | null,
+    now?: number,
+  ): Promise<PendingLogin | undefined>;
 
   issueCode(code: Omit<AuthorizationCode, "expiresAt">): Promise<string>;
   /** Redeems a code, atomically and exactly once. */
   redeemCode(code: string, now?: number): Promise<AuthorizationCode | undefined>;
 
-  issueRefreshToken(token: Omit<RefreshToken, "expiresAt">): Promise<string>;
-  /** Rotates a refresh token, atomically and exactly once. */
-  redeemRefreshToken(token: string, now?: number): Promise<RefreshToken | undefined>;
+  /** Starts a new refresh-token family for a freshly authorized grant. */
+  issueRefreshToken(grant: RefreshGrant): Promise<string>;
+  /**
+   * Spends a refresh token and issues its successor, atomically and exactly once.
+   *
+   * One transaction, in one order: the token and its family are found and locked,
+   * a replay is detected, `acceptable` is consulted, and only then is the token
+   * marked spent and its successor created. Nothing before the last step mutates
+   * anything, so a request that fails `acceptable` — the wrong client, the wrong
+   * resource, too wide a scope — leaves the credential usable.
+   *
+   * `acceptable` returns nothing to proceed, or a refusal to stop. It runs while
+   * the row is locked, so no concurrent rotation can slip between the check and
+   * the spend.
+   */
+  rotateRefreshToken(
+    token: string,
+    acceptable: (grant: RefreshGrant) => RefreshRefusal | undefined,
+    now?: number,
+  ): Promise<RefreshRotation>;
+
+  /**
+   * Counts one request against a bucket, and says whether it may proceed.
+   *
+   * A fixed window, incremented inside the statement so that concurrent requests
+   * cannot both see the same count. `false` means the caller is over the limit.
+   *
+   * Rate limiting is not a correctness mechanism here and must not become one:
+   * it exists so that an open endpoint has a ceiling, and every caller treats a
+   * refusal as "later", never as "invalid".
+   */
+  consumeRateLimit(bucket: string, limit: number, windowMs: number, now?: number): Promise<boolean>;
 
   /**
    * Deletes expired records, returning how many went.
@@ -178,14 +268,18 @@ export function referenceHash(value: string): Buffer {
 /**
  * The store this deployment uses, opened once.
  *
- * Cached as a promise rather than a value so that concurrent first requests
- * share one connection pool and one migration run instead of racing to build
- * their own.
+ * Cached as a promise rather than a value so that concurrent first requests share
+ * one connection and one migration run instead of racing to build their own —
+ * and forgotten if it fails, so a transient failure does not leave the instance
+ * permanently unable to open a store.
  */
 let opening: Promise<OAuthStore> | undefined;
 
 export function oauthStore(): Promise<OAuthStore> {
-  opening ??= open();
+  opening ??= open().catch((error: unknown) => {
+    opening = undefined;
+    throw error;
+  });
   return opening;
 }
 

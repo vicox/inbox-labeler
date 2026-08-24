@@ -115,6 +115,9 @@ export async function inboxStore(user: AuthenticatedUser): Promise<ProductStore>
  * Running it at all is belt and braces: a deploy should run `npm run db:migrate`
  * in its own step, and an instance that comes up against an un-migrated database
  * should still work rather than serve errors until someone notices.
+ *
+ * A failure is forgotten rather than cached, so an instance that could not reach
+ * the database on its first request is not broken for the rest of its life.
  */
 let preparing: Promise<SqlDriver> | undefined;
 
@@ -124,6 +127,9 @@ function prepared(): Promise<SqlDriver> {
     const { INBOX_SCHEMA } = await import("./store/schema.ts");
     await migrate(driver, INBOX_SCHEMA);
     return driver;
-  })();
+  })().catch((error: unknown) => {
+    preparing = undefined;
+    throw error;
+  });
   return preparing;
 }

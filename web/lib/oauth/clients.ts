@@ -28,13 +28,26 @@ export type ClientRegistrationError = {
 const SUPPORTED_GRANT_TYPES = ["authorization_code", "refresh_token"];
 
 /**
- * A client may register at most this many redirect URIs.
+ * What one unauthenticated request may put in the store.
  *
- * Not a security boundary — every one of them is still checked literally — but
- * a bound on what one unauthenticated request can put in the store. Well past
- * what a real client needs.
+ * None of these is a security boundary — a redirect URI is still matched
+ * literally however long it is — but registration is open by design, so
+ * everything it accepts needs a ceiling. Each limit is well past what a real
+ * client needs and well below what would make the endpoint worth abusing.
  */
 const MAX_REDIRECT_URIS = 10;
+const MAX_REDIRECT_URI_LENGTH = 2_048;
+const MAX_CLIENT_NAME_LENGTH = 200;
+
+/**
+ * The largest registration document accepted, in bytes.
+ *
+ * A registration is a handful of short strings; four kilobytes is a generous
+ * reading of that. The cap matters because the body is read into memory before
+ * anything about it is known, so it is the one limit that has to be applied to
+ * the bytes rather than to the parsed value.
+ */
+export const MAX_REGISTRATION_BYTES = 4 * 1024;
 
 /**
  * Validates registration metadata, returning either the redirect URIs to store
@@ -65,6 +78,12 @@ export function validateRegistration(
   for (const uri of uris) {
     if (typeof uri !== "string") {
       return { error: "invalid_redirect_uri", error_description: "Every redirect URI must be a string." };
+    }
+    if (uri.length > MAX_REDIRECT_URI_LENGTH) {
+      return {
+        error: "invalid_redirect_uri",
+        error_description: `A redirect URI may be at most ${MAX_REDIRECT_URI_LENGTH} characters.`,
+      };
     }
     const rejection = rejectRedirectUri(uri);
     if (rejection) return { error: "invalid_redirect_uri", error_description: rejection };
@@ -108,10 +127,18 @@ export function validateRegistration(
     }
   }
 
-  return {
-    redirectUris,
-    clientName: typeof request.client_name === "string" ? request.client_name : undefined,
-  };
+  // A name is shown to the user on the consent page, so its length is a
+  // presentation concern as much as a storage one: a client cannot push the
+  // redirect host off the page by calling itself something enormous.
+  const name = typeof request.client_name === "string" ? request.client_name : undefined;
+  if (name !== undefined && name.length > MAX_CLIENT_NAME_LENGTH) {
+    return {
+      error: "invalid_client_metadata",
+      error_description: `client_name may be at most ${MAX_CLIENT_NAME_LENGTH} characters.`,
+    };
+  }
+
+  return { redirectUris, clientName: name };
 }
 
 /**

@@ -1,5 +1,7 @@
 import { isRegisteredRedirectUri } from "./clients.ts";
 import { MCP_SCOPE, type Deployment } from "./config.ts";
+import { checkCodeChallenge } from "./pkce.ts";
+import { sameResource } from "./resource.ts";
 import type { RegisteredClient } from "./store.ts";
 
 /**
@@ -105,8 +107,8 @@ export function validateAuthorization(
     );
   }
 
-  const codeChallenge = params.get("code_challenge");
-  if (!codeChallenge) {
+  const presented = params.get("code_challenge");
+  if (!presented) {
     return reject("invalid_request", "code_challenge is required: this server requires PKCE.");
   }
   if (params.get("code_challenge_method") !== "S256") {
@@ -118,6 +120,12 @@ export function validateAuthorization(
       "code_challenge_method must be \"S256\".",
     );
   }
+  // Checked here rather than at the token endpoint, because a challenge that no
+  // verifier can satisfy should fail the request that was malformed and not the
+  // exchange that comes minutes later.
+  const checked = checkCodeChallenge(presented);
+  if ("error" in checked) return reject("invalid_request", checked.error);
+  const codeChallenge = checked.challenge;
 
   const scope = params.get("scope");
   if (scope !== null) {
@@ -149,31 +157,6 @@ export function validateAuthorization(
     resource: deployment.resource,
     clientState,
   };
-}
-
-/**
- * Whether a requested resource names this MCP endpoint.
- *
- * RFC 8707 canonical URIs are compared as strings, with two liberties the
- * specification itself grants: scheme and host are case-insensitive, and a
- * trailing slash is not significant. Nothing else is normalised — the path is
- * compared exactly, because that is what distinguishes one MCP server on a host
- * from another.
- */
-function sameResource(requested: string, resource: string): boolean {
-  const canonical = (value: string) => {
-    try {
-      const url = new URL(value);
-      // A fragment makes a URI non-canonical under RFC 8707; refusing rather
-      // than stripping keeps a malformed request visible.
-      if (url.hash) return null;
-      return `${url.protocol}//${url.host}${url.pathname.replace(/\/$/, "")}${url.search}`.toLowerCase();
-    } catch {
-      return null;
-    }
-  };
-  const left = canonical(requested);
-  return left !== null && left === canonical(resource);
 }
 
 function unredirectable(error: string, description: string): Unredirectable {

@@ -212,3 +212,104 @@ test("the authorization server metadata promises only what is implemented", asyn
   assert.equal(metadata.client_id_metadata_document_supported, undefined, "CIMD is not implemented");
   assert.ok(metadata.registration_endpoint, "dynamic registration is");
 });
+
+// --- only at the canonical origin -----------------------------------------
+//
+// A hosting platform gives every deployment its own hostname, and those
+// deployments generally share the project's environment. Without this, the
+// authorization server exists at several addresses at once, all signing with the
+// same key, while the metadata names one — so a preview host could run a flow and
+// mint a token nothing advertised.
+
+const { handleRegistration } = await import("./oauth/registration.ts");
+const { handleAuthorize } = await import("./oauth/authorization.ts");
+const { handleToken } = await import("./oauth/exchange.ts");
+const { handleMcpRequest } = await import("./mcp/endpoint.ts");
+
+/** A request to `path` arriving at `host`, whatever the configured origin is. */
+function arriving(host: string, path: string, method = "POST"): Request {
+  return new Request(`https://${host}${path}`, {
+    method,
+    headers: { host, "content-type": "application/json" },
+    body: method === "POST" ? "{}" : undefined,
+  });
+}
+
+test("a request to a non-canonical hostname is refused, whatever the endpoint", async () => {
+  const preview = "inboxlabeler-git-feature-acme.vercel.app";
+
+  const answers = await inProduction(
+    {
+      MCP_PUBLIC_URL: PRODUCTION_ORIGIN,
+      OAUTH_SIGNING_SECRET: "x".repeat(48),
+      DATABASE_URL: undefined,
+    },
+    async () => [
+      ["register", await handleRegistration(arriving(preview, "/oauth/register"))],
+      ["authorize", await handleAuthorize(arriving(preview, "/oauth/authorize", "GET"))],
+      ["token", await handleToken(arriving(preview, "/oauth/token"))],
+      ["mcp", await handleMcpRequest(arriving(preview, "/mcp"))],
+    ] as const,
+  );
+
+  for (const [name, response] of answers) {
+    // 404: at an address this server does not serve, there is nothing here. Note
+    // DATABASE_URL is deliberately unset — the refusal happens before anything
+    // would have needed it, which is what "before anything else looks at it" means.
+    assert.equal(response.status, 404, name);
+  }
+});
+
+test("the guard passes a request that did arrive at the canonical hostname", async () => {
+  const { wrongOrigin } = await import("./oauth/origin.ts");
+
+  const config = await inProduction({ MCP_PUBLIC_URL: PRODUCTION_ORIGIN }, deployment);
+
+  // Asserted on the guard itself rather than through a handler, because a handler
+  // that gets past it goes on to need a database, and what is being checked here
+  // is only that the gate opens.
+  assert.equal(wrongOrigin(arriving("inboxlabeler.com", "/mcp"), config), undefined);
+  assert.equal(wrongOrigin(arriving("INBOXLABELER.COM", "/mcp"), config), undefined, "host case");
+  assert.equal(wrongOrigin(arriving("inboxlabeler.com:443", "/mcp"), config), undefined, "with a port");
+
+  assert.equal(wrongOrigin(arriving("preview.vercel.app", "/mcp"), config)?.status, 404);
+  assert.equal(wrongOrigin(arriving("inboxlabeler.com.evil.test", "/mcp"), config)?.status, 404);
+  assert.equal(wrongOrigin(arriving("evil.test", "/mcp"), config)?.status, 404);
+});
+
+test("a forged X-Forwarded-Host does not make a preview host canonical", async () => {
+  const response = await inProduction(
+    { MCP_PUBLIC_URL: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: "x".repeat(48) },
+    () => {
+      const request = new Request("https://preview.vercel.app/oauth/register", {
+        method: "POST",
+        headers: {
+          host: "preview.vercel.app",
+          // What an attacker would add. The check reads Host, which the platform
+          // sets, and never this.
+          "x-forwarded-host": "inboxlabeler.com",
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+      return handleRegistration(request);
+    },
+  );
+
+  assert.equal(response.status, 404);
+});
+
+test("development is exempt, so a loopback checkout keeps working", async () => {
+  // The exemption is derived from the configured origin being loopback, not from
+  // a switch — so it cannot be left on for a real one.
+  const config = await inProduction({ MCP_PUBLIC_URL: "http://localhost:3000" }, deployment);
+  assert.equal(config.insecure, true);
+
+  const response = await handleAuthorize(
+    new Request("http://127.0.0.1:3000/oauth/authorize", {
+      method: "GET",
+      headers: { host: "127.0.0.1:3000" },
+    }),
+  );
+  assert.notEqual(response.status, 404, "a different loopback spelling is still served");
+});

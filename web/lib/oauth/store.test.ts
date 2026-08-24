@@ -7,6 +7,7 @@ import test, { after, describe } from "node:test";
 import {
   AUTHORIZATION_CODE_TTL_MS,
   PENDING_LOGIN_TTL_MS,
+  RATE_LIMIT_RETENTION_MS,
   REFRESH_TOKEN_TTL_MS,
   referenceHash,
   type OAuthStore,
@@ -38,6 +39,9 @@ const GRANT = {
   resource: "https://inboxlabeler.example/mcp",
   userId: "google:alice",
 };
+
+/** A check that accepts every grant, for the tests that are not about checking. */
+const allow = () => undefined;
 
 const LOGIN = {
   clientId: "client-1",
@@ -85,8 +89,8 @@ for (const driver of drivers) {
       opened.push(sql);
       await migrate(sql, OAUTH_SCHEMA);
       await sql.exec(`
-        TRUNCATE oauth_clients, oauth_pending_logins,
-                 oauth_authorization_codes, oauth_refresh_tokens;
+        TRUNCATE oauth_clients, oauth_pending_logins, oauth_authorization_codes,
+                 oauth_refresh_tokens, oauth_refresh_families, oauth_rate_limits;
       `);
       return { store: sqlOAuthStore(sql), driver: sql };
     }
@@ -120,7 +124,7 @@ for (const driver of drivers) {
       const { store, driver: sql } = await fresh();
       const reference = await store.parkLogin(LOGIN);
 
-      const resumed = await sqlOAuthStore(sql).takeLogin(reference);
+      const resumed = await sqlOAuthStore(sql).takeLogin(reference, null);
 
       assert.equal(resumed?.nonce, "nonce");
       assert.equal(resumed?.providerCodeVerifier, "verifier");
@@ -143,10 +147,10 @@ for (const driver of drivers) {
       const { store, driver: sql } = await fresh();
       const token = await store.issueRefreshToken(GRANT);
 
-      const granted = await sqlOAuthStore(sql).redeemRefreshToken(token);
+      const rotation = await sqlOAuthStore(sql).rotateRefreshToken(token, allow);
 
-      assert.equal(granted?.userId, "google:alice");
-      assert.equal(granted?.scope, "mcp");
+      assert.equal(rotation.outcome, "rotated");
+      assert.equal(rotation.outcome === "rotated" ? rotation.grant.userId : null, "google:alice");
     });
 
     test("a client registered before a restart is still there after one", async () => {
@@ -194,20 +198,24 @@ for (const driver of drivers) {
       assert.equal(await store.redeemCode(code), undefined);
     });
 
-    test("a refresh token is spent by being used", async () => {
+    test("a refresh token is spent by being used, and its reuse is noticed", async () => {
       const { store } = await fresh();
       const token = await store.issueRefreshToken(GRANT);
 
-      assert.equal((await store.redeemRefreshToken(token))?.userId, "google:alice");
-      assert.equal(await store.redeemRefreshToken(token), undefined);
+      const first = await store.rotateRefreshToken(token, allow);
+      assert.equal(first.outcome, "rotated");
+
+      // Not merely refused: recognised as a replay, which is what lets the family
+      // be ended rather than the one token.
+      assert.equal((await store.rotateRefreshToken(token, allow)).outcome, "replayed");
     });
 
     test("a parked login resumes once, which is what makes the consent form single-use", async () => {
       const { store } = await fresh();
       const reference = await store.parkLogin(LOGIN);
 
-      assert.equal((await store.takeLogin(reference))?.nonce, "nonce");
-      assert.equal(await store.takeLogin(reference), undefined);
+      assert.equal((await store.takeLogin(reference, null))?.nonce, "nonce");
+      assert.equal(await store.takeLogin(reference, null), undefined);
     });
 
     // --- the two races ----------------------------------------------------
@@ -234,12 +242,24 @@ for (const driver of drivers) {
       const token = await store.issueRefreshToken(GRANT);
 
       const attempts = await Promise.all(
-        Array.from({ length: 12 }, () => store.redeemRefreshToken(token)),
+        Array.from({ length: 12 }, () => store.rotateRefreshToken(token, allow)),
       );
-      const winners = attempts.filter((attempt) => attempt !== undefined);
+      const rotated = attempts.filter((attempt) => attempt.outcome === "rotated");
 
-      assert.equal(winners.length, 1, `expected one winner, got ${winners.length}`);
-      assert.equal(winners[0]?.userId, "google:alice");
+      assert.equal(rotated.length, 1, `expected one winner, got ${rotated.length}`);
+
+      // The first loser finds the token spent and treats it as a replay, which is
+      // the intended posture: a token presented twice ends the chain, whether the
+      // second presentation was a thief or a client racing itself. That revocation
+      // deletes the family's tokens, so the losers behind it find nothing at all.
+      // Every one of them is refused; which flavour of refusal they get depends
+      // only on where they were in the queue, and the client is told the same
+      // thing either way.
+      assert.ok(attempts.some((attempt) => attempt.outcome === "replayed"));
+      assert.ok(
+        attempts.every((attempt) => attempt.outcome !== "refused"),
+        "no loser was refused for a reason the check invented",
+      );
     });
 
     test("simultaneous resumptions of one parked login: exactly one succeeds", async () => {
@@ -247,7 +267,7 @@ for (const driver of drivers) {
       const reference = await store.parkLogin(LOGIN);
 
       const attempts = await Promise.all(
-        Array.from({ length: 12 }, () => store.takeLogin(reference)),
+        Array.from({ length: 12 }, () => store.takeLogin(reference, null)),
       );
 
       assert.equal(attempts.filter((attempt) => attempt !== undefined).length, 1);
@@ -281,17 +301,18 @@ for (const driver of drivers) {
       const { store } = await fresh();
       const token = await store.issueRefreshToken(GRANT);
 
-      assert.equal(
-        await store.redeemRefreshToken(token, Date.now() + REFRESH_TOKEN_TTL_MS + 1),
-        undefined,
-      );
+      const rotation = await store.rotateRefreshToken(token, allow, Date.now() + REFRESH_TOKEN_TTL_MS + 1);
+      assert.equal(rotation.outcome, "unknown");
     });
 
     test("an expired parked login is rejected", async () => {
       const { store } = await fresh();
       const reference = await store.parkLogin(LOGIN);
 
-      assert.equal(await store.takeLogin(reference, Date.now() + PENDING_LOGIN_TTL_MS + 1), undefined);
+      assert.equal(
+        await store.takeLogin(reference, null, Date.now() + PENDING_LOGIN_TTL_MS + 1),
+        undefined,
+      );
     });
 
     test("expiry is rejected on read, whether or not cleanup has run", async () => {
@@ -319,7 +340,9 @@ for (const driver of drivers) {
       assert.equal(live, 0, "nothing has expired yet");
 
       const removed = await store.cleanup(Date.now() + REFRESH_TOKEN_TTL_MS + 1);
-      assert.equal(removed, 3, "one of each kind went");
+      // Four rows: the code, the parked login, the refresh token, and the family
+      // the token belonged to.
+      assert.equal(removed, 4, "one of each kind went, the family included");
 
       for (const table of [
         "oauth_authorization_codes",
@@ -414,6 +437,9 @@ for (const driver of drivers) {
         "client_id",
         "client_state",
         "code_challenge",
+        // The browser binding, and like every other reference here it is stored
+        // as a hash rather than as the value the cookie carries.
+        "consent_session_hash",
         "expires_at",
         "nonce",
         "provider_code_verifier",
@@ -438,8 +464,8 @@ for (const driver of drivers) {
       const { store } = await fresh();
 
       assert.equal(await store.redeemCode("made-up"), undefined);
-      assert.equal(await store.redeemRefreshToken("made-up"), undefined);
-      assert.equal(await store.takeLogin("made-up"), undefined);
+      assert.equal((await store.rotateRefreshToken("made-up", allow)).outcome, "unknown");
+      assert.equal(await store.takeLogin("made-up", null), undefined);
       assert.equal(await store.client("made-up"), undefined);
     });
 
@@ -468,7 +494,7 @@ for (const driver of drivers) {
       // no `state` produces.
       const reference = await store.parkLogin({ ...LOGIN, clientState: undefined });
 
-      assert.equal((await store.takeLogin(reference))?.clientState, undefined);
+      assert.equal((await store.takeLogin(reference, null))?.clientState, undefined);
     });
 
     // --- migrations -------------------------------------------------------
@@ -477,6 +503,120 @@ for (const driver of drivers) {
       const { driver: sql } = await fresh();
 
       assert.equal(await migrate(sql, OAUTH_SCHEMA), 0, "everything was applied when the store opened");
+    });
+
+    test("a refused check leaves the token unspent and the family intact", async () => {
+      const { store } = await fresh();
+      const token = await store.issueRefreshToken(GRANT);
+
+      const refused = await store.rotateRefreshToken(token, () => ({
+        error: "invalid_grant",
+        description: "no",
+      }));
+      assert.equal(refused.outcome, "refused");
+
+      // Still rotatable, so nothing was consumed on the way to the refusal.
+      assert.equal((await store.rotateRefreshToken(token, allow)).outcome, "rotated");
+    });
+
+    test("the check sees the grant it is deciding about", async () => {
+      const { store } = await fresh();
+      const token = await store.issueRefreshToken(GRANT);
+
+      let seen;
+      await store.rotateRefreshToken(token, (grant) => {
+        seen = grant;
+        return undefined;
+      });
+
+      assert.deepEqual(seen, {
+        clientId: GRANT.clientId,
+        userId: GRANT.userId,
+        scope: GRANT.scope,
+        resource: GRANT.resource,
+      });
+    });
+
+    test("the check does not run for a token that is unknown or already spent", async () => {
+      const { store } = await fresh();
+      const token = await store.issueRefreshToken(GRANT);
+      await store.rotateRefreshToken(token, allow);
+
+      let ran = 0;
+      const counting = () => {
+        ran += 1;
+        return undefined;
+      };
+
+      assert.equal((await store.rotateRefreshToken(token, counting)).outcome, "replayed");
+      assert.equal((await store.rotateRefreshToken("made-up", counting)).outcome, "unknown");
+      assert.equal(ran, 0, "there was nothing to decide about");
+    });
+
+    test("a refusal is not a replay: repeated refusals do not revoke the family", async () => {
+      const { store } = await fresh();
+      const token = await store.issueRefreshToken(GRANT);
+      const no = () => ({ error: "invalid_grant", description: "no" });
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        assert.equal((await store.rotateRefreshToken(token, no)).outcome, "refused");
+      }
+
+      assert.equal((await store.rotateRefreshToken(token, allow)).outcome, "rotated");
+    });
+
+    // --- rate limiting ----------------------------------------------------
+
+    test("a bucket allows requests up to its limit and then refuses", async () => {
+      const { store } = await fresh();
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        assert.equal(await store.consumeRateLimit("b", 3, 60_000), true, `attempt ${attempt}`);
+      }
+      assert.equal(await store.consumeRateLimit("b", 3, 60_000), false, "over the limit");
+    });
+
+    test("buckets are independent", async () => {
+      const { store } = await fresh();
+
+      assert.equal(await store.consumeRateLimit("one", 1, 60_000), true);
+      assert.equal(await store.consumeRateLimit("one", 1, 60_000), false);
+      assert.equal(await store.consumeRateLimit("two", 1, 60_000), true, "a different caller");
+    });
+
+    test("a window rolls over rather than accumulating for ever", async () => {
+      const { store } = await fresh();
+      const start = Date.now();
+
+      assert.equal(await store.consumeRateLimit("c", 1, 60_000, start), true);
+      assert.equal(await store.consumeRateLimit("c", 1, 60_000, start), false);
+
+      // Past the window, the bucket is this request rather than the last one's.
+      assert.equal(await store.consumeRateLimit("c", 1, 60_000, start + 60_001), true);
+    });
+
+    test("simultaneous requests against one bucket cannot both slip through", async () => {
+      const { store } = await fresh();
+
+      const attempts = await Promise.all(
+        Array.from({ length: 10 }, () => store.consumeRateLimit("d", 4, 60_000)),
+      );
+
+      assert.equal(attempts.filter(Boolean).length, 4, "the limit held under concurrency");
+    });
+
+    test("cleanup ages out buckets nobody has touched", async () => {
+      const { store, driver: sql } = await fresh();
+      await store.consumeRateLimit("stale", 5, 60_000, Date.now() - RATE_LIMIT_RETENTION_MS - 1000);
+      await store.consumeRateLimit("fresh", 5, 60_000);
+
+      await store.cleanup();
+
+      const rows = await sql.query<{ bucket: string }>("SELECT bucket FROM oauth_rate_limits");
+      assert.deepEqual(
+        rows.map((row: { bucket: string }) => row.bucket),
+        ["fresh"],
+      );
     });
 
     test("concurrent migrations settle on one application of each version", async () => {
@@ -491,7 +631,7 @@ for (const driver of drivers) {
       );
       assert.deepEqual(
         rows.map((row: { version: number }) => row.version),
-        [1],
+        [1, 2, 3, 4],
       );
     });
   });

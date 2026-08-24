@@ -22,7 +22,7 @@ const ENDPOINT = "http://localhost:3000/mcp";
 const PROTOCOL_VERSION = "2026-07-28";
 
 async function tokenFor(user: string): Promise<string> {
-  const { token } = await mintAccessToken(deployment(), signingKey(), { id: user }, "client-1", "mcp");
+  const { token } = await mintAccessToken(deployment(), signingKey(), { id: user }, "client-1", "mcp", "http://localhost:3000/mcp");
   return token;
 }
 

@@ -19,12 +19,46 @@ const SCHEMAS: readonly SchemaModule[] = [OAUTH_SCHEMA, INBOX_SCHEMA];
 
 const url = process.env.DATABASE_URL?.trim();
 
+/**
+ * The embedded database is opt-in, and only ever by saying so.
+ *
+ * Falling back to it when `DATABASE_URL` is absent is the wrong default for a
+ * command that exists to change a schema: a deploy step whose variable failed to
+ * reach it would report success having migrated a database that lives for the
+ * length of the process, and the real one would stay untouched with nothing to
+ * say so. So the absence of a connection string is an error, and reaching the
+ * development database takes an explicit flag.
+ */
+const EMBEDDED_FLAG = "--embedded";
+const embedded = process.argv.includes(EMBEDDED_FLAG);
+
 async function main(): Promise<void> {
+  if (!url && !embedded) {
+    console.error(
+      "DATABASE_URL is not set.\n\n" +
+        "Migrations must name the database they change. Set DATABASE_URL to the\n" +
+        `database to migrate, or pass ${EMBEDDED_FLAG} to migrate the local development\n` +
+        "database instead.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (url && embedded) {
+    console.error(
+      `Both DATABASE_URL and ${EMBEDDED_FLAG} were given, and they name different\n` +
+        "databases. Pass one.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const driver: SqlDriver = url
     ? await (await import("./postgres.ts")).postgresDriver(url)
     : await (await import("./pglite.ts")).embeddedDriver(process.env.DEV_DATABASE_DIR);
 
-  const target = url ? "DATABASE_URL" : (process.env.DEV_DATABASE_DIR ?? "an in-memory database");
+  const target = url
+    ? "DATABASE_URL"
+    : (process.env.DEV_DATABASE_DIR ?? "an in-memory development database");
   try {
     let total = 0;
     for (const schema of SCHEMAS) {

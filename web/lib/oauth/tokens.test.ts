@@ -23,7 +23,7 @@ const OTHER_KEY = new TextEncoder().encode("b".repeat(48));
 const verifier = accessTokenVerifier(DEPLOYMENT, KEY);
 
 async function mint(user = "google:1", clientId = "client-1", scope = "mcp") {
-  const { token } = await mintAccessToken(DEPLOYMENT, KEY, { id: user }, clientId, scope);
+  const { token } = await mintAccessToken(DEPLOYMENT, KEY, { id: user }, clientId, scope, DEPLOYMENT.resource);
   return token;
 }
 
@@ -180,4 +180,22 @@ test("a token does not carry the signing secret", async () => {
 
   assert.equal(decoded.includes("aaaa"), false);
   assert.match(decoded, /"sub":"google:1"/);
+});
+
+test("the audience is the resource it was minted for, not the deployment's current one", async () => {
+  // Minting for a resource this deployment does not serve is possible — the
+  // caller decides — and such a token is then refused here, which is the property
+  // that keeps a grant from being retargeted by a configuration change.
+  const { token } = await mintAccessToken(
+    DEPLOYMENT,
+    KEY,
+    { id: "google:1" },
+    "client-1",
+    "mcp",
+    "https://somewhere-else.example/mcp",
+  );
+
+  const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+  assert.equal(claims.aud, "https://somewhere-else.example/mcp");
+  assert.equal(await verify(token), "invalid_token", "and this server will not accept it");
 });

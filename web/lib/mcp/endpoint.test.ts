@@ -31,7 +31,7 @@ const ENDPOINT = "http://localhost:3000/mcp";
 const PROTOCOL_VERSION = "2026-07-28";
 
 async function accessToken(user = "google:1", clientId = "client-1", scope = "mcp") {
-  const { token } = await mintAccessToken(deployment(), signingKey(), { id: user }, clientId, scope);
+  const { token } = await mintAccessToken(deployment(), signingKey(), { id: user }, clientId, scope, deployment().resource);
   return token;
 }
 

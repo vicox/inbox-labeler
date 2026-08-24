@@ -1,7 +1,9 @@
 import { deployment, signingKey, type Deployment } from "./config.ts";
-import { verifyCodeChallenge } from "./pkce.ts";
+import { checkCodeVerifier, verifyCodeChallenge } from "./pkce.ts";
+import { wrongOrigin } from "./origin.ts";
+import { sameResource } from "./resource.ts";
 import { configurationFault, json, oauthError } from "./responses.ts";
-import { oauthStore } from "./store.ts";
+import { oauthStore, type RefreshGrant, type RefreshRefusal } from "./store.ts";
 import { ACCESS_TOKEN_TTL_SECONDS, mintAccessToken } from "./tokens.ts";
 
 /**
@@ -29,6 +31,9 @@ export async function handleToken(request: Request): Promise<Response> {
   } catch (error) {
     return configurationFault(error);
   }
+
+  const misdirected = wrongOrigin(request, config);
+  if (misdirected) return misdirected;
 
   let form: FormData;
   try {
@@ -97,7 +102,10 @@ async function authorizationCodeGrant(
     return oauthError("invalid_grant", "redirect_uri does not match the authorization request.", 400);
   }
 
-  if (!verifyCodeChallenge(granted.codeChallenge, field("code_verifier"))) {
+  const verifier = checkCodeVerifier(field("code_verifier"));
+  if ("error" in verifier) return oauthError("invalid_request", verifier.error, 400);
+
+  if (!verifyCodeChallenge(granted.codeChallenge, verifier.verifier)) {
     return oauthError("invalid_grant", "code_verifier does not match the code_challenge.", 400);
   }
 
@@ -105,7 +113,7 @@ async function authorizationCodeGrant(
   // refused rather than quietly retargeted. The whole value of an audience is
   // that it cannot be changed after the user approved it.
   const resource = field("resource");
-  if (resource !== undefined && resource !== granted.resource) {
+  if (resource !== undefined && !sameResource(resource, granted.resource)) {
     return oauthError("invalid_target", `This code is bound to ${granted.resource}.`, 400);
   }
 
@@ -126,34 +134,72 @@ async function refreshTokenGrant(
   const presented = field("refresh_token");
   if (!presented) return oauthError("invalid_request", "refresh_token is required.", 400);
 
-  const granted = await (await oauthStore()).redeemRefreshToken(presented);
-  if (!granted) {
+  const requestedScope = field("scope");
+  const requestedResource = field("resource");
+
+  /**
+   * Everything this request has to be right about, checked against the grant.
+   *
+   * Handed to the store rather than applied to its answer, because the order
+   * matters: a request naming the wrong client must not have consumed a working
+   * refresh token by the time it is refused. The store runs this while the row is
+   * locked and before it is spent, so a refusal costs the holder nothing.
+   */
+  const acceptable = (grant: RefreshGrant): RefreshRefusal | undefined => {
+    if (grant.clientId !== clientId) {
+      return {
+        error: "invalid_grant",
+        description: "The refresh token was not issued to this client.",
+      };
+    }
+
+    // A refresh request may ask for less than it holds, never more.
+    if (requestedScope !== undefined) {
+      const held = grant.scope.split(" ");
+      if (requestedScope.split(" ").some((one) => !held.includes(one))) {
+        return {
+          error: "invalid_scope",
+          description: "A refresh token cannot be exchanged for a wider scope.",
+        };
+      }
+    }
+
+    if (requestedResource !== undefined && !sameResource(requestedResource, grant.resource)) {
+      return {
+        error: "invalid_target",
+        description: `This refresh token is bound to ${grant.resource}.`,
+      };
+    }
+
+    // The grant names the resource the user approved. If this deployment no
+    // longer serves it — the configured origin moved — the grant stops being
+    // redeemable rather than being retargeted onto the new one. Checked here, not
+    // in `issue`, so that it too costs the holder nothing.
+    if (!sameResource(grant.resource, config.resource)) {
+      return {
+        error: "invalid_grant",
+        description: "This grant was issued for a resource this server no longer serves. Start again.",
+      };
+    }
+
+    return undefined;
+  };
+
+  const rotation = await (await oauthStore()).rotateRefreshToken(presented, acceptable);
+
+  if (rotation.outcome === "refused") {
+    return oauthError(rotation.refusal.error, rotation.refusal.description, 400);
+  }
+
+  // One answer for a token that is gone, whichever way it went. A client that has
+  // lost its place is told to start again, and whoever is replaying a stolen
+  // token learns nothing about whether it was recognised — which is the only
+  // reason the outcomes are distinguished inside the store rather than out here.
+  if (rotation.outcome !== "rotated") {
     return oauthError("invalid_grant", "The refresh token is invalid, expired, or already used.", 400);
   }
-  if (granted.clientId !== clientId) {
-    return oauthError("invalid_grant", "The refresh token was not issued to this client.", 400);
-  }
 
-  // A refresh request may ask for less than it holds, never more.
-  const requested = field("scope");
-  if (requested !== undefined) {
-    const held = granted.scope.split(" ");
-    if (requested.split(" ").some((one) => !held.includes(one))) {
-      return oauthError("invalid_scope", "A refresh token cannot be exchanged for a wider scope.", 400);
-    }
-  }
-
-  const resource = field("resource");
-  if (resource !== undefined && resource !== granted.resource) {
-    return oauthError("invalid_target", `This refresh token is bound to ${granted.resource}.`, 400);
-  }
-
-  return issue(config, key, {
-    clientId,
-    userId: granted.userId,
-    scope: granted.scope,
-    resource: granted.resource,
-  });
+  return issue(config, key, rotation.grant, rotation.refreshToken);
 }
 
 /**
@@ -168,15 +214,44 @@ async function issue(
   config: Deployment,
   key: Uint8Array,
   grant: { clientId: string; userId: string; scope: string; resource: string },
+  rotated?: string,
 ): Promise<Response> {
-  const { token } = await mintAccessToken(config, key, { id: grant.userId }, grant.clientId, grant.scope);
+  // The grant names the resource the user approved. If this deployment no longer
+  // serves it — the configured origin moved — the grant is not retargeted onto
+  // the new one, it stops being redeemable. Minting for the new resource would
+  // hand out a token for something nobody authorized, and minting for the old one
+  // would hand out a token this server would then refuse.
+  //
+  // The refresh path checks this before it rotates, so that a stale grant costs
+  // the holder nothing; this is the last line for the authorization-code path,
+  // which arrives here having already spent its code.
+  if (!sameResource(grant.resource, config.resource)) {
+    return oauthError(
+      "invalid_grant",
+      "This grant was issued for a resource this server no longer serves. Start again.",
+      400,
+    );
+  }
 
-  const refreshToken = await (await oauthStore()).issueRefreshToken({
-    clientId: grant.clientId,
-    userId: grant.userId,
-    scope: grant.scope,
-    resource: grant.resource,
-  });
+  const { token } = await mintAccessToken(
+    config,
+    key,
+    { id: grant.userId },
+    grant.clientId,
+    grant.scope,
+    grant.resource,
+  );
+
+  // A rotation already minted its successor, inside the same transaction that
+  // spent the token it replaces. Only a fresh authorization starts a family.
+  const refreshToken =
+    rotated ??
+    (await (await oauthStore()).issueRefreshToken({
+      clientId: grant.clientId,
+      userId: grant.userId,
+      scope: grant.scope,
+      resource: grant.resource,
+    }));
 
   return json(
     {

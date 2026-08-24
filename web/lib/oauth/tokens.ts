@@ -46,9 +46,15 @@ type AccessTokenClaims = {
  * nothing else. No client-supplied value reaches it, which is the invariant the
  * whole layer rests on — a token for user A can only ever come back as user A.
  *
- * `aud` is the MCP endpoint's resource identifier (RFC 8707). It is what stops
- * a token minted for some other resource server from being replayed at ours,
- * and what stops ours from being replayed elsewhere.
+ * `aud` is the resource identifier the grant was authorized for (RFC 8707), and
+ * it is a parameter rather than read from `deployment` on purpose. Taking it from
+ * the deployment would mean that changing the configured origin silently
+ * retargets every grant made under the old one: a code the user approved for one
+ * resource would mint a token valid at another. The grant carries the resource it
+ * was approved for, and that is the only thing allowed to decide the audience.
+ *
+ * It is what stops a token minted for some other resource server from being
+ * replayed at ours, and what stops ours from being replayed elsewhere.
  */
 export async function mintAccessToken(
   deployment: Deployment,
@@ -56,11 +62,12 @@ export async function mintAccessToken(
   user: AuthenticatedUser,
   clientId: string,
   scope: string,
+  resource: string,
 ): Promise<{ token: string; expiresIn: number }> {
   const token = await new SignJWT({ client_id: clientId, scope } satisfies AccessTokenClaims)
     .setProtectedHeader({ alg: "HS256", typ: "at+jwt" })
     .setIssuer(deployment.issuer)
-    .setAudience(deployment.resource)
+    .setAudience(resource)
     .setSubject(user.id)
     .setIssuedAt()
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)

@@ -811,9 +811,26 @@ are required in production:
 
 `MCP_PUBLIC_URL` must be the canonical domain rather than a per-deployment hostname:
 the issuer and a token's audience are compared literally by clients, so a preview URL
-would mint tokens nothing accepts at the real one. Preview deployments are therefore
-not usable for a real OAuth flow, which is a consequence worth knowing rather than a
-problem to fix.
+would mint tokens nothing accepts at the real one.
+
+**Scope the variables to Production, and give previews their own.** Vercel offers a
+deployment its own hostname as well as the one the domain points at, and by default
+every environment sees the same variables. That would put the authorization server at
+several addresses at once, all signing with the same key and writing to the same
+database, while the metadata names only one of them. Two things follow:
+
+- In Project Settings → Environment Variables, add `DATABASE_URL`,
+  `OAUTH_SIGNING_SECRET` and the Google pair to **Production only**. Give Preview and
+  Development their own Neon branch, their own secret and their own Google client, or
+  leave them unset — a preview with no secrets refuses the requests that need them,
+  which is the right answer.
+- Even so, the OAuth and MCP endpoints refuse any request whose `Host` is not the
+  configured origin's, and answer `404` — so a preview that did inherit production
+  secrets still cannot run a flow or mint a token. The check reads `Host` and never
+  `X-Forwarded-Host`, which a caller can set.
+
+Preview deployments are therefore not usable for a real OAuth flow. That is the
+intended consequence, not a limitation to work around.
 
 **3. Google.** In the same Cloud project as the OAuth client, add exactly:
 
@@ -837,6 +854,11 @@ It is idempotent and safe to run twice or from two places at once, and it prints
 it applied. Opening a store migrates too, so a forgotten run is not an outage — but
 only the command can be ordered in a deploy. A failure exits non-zero with the
 Postgres error rather than continuing.
+
+The command refuses to run without `DATABASE_URL`. It will not quietly migrate the
+embedded development database instead — a deploy step whose variable failed to reach
+it would otherwise report success having changed a database that lives for the length
+of the process. To migrate the local one, say so: `npm run db:migrate -- --embedded`.
 
 **5. Check it.** These need no credentials and no client:
 

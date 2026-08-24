@@ -9,6 +9,7 @@ import {
 import { userRef, type AuthenticatedUser } from "../identity.ts";
 import { inboxStore } from "../inbox/store.ts";
 import { MCP_SCOPE, deployment, signingKey } from "../oauth/config.ts";
+import { wrongOrigin } from "../oauth/origin.ts";
 import { configurationFault } from "../oauth/responses.ts";
 import { accessTokenVerifier } from "../oauth/tokens.ts";
 import { inboxLabelerMcpServer } from "./server.ts";
@@ -80,6 +81,11 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
   try {
     const config = deployment();
     const key = signingKey();
+
+    // Before the token is even looked at: a deployment hostname that is not the
+    // canonical one is not this MCP server, whatever credential it was handed.
+    const misdirected = wrongOrigin(request, config);
+    if (misdirected) return misdirected;
 
     // The transport specification requires an MCP server to validate `Origin`
     // against DNS rebinding. Only this deployment's own origin is allowed: MCP
