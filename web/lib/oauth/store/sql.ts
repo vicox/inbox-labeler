@@ -7,6 +7,8 @@ import {
   REFRESH_TOKEN_TTL_MS,
   reference,
   referenceHash,
+  type AuthorizationCode,
+  type CodeRedemption,
   type OAuthStore,
   type RefreshGrant,
   type RefreshRotation,
@@ -16,22 +18,51 @@ import {
 /**
  * The OAuth store in SQL, written once for anything that speaks Postgres.
  *
- * Every spend is a single statement:
+ * Everything here is single-use, and the whole durability argument is about how
+ * a thing gets spent exactly once. There are two shapes, and which one applies
+ * depends on whether spending it involves a decision.
  *
- *     DELETE FROM … WHERE hash = $1 AND expires_at > $2 RETURNING …
+ * **Nothing to decide: one statement.** A parked login is resumed with
  *
- * That one line is the whole durability argument. The row is located, checked
- * for expiry, removed and returned indivisibly, so two requests presenting the
- * same authorization code — on two instances, in the same millisecond — cannot
- * both come away with it: the database serialises them on the row, the first
- * gets the returned row, the second matches nothing. A read followed by a delete
- * would look equivalent and would not be; the window between the two is exactly
- * the replay this shape removes. There is no application-level lock anywhere in
- * this file, and there does not need to be one.
+ *     DELETE FROM … WHERE hash = $1 AND expires_at > $2 AND binding … RETURNING …
  *
- * The same statement carries expiry, which is why cleanup can never be
- * load-bearing: a row past `expires_at` is not returned whether or not anything
- * has got round to deleting it.
+ * The row is located, checked for expiry, matched against its browser binding,
+ * removed and returned indivisibly. Two requests presenting the same reference —
+ * on two instances, in the same millisecond — cannot both come away with it: the
+ * database serialises them on the row, the first gets the returned row, the
+ * second matches nothing. A read followed by a delete would look equivalent and
+ * would not be; the window between the two is exactly the replay this removes.
+ *
+ * **Something to decide: lock, decide, then spend.** An authorization code and a
+ * refresh token both carry constraints that the request has to satisfy — which
+ * client, which redirect URI, which verifier, which resource, which scope — and
+ * those cannot be expressed as a WHERE clause without teaching this file the
+ * protocol. Deciding them *after* a `DELETE … RETURNING` would mean a request
+ * that was never going to succeed had already consumed somebody's credential on
+ * its way to being refused. So instead:
+ *
+ *     SELECT … WHERE hash = $1 FOR UPDATE     -- located and locked, nothing spent
+ *     …expiry, replay, and the caller's own check…
+ *     DELETE / UPDATE … INSERT successor      -- only now, in the same transaction
+ *
+ * `FOR UPDATE` is what makes the gap safe. A concurrent spend of the same row
+ * blocks at the SELECT until this transaction ends, and then sees what happened
+ * rather than racing past it — a deleted code as absent, a spent refresh token as
+ * spent. Exactly one caller gets through, and a refusal costs the holder nothing.
+ *
+ * The two consume differently, on purpose. A code is deleted, so a second
+ * presentation simply finds nothing. A refresh token is *marked* spent and its
+ * successor inserted in the same transaction, because a deleted row cannot tell
+ * the difference between a token that never existed and one that was already
+ * used — and that difference is what makes replay detectable, and the family
+ * revocable when it is detected.
+ *
+ * There is no application-level lock anywhere in this file, and no advisory lock:
+ * the row is the only thing anything waits on.
+ *
+ * Expiry is checked on every read, which is why cleanup can never be
+ * load-bearing: a row past `expires_at` is refused whether or not anything has
+ * got round to deleting it.
  */
 
 /**
@@ -341,24 +372,39 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
       return value;
     },
 
-    async redeemCode(value, now = Date.now()) {
-      const rows = await driver.query<AuthorizationCodeRow>(
-        `DELETE FROM oauth_authorization_codes
-         WHERE code_hash = $1 AND expires_at > $2
-         RETURNING client_id, redirect_uri, code_challenge, scope, resource, user_id, expires_at`,
-        [referenceHash(value), new Date(now)],
-      );
-      const row = rows[0];
-      if (!row) return undefined;
-      return {
-        clientId: row.client_id,
-        redirectUri: row.redirect_uri,
-        codeChallenge: row.code_challenge,
-        scope: row.scope,
-        resource: row.resource,
-        userId: row.user_id,
-        expiresAt: row.expires_at.getTime(),
-      };
+    async redeemCode(value, acceptable, now = Date.now()) {
+      const at = new Date(now);
+      const presented = referenceHash(value);
+
+      return driver.transaction<CodeRedemption>(async (tx) => {
+        // Locked, not merely read. `FOR UPDATE` is what lets the check below run
+        // before the code is consumed without opening a gap: a concurrent
+        // redemption of the same code blocks here until this transaction ends,
+        // and then finds the row gone rather than racing past it.
+        const found = await tx.query<AuthorizationCodeRow>(
+          `SELECT client_id, redirect_uri, code_challenge, scope, resource, user_id, expires_at
+             FROM oauth_authorization_codes
+            WHERE code_hash = $1
+            FOR UPDATE`,
+          [presented],
+        );
+        const row = found[0];
+        if (!row || row.expires_at <= at) return { outcome: "unknown" };
+
+        const grant = codeOf(row);
+
+        // The caller's own rules, while the row is still untouched. A refusal
+        // here returns without consuming anything, so the client that actually
+        // holds the code can still redeem it.
+        const refusal = acceptable(grant);
+        if (refusal) return { outcome: "refused", grant, refusal };
+
+        // Consumed by deletion, which is what keeps a code single-use: a second
+        // presentation finds nothing, and there is no spent row to reason about.
+        await tx.query(`DELETE FROM oauth_authorization_codes WHERE code_hash = $1`, [presented]);
+
+        return { outcome: "redeemed", grant };
+      });
     },
 
     async issueRefreshToken(grant) {
@@ -543,6 +589,18 @@ type AuthorizationCodeRow = {
   user_id: string;
   expires_at: Date;
 };
+
+function codeOf(row: AuthorizationCodeRow): AuthorizationCode {
+  return {
+    clientId: row.client_id,
+    redirectUri: row.redirect_uri,
+    codeChallenge: row.code_challenge,
+    scope: row.scope,
+    resource: row.resource,
+    userId: row.user_id,
+    expiresAt: row.expires_at.getTime(),
+  };
+}
 
 /** A refresh token joined to the family that gives it meaning. */
 type TokenRow = {

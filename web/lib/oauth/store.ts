@@ -106,19 +106,37 @@ export type RefreshRotation =
   | { outcome: "rotated"; grant: RefreshGrant; refreshToken: string }
   | { outcome: "unknown" }
   | { outcome: "replayed"; grant: RefreshGrant }
-  | { outcome: "refused"; grant: RefreshGrant; refusal: RefreshRefusal };
+  | { outcome: "refused"; grant: RefreshGrant; refusal: GrantRefusal };
 
 /**
  * Why a grant was not acceptable for this request.
  *
  * The store does not decide this — it is handed a check and reports what the
  * check said. What the store guarantees is *when* the check runs: before the
- * token is spent, inside the transaction that would spend it. A request naming
- * the wrong client, resource or scope therefore leaves the token exactly as it
- * was, which is the difference between refusing a request and consuming
- * somebody's credential on the way to refusing it.
+ * credential is spent, inside the transaction that would spend it. A request
+ * naming the wrong client, redirect URI, verifier, resource or scope therefore
+ * leaves the credential exactly as it was, which is the difference between
+ * refusing a request and consuming somebody's credential on the way to refusing
+ * it.
+ *
+ * Shared by both grants, because it is the same idea in both: an authorization
+ * code and a refresh token are single-use credentials, and neither should be
+ * spendable by a request that was never going to succeed.
  */
-export type RefreshRefusal = { error: string; description: string };
+export type GrantRefusal = { error: string; description: string };
+
+/**
+ * The outcome of presenting an authorization code.
+ *
+ * `unknown` covers never-existed, expired and already-redeemed together, which is
+ * deliberate: to a legitimate client they mean the same thing — start again — and
+ * telling them apart would tell whoever holds a stolen code which of the three it
+ * is. A code is consumed by deletion, so replay finds nothing.
+ */
+export type CodeRedemption =
+  | { outcome: "redeemed"; grant: AuthorizationCode }
+  | { outcome: "unknown" }
+  | { outcome: "refused"; grant: AuthorizationCode; refusal: GrantRefusal };
 
 /**
  * How long each kind of record lives.
@@ -188,8 +206,24 @@ export type OAuthStore = {
   ): Promise<PendingLogin | undefined>;
 
   issueCode(code: Omit<AuthorizationCode, "expiresAt">): Promise<string>;
-  /** Redeems a code, atomically and exactly once. */
-  redeemCode(code: string, now?: number): Promise<AuthorizationCode | undefined>;
+  /**
+   * Redeems a code, atomically and exactly once.
+   *
+   * One transaction, in one order: the code is found and locked, its expiry
+   * checked, `acceptable` consulted, and only then is it consumed. Nothing before
+   * the last step mutates anything, so a request that fails `acceptable` — the
+   * wrong client, redirect URI, verifier or resource — leaves the code redeemable
+   * by the client that actually holds it.
+   *
+   * `acceptable` returns nothing to proceed, or a refusal to stop. It runs while
+   * the row is locked, so no concurrent redemption can slip between the check and
+   * the consume.
+   */
+  redeemCode(
+    code: string,
+    acceptable: (grant: AuthorizationCode) => GrantRefusal | undefined,
+    now?: number,
+  ): Promise<CodeRedemption>;
 
   /** Starts a new refresh-token family for a freshly authorized grant. */
   issueRefreshToken(grant: RefreshGrant): Promise<string>;
@@ -208,7 +242,7 @@ export type OAuthStore = {
    */
   rotateRefreshToken(
     token: string,
-    acceptable: (grant: RefreshGrant) => RefreshRefusal | undefined,
+    acceptable: (grant: RefreshGrant) => GrantRefusal | undefined,
     now?: number,
   ): Promise<RefreshRotation>;
 

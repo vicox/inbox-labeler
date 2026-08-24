@@ -10,7 +10,9 @@ import {
   RATE_LIMIT_RETENTION_MS,
   REFRESH_TOKEN_TTL_MS,
   referenceHash,
+  type AuthorizationCode,
   type OAuthStore,
+  type RefreshGrant,
 } from "./store.ts";
 import { embeddedDriver } from "../db/pglite.ts";
 import type { SqlDriver } from "../db/driver.ts";
@@ -42,6 +44,18 @@ const GRANT = {
 
 /** A check that accepts every grant, for the tests that are not about checking. */
 const allow = () => undefined;
+
+/**
+ * Redeems a code with a check that accepts anything, reading the grant back.
+ *
+ * The tests that are about single use, isolation and expiry care about the grant
+ * rather than the outcome, so this keeps them saying what they mean. The tests
+ * that are about the check itself use `redeemCode` directly.
+ */
+async function redeem(store: OAuthStore, code: string, now?: number) {
+  const redemption = await store.redeemCode(code, allow, now);
+  return redemption.outcome === "redeemed" ? redemption.grant : undefined;
+}
 
 const LOGIN = {
   clientId: "client-1",
@@ -136,7 +150,7 @@ for (const driver of drivers) {
       const { store, driver: sql } = await fresh();
       const code = await store.issueCode(GRANT);
 
-      const granted = await sqlOAuthStore(sql).redeemCode(code);
+      const granted = await redeem(sqlOAuthStore(sql), code);
 
       assert.equal(granted?.userId, "google:alice");
       assert.equal(granted?.codeChallenge, "challenge");
@@ -178,7 +192,7 @@ for (const driver of drivers) {
           const seen = await sqlOAuthStore(second).client(registered.clientId);
           assert.equal(seen?.clientId, registered.clientId, "the client survived");
 
-          const granted = await sqlOAuthStore(second).redeemCode(code);
+          const granted = await redeem(sqlOAuthStore(second), code);
           assert.equal(granted?.userId, "google:alice", "and so did the code");
         } finally {
           await second.close();
@@ -194,8 +208,8 @@ for (const driver of drivers) {
       const { store } = await fresh();
       const code = await store.issueCode(GRANT);
 
-      assert.equal((await store.redeemCode(code))?.userId, "google:alice");
-      assert.equal(await store.redeemCode(code), undefined);
+      assert.equal((await redeem(store, code))?.userId, "google:alice");
+      assert.equal(await redeem(store, code), undefined);
     });
 
     test("a refresh token is spent by being used, and its reuse is noticed", async () => {
@@ -229,7 +243,7 @@ for (const driver of drivers) {
       const code = await store.issueCode(GRANT);
 
       const attempts = await Promise.all(
-        Array.from({ length: 12 }, () => store.redeemCode(code)),
+        Array.from({ length: 12 }, () => redeem(store, code)),
       );
       const winners = attempts.filter((attempt) => attempt !== undefined);
 
@@ -279,10 +293,10 @@ for (const driver of drivers) {
       const code = await store.issueCode(GRANT);
 
       const attempts = await Promise.all([
-        store.redeemCode(code),
-        other.redeemCode(code),
-        store.redeemCode(code),
-        other.redeemCode(code),
+        redeem(store, code),
+        redeem(other, code),
+        redeem(store, code),
+        redeem(other, code),
       ]);
 
       assert.equal(attempts.filter((attempt) => attempt !== undefined).length, 1);
@@ -294,7 +308,7 @@ for (const driver of drivers) {
       const { store } = await fresh();
       const code = await store.issueCode(GRANT);
 
-      assert.equal(await store.redeemCode(code, Date.now() + AUTHORIZATION_CODE_TTL_MS + 1), undefined);
+      assert.equal(await redeem(store, code, Date.now() + AUTHORIZATION_CODE_TTL_MS + 1), undefined);
     });
 
     test("an expired refresh token is rejected", async () => {
@@ -325,7 +339,7 @@ for (const driver of drivers) {
         "SELECT count(*)::int AS n FROM oauth_authorization_codes",
       );
       assert.equal(rows[0].n, 1, "the expired row has not been cleaned up");
-      assert.equal(await store.redeemCode(code, after), undefined);
+      assert.equal(await redeem(store, code, after), undefined);
     });
 
     // --- cleanup ----------------------------------------------------------
@@ -417,11 +431,11 @@ for (const driver of drivers) {
       const code = await store.issueCode(GRANT);
 
       assert.equal(
-        await store.redeemCode(referenceHash(code).toString("base64url")),
+        await redeem(store, referenceHash(code).toString("base64url")),
         undefined,
         "whoever reads the database still cannot redeem",
       );
-      assert.ok(await store.redeemCode(code), "only the reference works");
+      assert.ok(await redeem(store, code), "only the reference works");
     });
 
     test("no store keeps a Google secret or any signing material", async () => {
@@ -463,7 +477,7 @@ for (const driver of drivers) {
     test("a reference that was never issued finds nothing", async () => {
       const { store } = await fresh();
 
-      assert.equal(await store.redeemCode("made-up"), undefined);
+      assert.equal(await redeem(store, "made-up"), undefined);
       assert.equal((await store.rotateRefreshToken("made-up", allow)).outcome, "unknown");
       assert.equal(await store.takeLogin("made-up", null), undefined);
       assert.equal(await store.client("made-up"), undefined);
@@ -505,6 +519,80 @@ for (const driver of drivers) {
       assert.equal(await migrate(sql, OAUTH_SCHEMA), 0, "everything was applied when the store opened");
     });
 
+    test("a refused check leaves the authorization code unconsumed", async () => {
+      const { store } = await fresh();
+      const code = await store.issueCode(GRANT);
+
+      const refused = await store.redeemCode(code, () => ({
+        error: "invalid_grant",
+        description: "no",
+      }));
+      assert.equal(refused.outcome, "refused");
+
+      // Still redeemable, so nothing was consumed on the way to the refusal.
+      assert.equal((await store.redeemCode(code, allow)).outcome, "redeemed");
+    });
+
+    test("the code check sees the grant it is deciding about", async () => {
+      const { store } = await fresh();
+      const code = await store.issueCode(GRANT);
+
+      let seen: AuthorizationCode | undefined;
+      await store.redeemCode(code, (grant) => {
+        seen = grant;
+        return undefined;
+      });
+
+      assert.equal(seen?.clientId, GRANT.clientId);
+      assert.equal(seen?.redirectUri, GRANT.redirectUri);
+      assert.equal(seen?.codeChallenge, GRANT.codeChallenge);
+      assert.equal(seen?.resource, GRANT.resource);
+      assert.equal(seen?.userId, GRANT.userId);
+    });
+
+    test("the code check does not run for a code that is unknown or expired", async () => {
+      const { store } = await fresh();
+      const code = await store.issueCode(GRANT);
+
+      let ran = 0;
+      const counting = () => {
+        ran += 1;
+        return undefined;
+      };
+
+      assert.equal((await store.redeemCode("made-up", counting)).outcome, "unknown");
+      assert.equal(
+        (await store.redeemCode(code, counting, Date.now() + AUTHORIZATION_CODE_TTL_MS + 1)).outcome,
+        "unknown",
+      );
+      assert.equal(ran, 0, "there was nothing to decide about");
+    });
+
+    test("repeated refusals never consume the code", async () => {
+      const { store } = await fresh();
+      const code = await store.issueCode(GRANT);
+      const no = () => ({ error: "invalid_grant", description: "no" });
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        assert.equal((await store.redeemCode(code, no)).outcome, "refused");
+      }
+
+      assert.equal((await store.redeemCode(code, allow)).outcome, "redeemed");
+    });
+
+    test("simultaneous redemptions with a refusing check consume nothing", async () => {
+      const { store } = await fresh();
+      const code = await store.issueCode(GRANT);
+      const no = () => ({ error: "invalid_grant", description: "no" });
+
+      const attempts = await Promise.all(
+        Array.from({ length: 8 }, () => store.redeemCode(code, no)),
+      );
+      assert.ok(attempts.every((attempt) => attempt.outcome === "refused"));
+
+      assert.equal((await store.redeemCode(code, allow)).outcome, "redeemed");
+    });
+
     test("a refused check leaves the token unspent and the family intact", async () => {
       const { store } = await fresh();
       const token = await store.issueRefreshToken(GRANT);
@@ -523,7 +611,7 @@ for (const driver of drivers) {
       const { store } = await fresh();
       const token = await store.issueRefreshToken(GRANT);
 
-      let seen;
+      let seen: RefreshGrant | undefined;
       await store.rotateRefreshToken(token, (grant) => {
         seen = grant;
         return undefined;

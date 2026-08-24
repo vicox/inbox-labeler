@@ -20,7 +20,7 @@ process.env.GOOGLE_CLIENT_SECRET = "test-google-client-secret";
 const { handleRegistration } = await import("./registration.ts");
 const { handleAuthorize, handleConsent } = await import("./authorization.ts");
 const { handleToken } = await import("./exchange.ts");
-const { oauthStore } = await import("./store.ts");
+const { AUTHORIZATION_CODE_TTL_MS, oauthStore } = await import("./store.ts");
 const { createPkce } = await import("./pkce.ts");
 const { deployment, signingKey } = await import("./config.ts");
 const { accessTokenVerifier } = await import("./tokens.ts");
@@ -565,7 +565,9 @@ test("a made-up code or refresh token is refused", async () => {
         client_id: client.client_id,
         code: "made-up",
         redirect_uri: REDIRECT_URI,
-        code_verifier: "whatever",
+        // Well-formed, so this reaches the lookup rather than being turned away
+        // as malformed — which is what makes it a test about the code.
+        code_verifier: createPkce().verifier,
       })
     ).body.error,
     "invalid_grant",
@@ -1133,4 +1135,184 @@ test("one address reaching its ceiling does not affect another", async () => {
   for (let attempt = 0; attempt < 70; attempt += 1) await visit("203.0.113.203");
 
   assert.equal((await visit("203.0.113.204")).status, 200, "a different caller is unaffected");
+});
+
+// --- a refused code exchange costs the holder nothing ---------------------
+//
+// The code used to be consumed first and the request's constraints checked
+// against what came back, so anyone who learned a code — from a log, a referrer,
+// a shared screen — could burn it with one malformed exchange and strand the
+// client that legitimately held it. The order is now the other way round, inside
+// the transaction that would have deleted it.
+
+/** A registered client and a code issued to it, ready to exchange. */
+async function pendingCode(userId = "google:code") {
+  const { body: client } = await register();
+  const pkce = createPkce();
+  const code = await issueCodeFor(client.client_id, pkce.challenge, userId);
+  return { clientId: client.client_id as string, pkce, code };
+}
+
+/** Exchanges a code the way the holder would, so a test can prove it still can. */
+function exchange(clientId: string, code: string, verifier: string, extra: Record<string, string> = {}) {
+  return token({
+    grant_type: "authorization_code",
+    client_id: clientId,
+    code,
+    redirect_uri: REDIRECT_URI,
+    code_verifier: verifier,
+    ...extra,
+  });
+}
+
+test("a wrong client_id does not consume the authorization code", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+  const { body: other } = await register();
+
+  const refused = await exchange(other.client_id, code, pkce.verifier);
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, "invalid_grant");
+
+  const succeeded = await exchange(clientId, code, pkce.verifier);
+  assert.equal(succeeded.status, 200, "the refused request spent nothing");
+  assert.ok(succeeded.body.access_token);
+});
+
+test("a wrong redirect_uri does not consume the authorization code", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  const refused = await token({
+    grant_type: "authorization_code",
+    client_id: clientId,
+    code,
+    redirect_uri: "http://localhost:41234/somewhere-else",
+    code_verifier: pkce.verifier,
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, "invalid_grant");
+
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200, "spent nothing");
+});
+
+test("a missing redirect_uri does not consume the authorization code", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  const refused = await token({
+    grant_type: "authorization_code",
+    client_id: clientId,
+    code,
+    code_verifier: pkce.verifier,
+  });
+  assert.equal(refused.status, 400);
+
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200, "spent nothing");
+});
+
+test("a wrong PKCE verifier does not consume the authorization code", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  // Well-formed, so it reaches the comparison rather than being refused as
+  // malformed — the case that matters, because it is the one an attacker sends.
+  const refused = await exchange(clientId, code, createPkce().verifier);
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, "invalid_grant");
+
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200, "spent nothing");
+});
+
+test("a malformed PKCE verifier does not consume the authorization code either", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  const refused = await exchange(clientId, code, "too-short");
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, "invalid_request", "malformed, rather than mismatched");
+
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200, "spent nothing");
+});
+
+test("a wrong resource does not consume the authorization code", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  const refused = await exchange(clientId, code, pkce.verifier, {
+    resource: "https://somewhere-else.example/mcp",
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, "invalid_target");
+
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200, "spent nothing");
+});
+
+test("many refused attempts in a row still leave the code redeemable", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+  const { body: other } = await register();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.equal((await exchange(other.client_id, code, pkce.verifier)).status, 400);
+    assert.equal((await exchange(clientId, code, createPkce().verifier)).status, 400);
+  }
+
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200);
+});
+
+test("a valid exchange still succeeds and still consumes the code exactly once", async () => {
+  const { clientId, pkce, code } = await pendingCode("google:once");
+
+  const first = await exchange(clientId, code, pkce.verifier);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.token_type, "Bearer");
+  assert.ok(first.body.refresh_token);
+
+  const info = await accessTokenVerifier(deployment(), signingKey()).verifyAccessToken(
+    first.body.access_token,
+  );
+  assert.equal(info.extra?.userId, "google:once");
+
+  // Single use is unchanged: the second presentation finds nothing.
+  const second = await exchange(clientId, code, pkce.verifier);
+  assert.equal(second.status, 400);
+  assert.equal(second.body.error, "invalid_grant");
+});
+
+test("an expired code is refused, and asking about it does not consume it", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  // Codes live a minute, so reaching past that without waiting means asking the
+  // store directly — which is where expiry is decided, and where the check that
+  // must not consume anything lives.
+  const store = await oauthStore();
+  const afterExpiry = await store.redeemCode(
+    code,
+    () => undefined,
+    Date.now() + AUTHORIZATION_CODE_TTL_MS + 1,
+  );
+  assert.equal(afterExpiry.outcome, "unknown", "expired reads as unknown, not as redeemed");
+
+  // In real time the code has not expired, and the question above left it alone.
+  assert.equal((await exchange(clientId, code, pkce.verifier)).status, 200);
+});
+
+test("simultaneous exchanges of one code: exactly one succeeds", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+
+  const attempts = await Promise.all(
+    Array.from({ length: 8 }, () => exchange(clientId, code, pkce.verifier)),
+  );
+
+  assert.equal(attempts.filter((attempt) => attempt.status === 200).length, 1);
+  for (const attempt of attempts.filter((one) => one.status !== 200)) {
+    assert.equal(attempt.body.error, "invalid_grant");
+  }
+});
+
+test("a refused attempt racing a valid one does not deny it", async () => {
+  const { clientId, pkce, code } = await pendingCode();
+  const { body: other } = await register();
+
+  const [wrong, right] = await Promise.all([
+    exchange(other.client_id, code, pkce.verifier),
+    exchange(clientId, code, pkce.verifier),
+  ]);
+
+  assert.equal(wrong.status, 400);
+  assert.equal(right.status, 200, "the holder was not starved by the refusal");
 });
