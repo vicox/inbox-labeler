@@ -541,6 +541,155 @@ python3 store.py validate FILE            # every problem at once, not just the 
 python3 store.py format   FILE [--write]  # stable, human-readable JSON
 ```
 
+## Remote MCP (development)
+
+Inbox Labeler exposes an authenticated remote MCP endpoint alongside the web UI, so
+an MCP client — Claude, ChatGPT, the MCP Inspector — can connect to Inbox Labeler as
+a signed-in user:
+
+```text
+inboxlabeler.com
+├── /                    the web UI
+└── /mcp                 the MCP endpoint, OAuth-protected
+```
+
+**This is the foundation, not the feature.** There is exactly one tool,
+`get_server_info`, and it reports that the endpoint is reachable and who is calling.
+Nothing here reads or writes `labels.json` or `matches.json` — the tools that will
+are a separate step. What is finished is the path a client has to walk before any of
+that is possible:
+
+```text
+MCP client
+  ↓  401 from /mcp, carrying a pointer to the metadata below
+Protected Resource Metadata      /.well-known/oauth-protected-resource/mcp
+  ↓  names the authorization server
+Authorization Server Metadata    /.well-known/oauth-authorization-server
+  ↓  register, then authorize with PKCE
+Consent                          this client, named, before anything is forwarded
+  ↓
+Google sign-in                   which Google account you are, and nothing else
+  ↓  authorization code → access token, audience-bound to /mcp
+/mcp                             a request attributed to one Inbox Labeler user
+```
+
+Inbox Labeler is its own OAuth 2.1 authorization server for its own endpoint, and
+delegates only the question of *who the user is* to Google. That keeps the token
+bound to a resource Inbox Labeler owns, while leaving passwords, resets and account
+recovery to an identity provider that already knows the account whose mail is being
+labelled.
+
+The consent step is not decoration. Inbox Labeler holds a single Google application
+shared by every client that registers, and Google remembers a user's approval of it —
+so once you have approved it, a later forward could complete from your existing Google
+session without showing you anything. Anyone who registered a client could then walk
+you through the endpoint and collect a code in silence. The MCP authorization
+specification requires exactly this mitigation, and the page names the client and the
+host your approval would send a code to.
+
+### Configuration
+
+Copy [`web/.env.example`](web/.env.example) to `web/.env.local` and fill it in. That
+file documents each variable in full; in short:
+
+| Variable | |
+| --- | --- |
+| `MCP_PUBLIC_URL` | the public origin every OAuth and MCP URL is derived from. Optional in development, where it defaults to `http://localhost:3000`; **required in production** |
+| `OAUTH_SIGNING_SECRET` | what access tokens are signed with. At least 32 bytes — `openssl rand -base64 48` |
+| `GOOGLE_CLIENT_ID` | a Google OAuth 2.0 "Web application" client |
+| `GOOGLE_CLIENT_SECRET` | its secret |
+
+The Google client needs one authorised redirect URI, matching `MCP_PUBLIC_URL`:
+`http://localhost:3000/oauth/callback` locally. Only the `openid` scope is requested,
+so Inbox Labeler learns the account's stable subject and neither its address nor its
+profile.
+
+`.env.local` is gitignored. `.env.example` holds names and never values.
+
+### Running it
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The two discovery documents need no configuration at all — they carry nothing signed,
+so a missing secret must not be what breaks them:
+
+```bash
+curl -s localhost:3000/.well-known/oauth-protected-resource/mcp
+curl -s localhost:3000/.well-known/oauth-authorization-server
+```
+
+`/mcp` and the token endpoint do need `OAUTH_SIGNING_SECRET`, because without it no
+token can be signed or checked. Until it is set they answer `500` and say so, rather
+than letting a request through unvalidated. With it set, an unauthenticated call is a
+`401` whose challenge points back at the metadata above:
+
+```bash
+curl -si -X POST localhost:3000/mcp -d '{}' | grep -i www-authenticate
+# Bearer error="invalid_token", …, scope="mcp",
+#   resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"
+```
+
+Registration, the request checks and the consent page work with the secret alone —
+enough to see everything up to the point where a real Google account is needed:
+
+```bash
+CID=$(curl -s -X POST localhost:3000/oauth/register \
+  -H 'content-type: application/json' \
+  -d '{"redirect_uris":["http://localhost:41234/callback"],"client_name":"Probe"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["client_id"])')
+
+open "http://localhost:3000/oauth/authorize?client_id=$CID\
+&redirect_uri=http%3A%2F%2Flocalhost%3A41234%2Fcallback&response_type=code\
+&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\
+&code_challenge_method=S256&scope=mcp&state=st1"
+```
+
+For the whole flow end to end, set the Google variables too and point the MCP
+Inspector at the endpoint — it drives the handshake itself, browser round trip
+included:
+
+```bash
+npx @modelcontextprotocol/inspector
+# transport: Streamable HTTP    URL: http://localhost:3000/mcp
+```
+
+It registers itself, shows the consent page, sends you to Google, comes back with a
+token and lists `get_server_info`.
+
+The web tests cover the same ground without a browser or a Google account:
+
+```bash
+cd web
+npm test          # includes the MCP endpoint and the OAuth flow
+npm run typecheck
+npm run lint
+```
+
+**Loopback is enough for local development, and only because it is loopback.** The
+OAuth flow otherwise requires HTTPS, so the discovery documents refuse a plain-HTTP
+origin anywhere else — no tunnel is needed to develop against `localhost`, and no
+tunnel makes a non-loopback HTTP origin acceptable.
+
+### What is not finished
+
+- **The OAuth flow's state is in memory.** Registered clients, pending logins,
+  authorization codes and refresh tokens live in one process: restart it and a client
+  must register and authorize again, and two instances do not share any of it. Access
+  tokens are unaffected — they are signed and self-contained, so `/mcp` validates one
+  without consulting anything — but the endpoint is not yet ready to be hosted
+  across instances. Durable storage is the same decision as per-user label storage,
+  and is deliberately left to be made once.
+- **Tokens cannot be revoked before they expire**, which follows from their being
+  self-contained. They last an hour; rotating `OAUTH_SIGNING_SECRET` invalidates all
+  of them at once.
+- **No `revocation_endpoint`**, and registration uses the mechanism the MCP
+  specification now marks deprecated (RFC 7591) because it is the one clients speak
+  today. Client ID Metadata Documents are the successor to add.
+
 ## Repository layout
 
 Two Agent Skills implement Inbox Labeler:
@@ -564,7 +713,12 @@ data/
 ├── labels.example.json   documentation only, never read at runtime
 ├── labels.json           the working copy — local, gitignored, created on first use
 └── matches.json          match counts — local, gitignored, created on first use
-web/                      the web UI
+web/
+├── app/                  the web UI, and the MCP and OAuth routes
+└── lib/
+    ├── identity.ts       who an authenticated request belongs to — one stable id
+    ├── mcp/              the MCP server, its one tool, and the auth boundary
+    └── oauth/            the authorization server: discovery, grants, tokens
 README.md
 ```
 
