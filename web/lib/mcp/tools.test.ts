@@ -11,7 +11,7 @@ import test from "node:test";
  * so "Alice cannot see Bob's labels" is tested against the same path a hostile
  * client would use rather than against a function call with a different argument.
  */
-process.env.MCP_PUBLIC_URL = "http://localhost:3000";
+process.env.PUBLIC_ORIGIN = "http://localhost:3000";
 process.env.OAUTH_SIGNING_SECRET = "test-signing-secret-of-at-least-32-bytes";
 
 const { handleMcpRequest } = await import("./endpoint.ts");

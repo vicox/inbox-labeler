@@ -57,9 +57,9 @@ async function refusal(work: () => unknown): Promise<string> {
 // --- nothing is assumed in production -------------------------------------
 
 test("production refuses to run without a public origin", async () => {
-  const message = await inProduction({ MCP_PUBLIC_URL: undefined }, () => refusal(deployment));
+  const message = await inProduction({ PUBLIC_ORIGIN: undefined }, () => refusal(deployment));
 
-  assert.match(message, /MCP_PUBLIC_URL is not set/);
+  assert.match(message, /PUBLIC_ORIGIN is not set/);
   assert.equal(message.includes("localhost"), false, "and does not fall back to one");
 });
 
@@ -67,7 +67,7 @@ test("production refuses to run without durable storage", async () => {
   const { database } = await import("./db.ts");
 
   const message = await inProduction(
-    { MCP_PUBLIC_URL: PRODUCTION_ORIGIN, DATABASE_URL: undefined },
+    { PUBLIC_ORIGIN: PRODUCTION_ORIGIN, DATABASE_URL: undefined },
     () => refusal(database),
   );
 
@@ -76,7 +76,7 @@ test("production refuses to run without durable storage", async () => {
 
 test("production refuses to run without a signing secret", async () => {
   const message = await inProduction(
-    { MCP_PUBLIC_URL: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: undefined },
+    { PUBLIC_ORIGIN: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: undefined },
     () => refusal(signingKey),
   );
 
@@ -92,7 +92,7 @@ test("a short signing secret is refused rather than stretched", async () => {
 // --- the URLs a client will actually see -----------------------------------
 
 test("every public URL is derived from the configured origin", async () => {
-  const config = await inProduction({ MCP_PUBLIC_URL: PRODUCTION_ORIGIN }, deployment);
+  const config = await inProduction({ PUBLIC_ORIGIN: PRODUCTION_ORIGIN }, deployment);
 
   assert.deepEqual(config, {
     issuer: "https://inboxlabeler.com",
@@ -108,23 +108,58 @@ test("every public URL is derived from the configured origin", async () => {
   });
 });
 
-test("a trailing slash or a path on the configured origin is ignored", async () => {
-  // A client compares the issuer literally, so it must not vary with how someone
-  // happened to type the variable.
-  for (const written of [
-    "https://inboxlabeler.com",
-    "https://inboxlabeler.com/",
-    "https://inboxlabeler.com/some/path",
-  ]) {
-    const config = await inProduction({ MCP_PUBLIC_URL: written }, deployment);
+test("a trailing slash is not a difference", async () => {
+  // A client compares the issuer byte for byte, so it must not vary with how
+  // somebody happened to type the variable — and these two are the same origin.
+  for (const written of ["https://inboxlabeler.com", "https://inboxlabeler.com/"]) {
+    const config = await inProduction({ PUBLIC_ORIGIN: written }, deployment);
     assert.equal(config.issuer, "https://inboxlabeler.com", written);
     assert.equal(config.resource, "https://inboxlabeler.com/mcp", written);
   }
 });
 
+test("a path is refused rather than quietly dropped", async () => {
+  // Every endpoint is derived by appending to this value, so dropping a path
+  // would serve the OAuth surface from somewhere nobody configured — and nothing
+  // would say so until a client failed.
+  const message = await inProduction({ PUBLIC_ORIGIN: "https://inboxlabeler.com/app" }, () =>
+    refusal(deployment),
+  );
+
+  assert.match(message, /must be an origin with no path/);
+  assert.match(message, /https:\/\/inboxlabeler\.com/, "and it says what to use instead");
+});
+
+test("a query or a fragment is refused too", async () => {
+  for (const written of ["https://inboxlabeler.com?x=1", "https://inboxlabeler.com#x"]) {
+    assert.match(
+      await inProduction({ PUBLIC_ORIGIN: written }, () => refusal(deployment)),
+      /no path, query or fragment/,
+      written,
+    );
+  }
+});
+
+test("something that is not a URL at all is refused", async () => {
+  for (const written of ["inboxlabeler.com", "not a url", "://x"]) {
+    assert.match(
+      await inProduction({ PUBLIC_ORIGIN: written }, () => refusal(deployment)),
+      /is not a URL|must be an http or https URL/,
+      written,
+    );
+  }
+});
+
+test("a scheme other than http or https is refused", async () => {
+  assert.match(
+    await inProduction({ PUBLIC_ORIGIN: "ftp://inboxlabeler.com" }, () => refusal(deployment)),
+    /must be an http or https URL/,
+  );
+});
+
 test("no discovery document mentions localhost when a real origin is configured", async () => {
   const documents = await inProduction(
-    { MCP_PUBLIC_URL: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: "x".repeat(48) },
+    { PUBLIC_ORIGIN: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: "x".repeat(48) },
     async () => {
       const paths = [
         "/.well-known/oauth-protected-resource/mcp",
@@ -149,7 +184,7 @@ test("no discovery document mentions localhost when a real origin is configured"
 });
 
 test("the protected resource document is published at the path RFC 9728 requires", async () => {
-  const config = await inProduction({ MCP_PUBLIC_URL: PRODUCTION_ORIGIN }, deployment);
+  const config = await inProduction({ PUBLIC_ORIGIN: PRODUCTION_ORIGIN }, deployment);
 
   // The resource's path is reflected into the well-known route, so /mcp is
   // published under /.well-known/oauth-protected-resource/mcp and not at the bare
@@ -161,7 +196,7 @@ test("the protected resource document is published at the path RFC 9728 requires
 });
 
 test("a production origin is never treated as insecure", async () => {
-  const config = await inProduction({ MCP_PUBLIC_URL: PRODUCTION_ORIGIN }, deployment);
+  const config = await inProduction({ PUBLIC_ORIGIN: PRODUCTION_ORIGIN }, deployment);
   const options = authMetadataOptions(config);
 
   // The flag that lets a loopback origin serve OAuth metadata over plain HTTP.
@@ -171,10 +206,10 @@ test("a production origin is never treated as insecure", async () => {
 });
 
 test("an http origin is only ever tolerated on loopback", async () => {
-  const loopback = await inProduction({ MCP_PUBLIC_URL: "http://localhost:3000" }, deployment);
+  const loopback = await inProduction({ PUBLIC_ORIGIN: "http://localhost:3000" }, deployment);
   assert.equal(loopback.insecure, true);
 
-  const remote = await inProduction({ MCP_PUBLIC_URL: "http://inboxlabeler.com" }, deployment);
+  const remote = await inProduction({ PUBLIC_ORIGIN: "http://inboxlabeler.com" }, deployment);
   assert.equal(remote.insecure, false, "a non-loopback http origin gets no exemption");
 
   // And nothing will publish metadata for it: the SDK validates the issuer URL
@@ -189,20 +224,20 @@ test("an http origin is only ever tolerated on loopback", async () => {
 // --- what a misconfigured deployment tells the world ----------------------
 
 test("a misconfigured deployment does not name its own variables to a client", async () => {
-  const response = await inProduction({ MCP_PUBLIC_URL: undefined }, async () => {
+  const response = await inProduction({ PUBLIC_ORIGIN: undefined }, async () => {
     const answer = discoveryResponse(new Request("https://inboxlabeler.com/.well-known/oauth-authorization-server"));
     return { status: answer.status, body: await answer.text() };
   });
 
   assert.equal(response.status, 500);
-  for (const leak of ["MCP_PUBLIC_URL", "DATABASE_URL", "OAUTH_SIGNING_SECRET", "GOOGLE_CLIENT"]) {
+  for (const leak of ["PUBLIC_ORIGIN", "DATABASE_URL", "OAUTH_SIGNING_SECRET", "GOOGLE_CLIENT"]) {
     assert.equal(response.body.includes(leak), false, `the 500 body names ${leak}`);
   }
   assert.match(response.body, /not configured correctly/);
 });
 
 test("the authorization server metadata promises only what is implemented", async () => {
-  const config = await inProduction({ MCP_PUBLIC_URL: PRODUCTION_ORIGIN }, deployment);
+  const config = await inProduction({ PUBLIC_ORIGIN: PRODUCTION_ORIGIN }, deployment);
   const metadata = authorizationServerMetadata(config);
 
   // Deployment-readiness rather than protocol: a document that advertises an
@@ -240,7 +275,7 @@ test("a request to a non-canonical hostname is refused, whatever the endpoint", 
 
   const answers = await inProduction(
     {
-      MCP_PUBLIC_URL: PRODUCTION_ORIGIN,
+      PUBLIC_ORIGIN: PRODUCTION_ORIGIN,
       OAUTH_SIGNING_SECRET: "x".repeat(48),
       DATABASE_URL: undefined,
     },
@@ -263,7 +298,7 @@ test("a request to a non-canonical hostname is refused, whatever the endpoint", 
 test("the guard passes a request that did arrive at the canonical hostname", async () => {
   const { wrongOrigin } = await import("./oauth/origin.ts");
 
-  const config = await inProduction({ MCP_PUBLIC_URL: PRODUCTION_ORIGIN }, deployment);
+  const config = await inProduction({ PUBLIC_ORIGIN: PRODUCTION_ORIGIN }, deployment);
 
   // Asserted on the guard itself rather than through a handler, because a handler
   // that gets past it goes on to need a database, and what is being checked here
@@ -279,7 +314,7 @@ test("the guard passes a request that did arrive at the canonical hostname", asy
 
 test("a forged X-Forwarded-Host does not make a preview host canonical", async () => {
   const response = await inProduction(
-    { MCP_PUBLIC_URL: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: "x".repeat(48) },
+    { PUBLIC_ORIGIN: PRODUCTION_ORIGIN, OAUTH_SIGNING_SECRET: "x".repeat(48) },
     () => {
       const request = new Request("https://preview.vercel.app/oauth/register", {
         method: "POST",
@@ -302,7 +337,7 @@ test("a forged X-Forwarded-Host does not make a preview host canonical", async (
 test("development is exempt, so a loopback checkout keeps working", async () => {
   // The exemption is derived from the configured origin being loopback, not from
   // a switch — so it cannot be left on for a real one.
-  const config = await inProduction({ MCP_PUBLIC_URL: "http://localhost:3000" }, deployment);
+  const config = await inProduction({ PUBLIC_ORIGIN: "http://localhost:3000" }, deployment);
   assert.equal(config.insecure, true);
 
   const response = await handleAuthorize(

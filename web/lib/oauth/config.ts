@@ -74,7 +74,7 @@ export type Deployment = {
  * it actually is.
  */
 export function deployment(): Deployment {
-  const origin = new URL(configuredOrigin()).origin;
+  const origin = checkedOrigin(configuredOrigin());
   const resource = `${origin}/mcp`;
 
   return {
@@ -90,13 +90,57 @@ export function deployment(): Deployment {
   };
 }
 
+/**
+ * The configured value, reduced to an origin — or refused if it was not one.
+ *
+ * A trailing slash is tolerated, because `https://host/` and `https://host` are
+ * the same origin and a client comparing the issuer byte for byte must not get a
+ * different answer depending on how somebody happened to type it.
+ *
+ * A *path* is refused rather than dropped, which is the part worth being strict
+ * about. Every endpoint here is derived by appending to this value, so a
+ * configured `https://host/app` would silently produce `https://host/oauth/token`
+ * — a deployment that looks configured and serves its OAuth surface from
+ * somewhere nobody asked for. Nothing about that would show up until a client
+ * failed, so it fails here instead, while there is still somebody reading the
+ * message. Mounting the application under a path is a different feature and would
+ * need Next.js' own `basePath`; this refuses it rather than pretending.
+ */
+function checkedOrigin(configured: string): string {
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new ConfigurationError(
+      `PUBLIC_ORIGIN is not a URL: ${JSON.stringify(configured)}. It must be an origin such as https://inboxlabeler.com.`,
+    );
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new ConfigurationError(
+      `PUBLIC_ORIGIN must be an http or https URL, not ${url.protocol}`,
+    );
+  }
+
+  const path = url.pathname === "/" ? "" : url.pathname;
+  if (path || url.search || url.hash) {
+    throw new ConfigurationError(
+      `PUBLIC_ORIGIN must be an origin with no path, query or fragment. ` +
+        `Got ${JSON.stringify(configured)}; every OAuth and MCP URL is derived by appending to it, ` +
+        `so use ${JSON.stringify(url.origin)} instead.`,
+    );
+  }
+
+  return url.origin;
+}
+
 function configuredOrigin(): string {
-  const configured = process.env.MCP_PUBLIC_URL?.trim();
+  const configured = process.env.PUBLIC_ORIGIN?.trim();
   if (configured) return configured;
 
   if (process.env.NODE_ENV === "production") {
     throw new ConfigurationError(
-      "MCP_PUBLIC_URL is not set. It must be the public origin this deployment is reached at, e.g. https://inboxlabeler.com.",
+      "PUBLIC_ORIGIN is not set. It must be the public origin this deployment is reached at, e.g. https://inboxlabeler.com.",
     );
   }
   return DEVELOPMENT_ORIGIN;

@@ -12,7 +12,7 @@ import test from "node:test";
  * callback does once it has verified an identity — so these tests stand in for
  * the callback's output rather than skipping past the flow.
  */
-process.env.MCP_PUBLIC_URL = "http://localhost:3000";
+process.env.PUBLIC_ORIGIN = "http://localhost:3000";
 process.env.OAUTH_SIGNING_SECRET = "test-signing-secret-of-at-least-32-bytes";
 process.env.GOOGLE_CLIENT_ID = "test-google-client-id";
 process.env.GOOGLE_CLIENT_SECRET = "test-google-client-secret";
@@ -870,7 +870,7 @@ test("a grant cannot be retargeted by moving the deployment's origin", async () 
   // this reaches the resource check. In production that guard would refuse a
   // request at the old host first; the two are separate layers, and this is the
   // inner one.
-  process.env.MCP_PUBLIC_URL = "http://localhost:3999";
+  process.env.PUBLIC_ORIGIN = "http://localhost:3999";
   try {
     const { status, body } = await token({
       grant_type: "authorization_code",
@@ -884,7 +884,7 @@ test("a grant cannot be retargeted by moving the deployment's origin", async () 
     assert.equal(body.error, "invalid_grant");
     assert.equal(body.access_token, undefined, "no token was minted for the new resource");
   } finally {
-    process.env.MCP_PUBLIC_URL = ORIGIN;
+    process.env.PUBLIC_ORIGIN = ORIGIN;
   }
 });
 
@@ -991,7 +991,7 @@ test("a grant for a resource this deployment no longer serves is refused without
 
   // Another loopback port, so the canonical-origin guard stays exempt and this
   // reaches the resource check rather than being turned away at the door.
-  process.env.MCP_PUBLIC_URL = "http://localhost:3999";
+  process.env.PUBLIC_ORIGIN = "http://localhost:3999";
   let refused;
   try {
     refused = await token({
@@ -1000,7 +1000,7 @@ test("a grant for a resource this deployment no longer serves is refused without
       refresh_token: tokens.refresh_token,
     });
   } finally {
-    process.env.MCP_PUBLIC_URL = ORIGIN;
+    process.env.PUBLIC_ORIGIN = ORIGIN;
   }
 
   assert.equal(refused.status, 400);

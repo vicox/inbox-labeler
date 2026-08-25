@@ -10,7 +10,7 @@ import test from "node:test";
  * this is stuck at the 401, so these assertions are about the walk working
  * rather than about the JSON looking a certain way.
  */
-process.env.MCP_PUBLIC_URL = "http://localhost:3000";
+process.env.PUBLIC_ORIGIN = "http://localhost:3000";
 process.env.OAUTH_SIGNING_SECRET = "test-signing-secret-of-at-least-32-bytes";
 
 const { discoveryResponse } = await import("./discovery.ts");

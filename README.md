@@ -611,7 +611,7 @@ file documents each variable in full; in short:
 
 | Variable | |
 | --- | --- |
-| `MCP_PUBLIC_URL` | the public origin every OAuth and MCP URL is derived from. Optional in development, where it defaults to `http://localhost:3000`; **required in production** |
+| `PUBLIC_ORIGIN` | the public origin every OAuth and MCP URL is derived from — scheme and host, no path. Optional in development, where it defaults to `http://localhost:3000`; **required in production** |
 | `OAUTH_SIGNING_SECRET` | what access tokens are signed with. At least 32 bytes — `openssl rand -base64 48` |
 | `GOOGLE_CLIENT_ID` | a Google OAuth 2.0 "Web application" client |
 | `GOOGLE_CLIENT_SECRET` | its secret |
@@ -619,7 +619,7 @@ file documents each variable in full; in short:
 | `ALLOWED_EMAILS` | optional: comma-separated addresses allowed to sign in. Unset means any verified Google account may — see [Who may sign in](#who-may-sign-in) |
 | `DEV_DATABASE_DIR` | development only: where that embedded database keeps its files. Unset means in-memory |
 
-The Google client needs one authorised redirect URI, matching `MCP_PUBLIC_URL`:
+The Google client needs one authorised redirect URI, matching `PUBLIC_ORIGIN`:
 `http://localhost:3000/oauth/callback` locally. The scopes are `openid email` — the
 address is read to check the access list below and then dropped, and `profile` is
 not requested, so Inbox Labeler never learns a name or a picture.
@@ -864,7 +864,7 @@ are required in production:
 | | |
 | --- | --- |
 | `DATABASE_URL` | the pooled Neon string — **secret** |
-| `MCP_PUBLIC_URL` | `https://inboxlabeler.com` |
+| `PUBLIC_ORIGIN` | `https://inboxlabeler.com` |
 | `OAUTH_SIGNING_SECRET` | `openssl rand -base64 48` — **secret** |
 | `GOOGLE_CLIENT_ID` | the Google client |
 | `GOOGLE_CLIENT_SECRET` | its secret — **secret** |
@@ -873,7 +873,9 @@ are required in production:
 addresses may sign in; without it, any Google account with a verified email may.
 Both are intended — see [Who may sign in](#who-may-sign-in).
 
-`MCP_PUBLIC_URL` must be the canonical domain rather than a per-deployment hostname:
+`PUBLIC_ORIGIN` is an origin, not the MCP endpoint's URL — `https://inboxlabeler.com`, never
+`…/mcp`; a path, query or fragment is refused rather than silently dropped. It must
+be the canonical domain rather than a per-deployment hostname:
 the issuer and a token's audience are compared literally by clients, so a preview URL
 would mint tokens nothing accepts at the real one.
 
@@ -904,7 +906,7 @@ Authorised redirect URI        https://inboxlabeler.com/oauth/callback
 ```
 
 Neither is written down in the application. The callback URL is derived from
-`MCP_PUBLIC_URL`, so pointing the deployment at a different domain needs no code
+`PUBLIC_ORIGIN`, so pointing the deployment at a different domain needs no code
 change — only the matching entry here.
 
 **4. Migrate.** Once, against the production database, before the new code serves:

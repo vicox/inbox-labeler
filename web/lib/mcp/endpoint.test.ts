@@ -11,7 +11,7 @@ import { SignJWT } from "jose";
  * deployment at all. The origin is loopback so that the discovery documents are
  * allowed to be served over http.
  */
-process.env.MCP_PUBLIC_URL = "http://localhost:3000";
+process.env.PUBLIC_ORIGIN = "http://localhost:3000";
 process.env.OAUTH_SIGNING_SECRET = "test-signing-secret-of-at-least-32-bytes";
 
 const { handleMcpRequest } = await import("./endpoint.ts");
