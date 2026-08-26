@@ -24,6 +24,7 @@ const { AUTHORIZATION_CODE_TTL_MS, oauthStore } = await import("./store.ts");
 const { createPkce } = await import("./pkce.ts");
 const { deployment, signingKey } = await import("./config.ts");
 const { accessTokenVerifier } = await import("./tokens.ts");
+const { database } = await import("../db.ts");
 
 const ORIGIN = "http://localhost:3000";
 const REDIRECT_URI = "http://localhost:41234/callback";
@@ -1319,4 +1320,52 @@ test("a refused attempt racing a valid one does not deny it", async () => {
 
   assert.equal(wrong.status, 400);
   assert.equal(right.status, 200, "the holder was not starved by the refusal");
+});
+
+// --- what the rate limiter writes down ------------------------------------
+//
+// The limiter counts callers, and the row it writes is keyed by who the caller
+// is. Before this was a digest it was the address itself, which made
+// `oauth_rate_limits` a plaintext record of every address that had visited. The
+// counting is unchanged — the tests above still reach the ceiling and still
+// leave a second address unaffected — so what is left to establish is what
+// ends up in the table.
+
+test("no address reaches the rate-limit table", async () => {
+  const authorizeCaller = "192.0.2.77";
+  const registerCaller = "192.0.2.78";
+
+  const { body: client } = await register({}, registerCaller);
+  const pkce = createPkce();
+
+  const visit = await handleAuthorize(
+    new Request(authorizeUrl(client.client_id, pkce.challenge), {
+      headers: { "x-forwarded-for": authorizeCaller },
+    }),
+  );
+  assert.equal(visit.status, 200, "the visit was counted, not refused");
+
+  const sql = await database();
+  const rows = await sql.query<{ bucket: string }>("SELECT bucket FROM oauth_rate_limits");
+
+  assert.ok(rows.length > 0, "both endpoints wrote a bucket");
+  for (const address of [authorizeCaller, registerCaller]) {
+    assert.equal(
+      rows.some((row) => row.bucket.includes(address)),
+      false,
+      `a bucket contains ${address}`,
+    );
+  }
+
+  // Not just these two: nothing in the table may look like an address at all,
+  // which is the assertion that keeps holding when someone adds a third
+  // endpoint and reaches for the address again.
+  for (const row of rows) {
+    assert.doesNotMatch(row.bucket, /\d+\.\d+\.\d+\.\d+/, `${row.bucket} looks like an address`);
+    assert.match(row.bucket, /^(authorize|register):[0-9a-f]{32}$/);
+  }
+
+  // And the namespaces are still telling the two endpoints apart.
+  assert.ok(rows.some((row) => row.bucket.startsWith("authorize:")));
+  assert.ok(rows.some((row) => row.bucket.startsWith("register:")));
 });

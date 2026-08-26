@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { errorRedirect, validateAuthorization } from "./authorization-request.ts";
-import { deployment } from "./config.ts";
+import { deployment, signingKey } from "./config.ts";
 import { consentPage } from "./consent.ts";
 import {
   clearConsentSession,
@@ -14,7 +14,7 @@ import { wrongOrigin } from "./origin.ts";
 import {
   AUTHORIZATIONS_PER_WINDOW,
   AUTHORIZATION_WINDOW_MS,
-  callerAddress,
+  callerBucket,
   tooManyRequestsPage,
 } from "./rate-limit.ts";
 import { identityProvider } from "./provider.ts";
@@ -38,8 +38,14 @@ import { PENDING_LOGIN_TTL_MS, oauthStore } from "./store.ts";
 
 export async function handleAuthorize(request: Request): Promise<Response> {
   let config;
+  // The key is read here rather than where it is used, so that a deployment
+  // missing it is answered as the configuration fault it is instead of failing
+  // later with something shaped like a client error. It is needed on this path
+  // because the rate-limit bucket is derived from it: see `callerBucket`.
+  let key;
   try {
     config = deployment();
+    key = signingKey();
   } catch (error) {
     return configurationFault(error, "text");
   }
@@ -55,7 +61,7 @@ export async function handleAuthorize(request: Request): Promise<Response> {
   // visit that gets past here parks a request, so the ceiling is what keeps a
   // stranger from filling the table with them.
   const allowed = await store.consumeRateLimit(
-    `authorize:${callerAddress(request)}`,
+    callerBucket("authorize", request, key),
     AUTHORIZATIONS_PER_WINDOW,
     AUTHORIZATION_WINDOW_MS,
   );

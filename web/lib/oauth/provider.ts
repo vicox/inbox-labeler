@@ -78,10 +78,23 @@ export type IdentityProvider = {
 /**
  * The provider this deployment authenticates with.
  *
- * One today. Google, because InboxLabeler already reads a Gmail mailbox and
- * writes to a Drive folder on the user's behalf — the account it labels mail
- * for is the account it should identify them by, and asking them for a second
- * identity would be inventing a distinction the product does not have.
+ * One today. Google, because the mail these labels are for lives in Gmail — the
+ * account whose mail is being labelled is the account to identify someone by,
+ * and asking for a second identity would invent a distinction the product does
+ * not have.
+ *
+ * ## Authenticating is all Google is used for here
+ *
+ * This service requests `openid email` and nothing else. It never reads a
+ * mailbox, never lists a message and never writes to Drive; there is no Gmail or
+ * Drive scope anywhere in it, and no code that could use one.
+ *
+ * That access belongs to the skills in `skills/`, which run in the user's own
+ * environment and talk to Google directly. Nothing they read passes through
+ * here: what reaches this server is a label name and one timestamp per match,
+ * which is why the store has nowhere to put a subject or a sender. Stated
+ * because the distinction is easy to lose — the product as a whole does read
+ * mail, and this half of it deliberately does not.
  */
 export function identityProvider(): IdentityProvider {
   return google();

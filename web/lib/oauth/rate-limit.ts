@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+
 import { errorPage, json } from "./responses.ts";
 
 /**
@@ -33,21 +35,61 @@ export const AUTHORIZATIONS_PER_WINDOW = 60;
 export const AUTHORIZATION_WINDOW_MS = 10 * 60_000;
 
 /**
- * Who to count a request against.
+ * The caller's address, as the platform saw them.
  *
- * The left-most entry of `X-Forwarded-For` is the caller as the platform saw
- * them. It is client-controlled and therefore spoofable, which matters less here
- * than anywhere else: a spoofed address spreads one attacker across many buckets
- * rather than letting them into somebody else's, so the failure mode is a weaker
- * limit and never a bypass of anything but the limit itself.
+ * The left-most entry of `X-Forwarded-For`. It is client-controlled and
+ * therefore spoofable, which matters less here than anywhere else: a spoofed
+ * address spreads one attacker across many buckets rather than letting them into
+ * somebody else's, so the failure mode is a weaker limit and never a bypass of
+ * anything but the limit itself.
  *
  * Callers behind one address share a bucket, which is the other half of the same
  * trade. It is why the limits are set where a shared office does not notice them.
+ *
+ * Deliberately not exported. The address is an identifier for a person, and the
+ * only thing this module does with it is derive the bucket below — so keeping it
+ * private is what makes "the raw address does not leave here" a property of the
+ * code rather than a habit of its callers.
  */
-export function callerAddress(request: Request): string {
+function callerAddress(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-for");
   const first = forwarded?.split(",")[0]?.trim();
   return first || "unknown";
+}
+
+/**
+ * The bucket a request is counted in: a namespace, and who the caller is.
+ *
+ * The caller is identified by an HMAC of their address rather than the address
+ * itself, because this value is a primary key in `oauth_rate_limits` and
+ * therefore the one place a rate limit would otherwise leave a plaintext record
+ * of who visited. Counting is all the limiter needs, and counting only needs the
+ * same caller to land in the same bucket — which a digest does exactly as well
+ * as an address.
+ *
+ * Keyed, not a bare hash. The space of IPv4 addresses is small enough to
+ * enumerate completely, so a plain digest of one is reversible by anyone holding
+ * the table; an HMAC is not, without the key. The same reasoning and the same
+ * construction as `userRef` in `lib/identity.ts`, and the key is taken as an
+ * argument for the same reason: a caller that has one has been through the
+ * configuration check, and this module never reads the environment.
+ *
+ * `kind` keeps the two open endpoints counting separately, so a client
+ * registering does not spend a person's authorization budget. It stays in the
+ * clear: it names an endpoint, not a caller, and a readable prefix is what makes
+ * a row in that table diagnosable at all.
+ */
+export function callerBucket(
+  kind: "authorize" | "register",
+  request: Request,
+  key: Uint8Array,
+): string {
+  const caller = createHmac("sha256", key)
+    .update(`inboxlabeler.caller:${callerAddress(request)}`)
+    .digest("hex")
+    .slice(0, 32);
+
+  return `${kind}:${caller}`;
 }
 
 /** The answer for a caller who is over the limit, for a client that parses JSON. */

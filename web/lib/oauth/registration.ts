@@ -1,10 +1,10 @@
 import { MAX_REGISTRATION_BYTES, validateRegistration } from "./clients.ts";
-import { deployment } from "./config.ts";
+import { deployment, signingKey } from "./config.ts";
 import { wrongOrigin } from "./origin.ts";
 import {
   REGISTRATIONS_PER_WINDOW,
   REGISTRATION_WINDOW_MS,
-  callerAddress,
+  callerBucket,
   tooManyRequests,
 } from "./rate-limit.ts";
 import { configurationFault, json, oauthError } from "./responses.ts";
@@ -32,8 +32,11 @@ import { oauthStore } from "./store.ts";
  */
 export async function handleRegistration(request: Request): Promise<Response> {
   let config;
+  // Needed here for the rate-limit bucket, as on the authorization endpoint.
+  let key;
   try {
     config = deployment();
+    key = signingKey();
   } catch (error) {
     return configurationFault(error);
   }
@@ -43,7 +46,7 @@ export async function handleRegistration(request: Request): Promise<Response> {
 
   const store = await oauthStore();
   const allowed = await store.consumeRateLimit(
-    `register:${callerAddress(request)}`,
+    callerBucket("register", request, key),
     REGISTRATIONS_PER_WINDOW,
     REGISTRATION_WINDOW_MS,
   );
