@@ -18,6 +18,15 @@ export function PolicyGraph() {
   useEffect(() => {
     fetch("/api/labels")
       .then(async (response) => {
+        // No policy is a normal state rather than a failure, and hosted it is the
+        // usual one: the policy lives in Postgres behind /mcp, while this view reads
+        // the local file. The server's answer for that case names the file, which a
+        // hosted reader has no access to, so the empty policy is what shows.
+        if (response.status === 404) {
+          setLabels([]);
+          return;
+        }
+
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? "Could not read the policy.");
         setLabels(body.labels as Label[]);

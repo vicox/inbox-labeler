@@ -971,7 +971,7 @@ browser for the consent page and Google sign-in. After that its tools are
 
 **One known gap in the hosted deployment.** The web UI at `/` reads
 `data/labels.json` from the filesystem, which is the local workflow's file and is not
-part of a Vercel deployment — so the page renders its "No policy yet" notice there,
+part of a Vercel deployment — so the page shows an empty policy there,
 while the MCP endpoint works normally against Postgres. Giving the UI the hosted,
 per-user state means signing users in on the web as well, which is its own piece of
 work and deliberately not part of this one.
