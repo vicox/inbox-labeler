@@ -7,7 +7,7 @@ export default function Home() {
       <header className="mb-10 border-b border-rule pb-5 sm:mb-14">
         <div className="flex items-baseline gap-4">
           <h1 className="font-display text-[19px] tracking-[-0.01em]">Inbox Labeler</h1>
-          <p className="text-[12.5px] text-ink-faint">Teach your AI what matters.</p>
+          <p className="text-[12.5px] text-ink-faint">Teach your AI how to organize your inbox.</p>
         </div>
 
         {/*
