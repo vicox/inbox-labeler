@@ -11,15 +11,13 @@ export default function Home() {
         </div>
 
         {/*
-          The closed beta keeps each user's labels in Postgres behind /mcp, while
-          this page reads the local data/labels.json the project grew out of. Both
-          are wanted — the local workflow still uses the file — so the difference
-          is explained rather than hidden, and without it the empty state below
-          reads as lost data to someone who just created labels over MCP.
+          How the beta is reached, and the whole of what this page has to say when
+          there is no local policy to draw. Where the state actually lives is not a
+          visitor's problem: they need to know how to connect, not which file this
+          view happens to read.
         */}
         <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-ink-faint">
-          Closed beta — used through an MCP client at /mcp. Labels created there are not shown on
-          this page yet: this view reads the local data/labels.json.
+          Closed beta — connect Inbox Labeler through your MCP client.
         </p>
       </header>
 

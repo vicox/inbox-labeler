@@ -46,6 +46,11 @@ export function PolicyGraph() {
 
   if (error) return <Notice>{error}</Notice>;
   if (!labels) return <Notice>Reading the policy…</Notice>;
+  // Nothing to draw, so nothing is drawn. Two panels reading zero would describe
+  // this view's own empty file, and hosted a reader would take them for the state
+  // of their labels — which lives in Postgres behind /mcp and is not what this
+  // reads.
+  if (labels.length === 0) return null;
 
   const openedLabel = labels.find((l) => l.label === opened) ?? null;
   const feeds = openedLabel
