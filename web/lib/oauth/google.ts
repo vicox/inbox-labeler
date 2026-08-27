@@ -59,6 +59,11 @@ export function google(): IdentityProvider {
   return {
     name: "google",
 
+    // Derived from the endpoint above rather than written again: two strings that
+    // have to agree are two strings that can stop agreeing, and this one governs
+    // what the consent page's policy admits.
+    authorizationOrigin: new URL(AUTHORIZATION_ENDPOINT).origin,
+
     authorizationUrl({ redirectUri, state, nonce, codeChallenge }) {
       const url = new URL(AUTHORIZATION_ENDPOINT);
       url.search = new URLSearchParams({

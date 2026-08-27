@@ -23,6 +23,7 @@ const { handleToken } = await import("./exchange.ts");
 const { AUTHORIZATION_CODE_TTL_MS, oauthStore } = await import("./store.ts");
 const { createPkce } = await import("./pkce.ts");
 const { deployment, signingKey } = await import("./config.ts");
+const { identityProvider } = await import("./provider.ts");
 const { accessTokenVerifier } = await import("./tokens.ts");
 const { database } = await import("../db.ts");
 
@@ -172,6 +173,121 @@ test("the consent page refuses to be framed", async () => {
   assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
 });
 
+/**
+ * The `form-action` source list the consent page emits, as written.
+ */
+function formActionSources(response: Response): readonly string[] {
+  const csp = response.headers.get("content-security-policy") ?? "";
+  const directive = csp
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part === "form-action" || part.startsWith("form-action "));
+
+  assert.ok(directive, "the consent page states a form-action policy");
+  return directive.split(/\s+/).slice(1);
+}
+
+/**
+ * Whether a source list admits a URL, for the expressions this policy uses.
+ *
+ * A small stand-in for the check a browser makes, which is the only reason this
+ * test can claim anything about what a browser will do.
+ */
+function admits(sources: readonly string[], target: URL, document: URL): boolean {
+  return sources.some((source) => {
+    if (source === "'self'") return target.origin === document.origin;
+    if (source === "'none'") return false;
+    try {
+      return new URL(source).origin === target.origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * The form and the policy governing it, read from the same response.
+ *
+ * `form-action` is the one directive on this page that can stop the flow rather
+ * than merely harden it, so the two halves are held in agreement here: whatever
+ * the action resolves to must be something the emitted policy admits, and the
+ * policy must admit nothing else. Asserting only that the header contains a
+ * string would not have caught an action the header does not cover.
+ */
+test("a browser honouring the page's own policy can submit its form", async () => {
+  const { html, response } = await upToConsent();
+  const documentUrl = new URL(`${ORIGIN}/oauth/authorize`);
+
+  const action = /<form method="post" action="([^"]*)">/.exec(html)?.[1];
+  assert.ok(action, "the form states where it posts");
+
+  // Same origin as the page, whether written as a path or in full.
+  const target = new URL(action, documentUrl);
+  assert.equal(target.origin, documentUrl.origin, "the form posts to this origin");
+  assert.equal(target.pathname, "/oauth/authorize", "and back to this endpoint");
+
+  const sources = formActionSources(response);
+  assert.ok(admits(sources, target, documentUrl), `form-action does not admit ${target.href}`);
+
+  // And the identity provider's authorization origin, because an approval is
+  // answered with a redirect there and a browser checks that leg as well.
+  const provider = new URL(identityProvider().authorizationOrigin);
+  assert.equal(provider.origin, "https://accounts.google.com", "Google, for this deployment");
+  assert.ok(admits(sources, provider, documentUrl), "form-action does not admit the provider");
+
+  // Those two and nothing else. Pinned as a set, so widening the policy has to be
+  // a deliberate edit here rather than something a change elsewhere can smuggle in.
+  assert.deepEqual([...sources].sort(), ["'self'", "https://accounts.google.com"]);
+
+  // And admits nothing arbitrary: no wildcard and no scheme-wide source, either
+  // of which would let this page post an approval somewhere else.
+  assert.equal(
+    admits(sources, new URL("https://evil.example/collect"), documentUrl),
+    false,
+    "an unrelated origin is not a permitted form destination",
+  );
+  for (const source of sources) {
+    assert.doesNotMatch(source, /^\*/, `wildcard source ${source}`);
+    assert.doesNotMatch(source, /^[a-z]+:$/, `scheme-wide source ${source}`);
+  }
+
+  // Both buttons are in that one form, so Approve and Cancel post to the same
+  // place and there is no second destination on the page.
+  assert.equal((html.match(/<form\b/g) ?? []).length, 1, "one form");
+  assert.match(html, /<button type="submit" name="approve" value="yes">/);
+  assert.match(html, /<button type="submit" name="deny" value="yes">/);
+});
+
+/**
+ * The production failure this whole pair of tests exists for.
+ *
+ * ChatGPT reached the consent page, the page rendered, and Chrome then refused
+ * the approval — not because the same-origin POST was disallowed, but because it
+ * checks `form-action` against the URL a form submission *lands* on, and the
+ * answer to an approval is a redirect to Google. So the two are checked together
+ * here: the redirect actually produced, against the policy actually emitted by
+ * the page that produced it.
+ */
+test("the redirect an approval is answered with is admitted by the page that collected it", async () => {
+  const { response, reference, cookie } = await upToConsent();
+  const documentUrl = new URL(`${ORIGIN}/oauth/authorize`);
+  const sources = formActionSources(response);
+
+  const answer = await approve(reference, cookie);
+  assert.equal(answer.status, 302, "an approval redirects");
+
+  const location = answer.headers.get("location");
+  assert.ok(location, "and says where to");
+
+  const landing = new URL(location);
+  assert.equal(landing.origin, "https://accounts.google.com", "to the identity provider");
+  assert.ok(
+    admits(sources, landing, documentUrl),
+    `form-action does not admit ${landing.origin}, so a browser enforcing the ` +
+      "redirect leg blocks the approval",
+  );
+});
+
 test("an unknown client is stopped before any redirect happens", async () => {
   const response = await handleAuthorize(new Request(authorizeUrl("not-a-client", "challenge")));
 
@@ -198,17 +314,101 @@ test("approving forwards to Google, carrying our own PKCE and nonce", async () =
   assert.equal(location.searchParams.get("redirect_uri"), `${ORIGIN}/oauth/callback`);
 });
 
+/**
+ * Where a refusal hands the browser next, read from the page it answers with.
+ *
+ * A refusal is not answered with a redirect, and that is the point: the client's
+ * origin is registered by whoever registered the client, so it must never be a
+ * permitted `form-action` destination on the page that collects approvals. The
+ * journey there is a navigation the form did not perform.
+ */
+async function handOffTarget(response: Response): Promise<URL> {
+  assert.equal(response.status, 200, "a refusal is answered on this origin");
+  assert.equal(response.headers.get("location"), null, "and not by redirecting to the client");
+
+  const html = await response.text();
+  const refresh = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(html)?.[1];
+  assert.ok(refresh, "the page carries the navigation");
+
+  const link = /<a href="([^"]+)">/.exec(html)?.[1];
+  assert.equal(link, refresh, "and its fallback link goes to the same place, not a second one");
+
+  // The one un-escaping this needs: the URL was written into an HTML attribute.
+  const target = new URL(refresh.replace(/&amp;/g, "&"));
+
+  // The page names a host to the reader; it has to be the one it is sending to.
+  const shown = /<code>([^<]+)<\/code>/.exec(html)?.[1];
+  assert.equal(shown, target.host, "the page names the host it actually navigates to");
+
+  return target;
+}
+
 test("declining sends access_denied back to the client, with its state and the issuer", async () => {
   const { reference, cookie } = await upToConsent();
 
-  const response = await approve(reference, cookie, "deny");
+  const target = await handOffTarget(await approve(reference, cookie, "deny"));
 
-  assert.equal(response.status, 302);
-  const location = new URL(response.headers.get("location")!);
-  assert.equal(location.origin + location.pathname, REDIRECT_URI);
-  assert.equal(location.searchParams.get("error"), "access_denied");
-  assert.equal(location.searchParams.get("state"), "client-state");
-  assert.equal(location.searchParams.get("iss"), ORIGIN);
+  assert.equal(target.origin + target.pathname, REDIRECT_URI, "the URI validated at registration");
+  assert.equal(target.searchParams.get("error"), "access_denied");
+  assert.equal(target.searchParams.get("state"), "client-state", "the client's own state, exactly");
+  assert.equal(target.searchParams.get("iss"), ORIGIN);
+  assert.equal(target.searchParams.get("code"), null, "and no authorization code");
+});
+
+/**
+ * The refusal path, against the policy that governs the page it starts on.
+ *
+ * Chrome refused the old shape — a form submission answered with a redirect to
+ * the client — because it checks `form-action` against where a submission lands.
+ * The fix must not be to trust the client's origin, so this holds both halves:
+ * the client origin stays out of the policy, and the refusal still arrives.
+ */
+test("a refusal reaches the client without the client's origin entering any policy", async () => {
+  const { reference, cookie, response: consent } = await upToConsent();
+  const clientOrigin = new URL(REDIRECT_URI).origin;
+
+  // The page that collects the approval admits this origin and Google. Not the
+  // client, and nothing arbitrary.
+  const sources = formActionSources(consent);
+  assert.deepEqual([...sources].sort(), ["'self'", "https://accounts.google.com"]);
+  assert.equal(
+    admits(sources, new URL(REDIRECT_URI), new URL(`${ORIGIN}/oauth/authorize`)),
+    false,
+    "the client's own redirect URI is not a permitted form destination",
+  );
+  assert.ok(!consent.headers.get("content-security-policy")?.includes(clientOrigin));
+  assert.ok(!consent.headers.get("content-security-policy")?.includes("evil.example"));
+
+  const refusal = await approve(reference, cookie, "deny");
+
+  // The hand-off page is stricter than the consent page: it has no form at all.
+  const policy = refusal.headers.get("content-security-policy") ?? "";
+  assert.match(policy, /default-src 'none'/);
+  assert.match(policy, /form-action 'none'/);
+  assert.match(policy, /frame-ancestors 'none'/);
+  assert.ok(!policy.includes(clientOrigin), "and still does not name the client");
+  assert.ok(!policy.includes("evil.example"));
+
+  // The binding is cleared on the way out, as it is for an approval.
+  assert.match(refusal.headers.get("set-cookie") ?? "", /il_consent_[0-9a-f]+=;/);
+
+  // And the refusal arrives where it was always going.
+  const target = await handOffTarget(refusal);
+  assert.equal(target.origin + target.pathname, REDIRECT_URI);
+  assert.equal(target.searchParams.get("error"), "access_denied");
+});
+
+test("a refusal cannot be replayed, and issues nothing on a second attempt", async () => {
+  const { reference, cookie } = await upToConsent();
+
+  assert.equal((await approve(reference, cookie, "deny")).status, 200, "the first is answered");
+
+  // The pending login was spent by the first refusal, so there is nothing left to
+  // refuse — and nothing that could hand a browser onward a second time.
+  const again = await approve(reference, cookie, "deny");
+  assert.equal(again.status, 400);
+  assert.equal(again.headers.get("location"), null);
+  assert.doesNotMatch(await again.text(), /http-equiv="refresh"/);
 });
 
 test("an approval cannot be replayed", async () => {

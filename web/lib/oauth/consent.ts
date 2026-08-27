@@ -112,6 +112,63 @@ export function consentPage(prompt: ConsentPrompt): string {
 }
 
 /**
+ * The page a refusal is handed back to the client through.
+ *
+ * A refusal has to reach the client as `access_denied` at its own redirect URI,
+ * and that URI is on somebody else's origin — registered dynamically, by anyone.
+ * Answering the approval form with a redirect straight there is the obvious
+ * shape, and it is the one Chrome refuses: it checks `form-action` against the
+ * URL a form submission *lands* on, so a client origin would have to be in the
+ * consent page's policy for a refusal to complete. Putting it there would mean a
+ * caller naming its own origin in the policy of the page that collects
+ * approvals, which is precisely what that policy exists to stop.
+ *
+ * So the refusal lands here instead — same origin, allowed by `'self'` — and the
+ * journey to the client is a second navigation that the form did not perform. A
+ * `meta refresh` is not a form submission and no CSP directive governs it, which
+ * is the whole reason this page exists rather than a redirect. It needs no script,
+ * which matters because `default-src 'none'` would refuse one.
+ *
+ * ## Why that is not an open redirect
+ *
+ * The destination is not read from this request. It is built in the caller from
+ * the redirect URI that was validated against the client's registration before
+ * the consent page was ever shown, and it is spent along with the pending login —
+ * there is no parameter here, no endpoint to point somewhere else, and nothing a
+ * visitor can vary. The `state` inside it is the client's own, percent-encoded by
+ * `URLSearchParams` and escaped again for the attribute it sits in.
+ *
+ * The host shown to the reader is taken from that same URL, so what the page says
+ * and where it goes cannot disagree.
+ *
+ * The link is a fallback, for a browser or a setting where meta refresh does not
+ * fire. Without it a refusal would be a dead end rather than an answer.
+ */
+export function handOffPage(location: string): string {
+  const target = escapeHtml(location);
+  // Read off the destination rather than passed in beside it. Two arguments that
+  // have to describe the same place can describe different ones, and the failure
+  // would be a page telling someone it is sending them somewhere it is not.
+  const host = escapeHtml(hostOf(location));
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta http-equiv="refresh" content="0;url=${target}">
+<title>Returning to ${host}</title>
+</head>
+<body>
+<p>Not connected. Returning you to <code>${host}</code>.</p>
+<p><a href="${target}">Continue</a> if nothing happens.</p>
+</body>
+</html>
+`;
+}
+
+/**
  * The redirect URI reduced to what a person can judge.
  *
  * Host and port, dropping the path and query: a long URI invites skimming, and

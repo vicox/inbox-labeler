@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { errorRedirect, validateAuthorization } from "./authorization-request.ts";
 import { deployment, signingKey } from "./config.ts";
-import { consentPage } from "./consent.ts";
+import { consentPage, handOffPage } from "./consent.ts";
 import {
   clearConsentSession,
   consentSessionOf,
@@ -104,7 +104,12 @@ export async function handleAuthorize(request: Request): Promise<Response> {
       clientName: client?.clientName,
       redirectUri: validated.redirectUri,
       reference,
-      action: config.authorizationEndpoint,
+      // The path rather than the absolute URL. Both are the same destination, and
+      // `form-action 'self'` admits either — but a path cannot disagree with the
+      // document it was served in, which an absolute URL built from configuration
+      // could. Derived from the endpoint the metadata advertises, so the approval
+      // can only ever post back to the endpoint that served it.
+      action: new URL(config.authorizationEndpoint).pathname,
     }),
     {
       status: 200,
@@ -116,8 +121,7 @@ export async function handleAuthorize(request: Request): Promise<Response> {
         // else's. Framing it is how a clickjacking attack collects an approval
         // the user believed was something else.
         "x-frame-options": "DENY",
-        "content-security-policy":
-          "frame-ancestors 'none'; default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+        "content-security-policy": consentPolicy(identityProvider().authorizationOrigin),
         "referrer-policy": "no-referrer",
       },
     },
@@ -184,7 +188,11 @@ export async function handleConsent(request: Request): Promise<Response> {
     // A refusal is the client's answer to receive, not an error page for the
     // user to be stuck on. `access_denied` is what OAuth defines for exactly
     // this, and the client can then say so in its own words.
-    return redirect(
+    //
+    // Handed over on this origin rather than redirected to, because the client's
+    // origin is registered by whoever registered the client and must not appear in
+    // this flow's `form-action`. See `handOffPage`.
+    return handOff(
       errorRedirect(
         {
           kind: "redirectable",
@@ -220,6 +228,58 @@ export async function handleConsent(request: Request): Promise<Response> {
   } catch (error) {
     return configurationFault(error, "text");
   }
+}
+
+/**
+ * The consent page's Content-Security-Policy.
+ *
+ * Everything is denied, and then the least that has to be allowed back. The one
+ * directive that can stop the flow rather than merely harden it is `form-action`,
+ * because a browser checks it against where a form submission *lands* as well as
+ * where it was addressed — and this page's one form performs two navigations:
+ * the approval posts back here, and the answer is a redirect to the identity
+ * provider. Chrome enforces the second leg, Firefox does not; naming both is what
+ * makes the flow complete in either.
+ *
+ * The provider's origin is the only value here that is not a literal, and it
+ * comes from the provider implementation. Nothing a request carried can reach
+ * this string: a redirect URI from a dynamic registration, a header, a query
+ * parameter would each let a caller name its own origin as a place this page may
+ * send an approval.
+ *
+ * `style-src 'unsafe-inline'` is unchanged and is what lets the page carry its
+ * own `<style>` block; it grants nothing to a script, which `default-src 'none'`
+ * continues to refuse outright.
+ */
+function consentPolicy(providerOrigin: string): string {
+  return [
+    "frame-ancestors 'none'",
+    "default-src 'none'",
+    "style-src 'unsafe-inline'",
+    `form-action 'self' ${providerOrigin}`,
+  ].join("; ");
+}
+
+/**
+ * A refusal, answered on this origin and carried onward by the page itself.
+ *
+ * `200` rather than a redirect: the point is that the navigation to the client is
+ * not one this form performed, so `form-action` never governs it and the client's
+ * origin never has to be trusted. The policy here is tighter than the consent
+ * page's — this page has no form and no style block, so both are denied outright.
+ */
+function handOff(location: string, setCookie: string): Response {
+  return new Response(handOffPage(location), {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "set-cookie": setCookie,
+      "x-frame-options": "DENY",
+      "content-security-policy": "default-src 'none'; form-action 'none'; frame-ancestors 'none'",
+      "referrer-policy": "no-referrer",
+    },
+  });
 }
 
 /**

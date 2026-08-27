@@ -190,6 +190,8 @@ test("a token for a different login is still refused", async () => {
 function providerReturning(email: string, id = "google:1"): IdentityProvider {
   return {
     name: "stub",
+    // Kept in step with the URL below, the way a real provider derives it.
+    authorizationOrigin: "https://example.test",
     authorizationUrl: () => "https://example.test/authorize",
     identify: async () => ({ user: { id }, email }),
   };

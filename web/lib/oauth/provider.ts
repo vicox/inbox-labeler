@@ -46,6 +46,26 @@ export type IdentityProvider = {
   readonly name: string;
 
   /**
+   * The origin `authorizationUrl` sends the browser to.
+   *
+   * Stated on its own because it has to be known *before* a URL is built. The
+   * consent page names it in its Content-Security-Policy as a permitted form
+   * destination, and that header leaves with the page — long before anyone has
+   * approved anything. A browser checks `form-action` against where a form
+   * submission lands as well as where it was addressed, and an approval here is
+   * answered with a redirect to the provider, so the provider's origin is a
+   * navigation that one form performs. Chrome enforces that leg; omitting the
+   * origin is what stops an approval from ever reaching it.
+   *
+   * It must come from the provider implementation and from nothing else. A value
+   * a request could influence — a client's registered redirect URI, a header, a
+   * registration body — would let a caller name its own origin in the policy of
+   * the page that collects an approval, which is the single thing that policy is
+   * there to prevent.
+   */
+  readonly authorizationOrigin: string;
+
+  /**
    * Where to send the browser so the user can authenticate.
    *
    * Every argument is something we generate and remember, and check again on
