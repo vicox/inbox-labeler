@@ -46,11 +46,21 @@ export function PolicyGraph() {
 
   if (error) return <Notice>{error}</Notice>;
   if (!labels) return <Notice>Reading the policy…</Notice>;
-  // Nothing to draw, so nothing is drawn. Two panels reading zero would describe
-  // this view's own empty file, and hosted a reader would take them for the state
-  // of their labels — which lives in Postgres behind /mcp and is not what this
-  // reads.
-  if (labels.length === 0) return null;
+  // Nothing to draw. Two panels reading zero would describe this view's own empty
+  // file, and hosted a reader would take them for the state of their labels —
+  // which lives in Postgres behind /mcp and is not what this reads. So the space
+  // says how to get in instead, in the same place and the same shape as any other
+  // notice on this page.
+  if (labels.length === 0) {
+    return (
+      <Notice>
+        <span className="block text-ink">Closed beta</span>
+        <span className="mt-1.5 block text-[12.5px] text-ink-faint">
+          Connect Inbox Labeler through your MCP client.
+        </span>
+      </Notice>
+    );
+  }
 
   const openedLabel = labels.find((l) => l.label === opened) ?? null;
   const feeds = openedLabel
