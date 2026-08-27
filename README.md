@@ -869,6 +869,21 @@ are required in production:
 | `GOOGLE_CLIENT_ID` | the Google client |
 | `GOOGLE_CLIENT_SECRET` | its secret — **secret** |
 
+And four more for the legal pages, which are configuration rather than source
+because for a deployment run by an individual they are a person's name and home
+address:
+
+| | |
+| --- | --- |
+| `LEGAL_NAME` | the operator's name |
+| `LEGAL_ADDRESS_LINE_1` | street and number |
+| `LEGAL_ADDRESS_LINE_2` | postcode and place |
+| `LEGAL_CONTACT_EMAIL` | the address data-protection requests go to |
+
+All four are required together. With any of them unset, `/impressum`, `/privacy`
+and `/terms` answer `404` rather than render a disclosure that names nobody. No
+other route reads them.
+
 `ALLOWED_EMAILS` is optional and separate from those: with it, only the listed
 addresses may sign in; without it, any Google account with a verified email may.
 Both are intended — see [Who may sign in](#who-may-sign-in).
