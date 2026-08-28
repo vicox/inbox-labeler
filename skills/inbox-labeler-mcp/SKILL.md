@@ -1,653 +1,846 @@
 ---
 name: inbox-labeler-mcp
-description: Classify inbox messages against the label policy held by the hosted Inbox Labeler MCP, decide how much attention each message deserves, and record what matched. Use when the user asks Inbox Labeler to process or label their inbox, to apply attention, or to create, change, list or delete labels. This is the hosted version: the MCP holds the policy and the history, and no local files are involved.
+description: Manage persistent labels (a readable label, a type and an instruction) and apply them to inbox emails as Gmail labels on demand. Use when the user wants to create, change, rename, delete, list or inspect labels, or asks Inbox Labeler to process / label their inbox. This is the hosted version: the labels and the match history live in the Inbox Labeler MCP server instead of local files.
 ---
 
 # Inbox Labeler
 
-## Purpose
-
-Inbox Labeler holds a **label policy** — user-defined labels, each naming an aspect of a message
-worth noticing — and applies it to the user's mail on request. Four workflows, kept apart:
-
-| Workflow | What it does | When it runs |
-| --- | --- | --- |
-| **Process labels** | classify unread inbox messages that are not already processed, against the policy | the user asks to process or label the inbox |
-| **Apply attention** | act on what the policy implies for already-classified mail | only when the user asks |
-| **Update matches** | record matched labels for successfully handled messages | inside processing — never asked for |
-| **Edit the policy** | create, change, rename or delete a label | only when the user asks |
-
-Processing never changes the policy, changing the policy never touches mail, and nothing is
-scheduled: every run happens because the user asked for it.
-
-## Preconditions
-
-**The MCP is not enough on its own.** It holds the label policy and the match history and nothing
-else, and it has **no access to the user's email account**. So two connections are needed: the
-**mail system** provides the messages and the mailbox actions taken on them, the **MCP** provides
-the policy and the history. For Gmail that means Gmail connected with the permissions below; another
-mail system works too, as long as it can do the same things.
-
-### What the mail connection has to be able to do
-
-**To process an inbox at all:**
-
-- read inbox messages
-- tell whether a message is **in the inbox** and whether it is **currently unread** — both are part
-  of what makes a message eligible; see [step 3](#3-select-the-messages-to-process)
-- inspect the mailbox labels already on a message, and the mailbox labels that exist
-- create Inbox Labeler's mailbox labels in the `IL/` namespace, and apply them to messages
-
-**Strongly preferred:** applying several labels in **one** operation — fewer writes, fewer ways to
-end up half applied, though not by itself all-or-nothing; see
-[step 8](#8-commit-the-mailbox-state-then-record-what-matched).
-
-**To apply attention, additionally:** star a message, and mark a message as read. **Optional:**
-setting a label's colour, which never blocks anything.
-
-### When a connection is missing or limited
-
-- **The Inbox Labeler MCP is unreachable** → stop and say so. **Never classify from a remembered,
-  cached or stale policy.**
-- **Mail cannot be read** → inbox processing cannot run.
-- **`IL/` labels cannot be created or applied at all** → classification may be presented as a plan,
-  but nothing is processed and no history recorded. [Step 2](#2-prepare-the-mailbox) decides this;
-  [Failure, retry and consistency](#failure-retry-and-consistency) says what follows. A *single*
-  failing label is the narrower case, handled in those same two places.
-- **Starring or marking read is unavailable** → processing is unaffected. Only the corresponding
-  [apply attention](#apply-attention) actions cannot run, and that has to be reported rather than
-  worked around.
-
-**Identity is the authenticated MCP session.** Never ask the user for an account id and never pass
-one to any tool.
-
-### Two sets of tools share names
-
-`get_labels`, `create_label`, `update_label`, `delete_label`, `get_matches` and `record_matches`
-**always mean Inbox Labeler's MCP tools and always act on the policy**. A mail connector usually
-exposes similarly named tools for **mailbox** labels; confusing them writes to the wrong place.
-Anything to do with the mailbox is described here in prose — "apply the mailbox label".
-
-## Core workflow
-
-### 1. Load the label policy
-
-**Call `get_labels` first, on every run.** What it returns is the policy, complete and
-authoritative:
+Inbox Labeler manages **labels**. Each one names the aspect of a message it detects and the
+Gmail label to apply when that aspect is present:
 
 | Field | Meaning |
 | --- | --- |
-| `label` | the label's text, which is its whole identity |
-| `type` | `detection` or `derived` |
-| `attention` | `none`, `normal` or `high` |
-| `instruction` | how to decide whether it applies, in natural language |
-| `required_labels` | *derived only* — detection labels that must **all** have matched |
-| `recommended_labels` | *derived only* — detection labels offered as context |
+| `label` | the label itself — its identity and its display text, e.g. `Delivery arriving soon` |
+| `type` | how the label decides whether it applies: `detection` or `derived` |
+| `attention` | what the label asks of the user: `none`, `normal` or `high`. Defaults to `normal` |
+| `instruction` | how you decide whether that aspect is present in a message, in natural language |
+| `required_labels` | *derived only* — detection labels that must all have matched before this label is evaluated |
+| `recommended_labels` | *derived only* — detection labels offered as context when they matched |
 
-**An empty policy means stop.** It does not mean "nothing matched": say that none are configured and
-offer to create some. Never invent a starter set, and never carry a policy between runs.
+`label` holds the label only. `IL/` is Inbox Labeler's Gmail namespace — plumbing, not part of
+a label's identity — so it never appears in stored configuration and is added only when talking
+to Gmail: **`Delivery arriving soon` resolves to the Gmail label `IL/Delivery arriving soon`,
+spaces and all.** Resolve in that direction every time you create a Gmail label, apply one,
+remove one, compare one against a message's labels, or name one in output.
 
-### 2. Prepare the mailbox
+## Labels are identified by their text
 
-Once per run, after `get_labels` and before any message is touched.
+A label's text is **the only identifier**. There is no separate name and no technical id: what
+the user reads is what other labels reference and what `update_label` and `delete_label` address.
 
-**Establish that the processed marker works:** `IL/processed` must be readable, must exist or be
-creatable, and must be applicable to a message. **If any of the three cannot be established, this
-run processes nothing** — classification may still be offered **as a plan**, but apply no semantic
-mailbox labels, call no `record_matches`, and describe no message as processed. Say which failed.
+- **Write labels as ordinary phrases.** They **may contain spaces** and should read naturally:
+  `Delivery arriving soon`, not `DeliveryArrivingSoon`. Capitalise the first word and leave the
+  rest lowercase unless the words are proper nouns or an acronym — `BVK`, `VIP customer`,
+  `PDF invoice` keep their capitals. Do not force title case.
+- **References are exact label text.** A derived label names its detection labels by their
+  label, spaces included: `required_labels: ["Delivery", "Imminent"]`.
+- **Labels are unique, ignoring case.** `Delivery` and `delivery` are the same label, so a
+  create that collides is rejected. The spelling you give is the spelling that is stored, and
+  lookups match either way — asking for `"large amount"` finds `Large amount`, whether you are
+  picking it out of what `get_labels` returned or naming it in `update_label` or `delete_label`.
+- **Leading and trailing spaces are trimmed and inner runs collapse** to single spaces, so
+  `"  Large   amount "` is stored as `Large amount`. Punctuation, digits and `&` are fine.
+- **Renaming is `update_label` with `new_label`**, and it rewrites every reference to that
+  label in the same write. Renaming onto a label that already exists is rejected.
+- **Lowercase is reserved for the system.** Inbox Labeler's own two labels are spelled
+  `processed` and `no-match`, and the lowercase form is what marks them as internal. User labels
+  are readable phrases starting with a capital; nothing you create should imitate the system
+  spelling.
 
-**Bring the mailbox labels in line with the policy.** Walk the **complete** set `get_labels`
-returned and, where supported, ensure each `IL/<label>` exists and its colour matches that label's
-`attention` — the **only** place colours are written, and where a changed attention level catches
-up ([Colour follows attention](#colour-follows-attention)). Ensure `IL/no-match` exists too; it and
-`IL/processed` are state, not labels, and get no colour.
+## Label types
 
-**A label that could not be created here does not stop the run.** Report it and carry on with
-messages that do not need it; if a later message does, repeat that one label's preparation at the
-point of use. If that fails too, the message is
-[A. Failure before the mailbox commit](#a-failure-before-the-mailbox-commit).
+`type` is the label's kind. There are two, and both produce a Gmail label the same way — the
+only difference is how they decide.
 
-**Create nothing outside `IL/`**, and never rename, recolour or otherwise modify a mailbox label of
-the user's own.
+| Type | Question it answers |
+| --- | --- |
+| `detection` | *What can I directly observe in this email?* |
+| `derived` | *Given the email and the detection labels that matched, what does this mean?* |
 
-### 3. Select the messages to process
+**Detection labels recognise facts. Derived labels interpret those facts.**
 
-**During normal processing, consider only messages that are currently in the inbox, are currently
-unread, and do not carry `IL/processed`.** This is the authoritative eligibility rule; everywhere
-else in this document refers here. All three conditions are required, and **a message failing any
-one of them is skipped** — not classified, given no semantic `IL/` label, no `IL/no-match` and no
-`IL/processed`, and never recorded.
+A detection label reads the email and decides. `Invoice`, `Newsletter`, `Login`,
+`Large amount` are detection labels.
 
-**Unread and `IL/processed` are different things and neither substitutes for the other.** Unread is
-a **scope filter**; `IL/processed` is a **processing state**:
-
-- A **read** message with no `IL/processed` is **out of scope**, deliberately. Inbox Labeler labels
-  mail the user still has to deal with. Normal processing never reaches back for it.
-- An **unread** message carrying `IL/processed` is **out of scope for normal processing** — the work
-  is finished. That message is what [apply attention](#apply-attention) works on.
-- A message that is not in the inbox — filed or archived — is out of scope either way.
-
-**Processing never changes a message's read state.** Marking read belongs to apply attention alone.
-
-#### Narrow the search where the mail system can
-
-Ask the mail system for candidates that are already in the inbox, unread and without `IL/processed`,
-using whatever its search supports. **Narrowing the search is an optimisation, never the
-guarantee** — the per-message re-check below enforces eligibility, including where a search cannot
-express one of the three conditions at all.
-
-Gmail, as **one example**:
+A derived label does **not** rediscover the email from scratch. It reads the email *together
+with the detection labels that already matched* and decides what that combination means:
 
 ```text
-in:inbox is:unread -label:<the IL/processed mailbox label>
+Email
+  ↓
+Detection labels:  Invoice, Large amount
+  ↓
+Derived label:     Large payment needs attention
 ```
-
-Some connectors want that label's **id** rather than its display name; use whichever the connected
-one accepts. **This is an illustration, not the interface.**
-
-The user may narrow selection further — "everything from today" — and that is selection, not
-meaning: it changes which messages are considered, never how any of them is judged.
-
-#### Re-check every message individually
-
-**A search result is a suggestion; the message itself is the authority.** Mail systems return
-thread-shaped results, so one match can bring along messages that do not qualify, and a message's
-state can change between the search and the moment it is reached.
-
-**Immediately before processing each individual message, re-check all three conditions on that
-message:**
-
-1. Is it **in the inbox**?
-2. Is it **currently unread**?
-3. Does it **lack `IL/processed`**?
-
-**Only if all three are true may that message be processed.** If any one is false, skip it: do not
-classify it, do not apply a semantic `IL/` label, do not apply `IL/no-match`, do not apply
-`IL/processed`, and do not call `record_matches`. A skipped message does not count against the
-run's limit — see [Bound each run](#bound-each-run).
-
-Steps 4 to 8 then run for each message that qualified, one message at a time.
-
-### 4. Evaluate detection labels
-
-Work through **every** detection label and decide each one **independently**. Whether a label
-applies depends on exactly two things: the message, and that label's own `instruction`.
-
-- **The instruction is authoritative.** Never classify from a label's name. `Login` means whatever
-  its instruction says it means.
-- Subject, sender and a snippet are usually enough; read the full body when they are not.
-- The result is the complete set that applied — none, one, several, or all.
-- **Note one short reason per match.** That is the **evidence**, which the derived stage and the
-  summary both need.
-
-### 5. Evaluate derived labels
-
-Only after the detection stage has finished for that message. A derived label does not rediscover
-the message: it reads the message **together with the detection labels that matched**.
-
-- **Skip a derived label whose `required_labels` did not all match.** Not a failure; it does not
-  apply to this message.
-- **`recommended_labels` never gate anything.** Include the ones that matched as context; when none
-  did, evaluate the label anyway.
-- A derived label with **no** `required_labels` is evaluated for every message.
-- Derived labels never reference other derived labels, and one derived label's outcome is never
-  input to another.
-- **A derived label may say no.** The required labels decide which messages are considered; the
-  instruction decides which of those the label belongs on. Report a rejection — that is the
-  interpretation doing its job.
-
-One derived label per evaluation, given exactly four things and nothing else:
 
 ```text
-Email          from, subject, and enough body to judge
-Detection      only the labels that matched, each with its one-line evidence
-               (if none matched, say so rather than listing anything)
-Label          the derived label and its instruction
-Task           does it apply? yes or no, briefly explained
+Email
+  ↓
+Detection labels:  Travel booking, Flight cancellation
+  ↓
+Derived label:     Travel disruption
 ```
 
-Treat the detection labels as established facts — do not re-check them.
+The email is still available when a derived label is evaluated. The detection labels are
+structured context that makes the decision easier and more consistent — use them as given
+facts rather than re-deriving them.
 
-### 6. Determine attention
+A derived label names the detection labels it builds on:
 
-Attention is **not a label**. It is what a label asks of the user, declared per label and computed
-per message, and it is never stored on a message: `none` means the user never needs to see this,
-`normal` (the default) means leave it alone, `high` means important and stays important.
+- **`required_labels`** — every one of them must have matched, or the derived label is not
+  evaluated at all for that message. This is the gate.
+- **`recommended_labels`** — helpful context. Include them in the prompt when they matched;
+  when they did not, evaluate the derived label anyway.
 
-**The highest-priority level among the labels a message carries wins, ranked
-`high` > `none` > `normal`:**
+Both hold **labels** (`Large amount`, not `IL/Large amount`), both may be empty, and both
+may only point at detection labels. A derived label with no `required_labels` is evaluated for
+every message. Derived labels never reference other derived labels — there is no chaining, and
+Inbox Labeler rejects it.
 
-1. any matched label at `high` → **high**
-2. otherwise, any matched label at `none` → **none**
-3. otherwise → **normal**
+Inbox Labeler rejects any type other than `detection` and `derived`. Do not invent a third.
 
-`normal` loses to both because it is the *absence* of a request: a message carrying `Invoice`
-(`normal`) and `Newsletter` (`none`) comes out **none**. A message with no matched labels comes out
-`normal` and is left alone.
+## What a label is
 
-**Do not invent a different priority scheme**, do not weight by how many labels matched, and do not
-let your own reading override it.
+> A user-defined way to detect an aspect of a message that is interesting to the user.
 
-### 7. Present or act on the result
+The aspect may be broad or narrow — that is entirely the user's choice, and both are equally
+valid. A `Social` label covering everything from a social platform is a good one; so is
+`Connection` for connection requests alone; so is a user keeping both. The set of labels the
+user has defined *is* the model. Have no opinion about how fine-grained it should be.
 
-Attention decides prioritisation and presentation; it **never** causes a label to be invented. When
-presenting mail, order by attention — `high`, then `normal`, then `none` — and say which labels
-produced each level. During processing, reporting the level is enough: changing mailbox state is the
-separate [apply attention](#apply-attention) workflow.
+What the design does fix is how labels behave together:
 
-### 8. Commit the mailbox state, then record what matched
+- **Independent.** Evaluate each label on its own. Whether it triggers depends on two things
+  only: the message, and its own instruction.
+- **Any number may trigger.** A message triggers as many labels as have their aspect present
+  — none, one, several, or all of them.
+- **Every trigger produces a Gmail label.** Each label whose aspect is present contributes
+  its Gmail label to the message.
+- **Additive, not alternatives.** For a given message the outcome is the complete set of
+  triggered labels, and the Gmail labels applied are exactly that set.
 
-**This is the authoritative per-message sequence.** Nothing else restates it.
+Example: a LinkedIn connection request carries several aspects at once. It is social mail, and
+it is a connection request. If the user keeps labels for both, the message carries `IL/Social`
+and `IL/Connection` together — and the strongest Attention among them, not any single label,
+determines what happens to the message next.
+
+## Labels are timeless
+
+A label describes what an email **means**. It says nothing about whether that meaning is still
+relevant today.
+
+> **Evaluate every label as if you were reading the email at the moment it was written.**
+
+- The current date and the current time never influence whether a label applies. Neither does
+  how long ago the email arrived.
+- The same email gets the same labels whether it is processed a minute after it lands or five
+  years later.
+- A relative date inside the email — "tomorrow", "in one hour", "next Tuesday" — is a fact
+  *about the email*. Read it against the email's own date if you need to, never against now.
+
+An email sent last week saying:
+
+> Your package will arrive tomorrow.
+
+can still correctly receive `Imminent`, because the arrival *was* imminent when the email was
+written. The same goes for "Payment due tomorrow", "Meeting starts in one hour" and "Flight
+departs today": each is a property of the email itself, so it stays true forever.
+
+**"Is this still relevant?" is a different question at a different stage.** Labels like
+`Needs attention today`, `Today` or `Expired` are prioritisation, not labelling — they compare the
+email against the clock, and that comparison may legitimately belong to a later stage once one
+exists. Detection labels and derived labels never make it. If a user asks for a label of that
+kind, say so plainly and offer the timeless part instead: `Payment due soon` can be detected from
+the email ("states a payment due within a few days of writing"), while whether that due date has
+now passed cannot.
+
+Time still has one legitimate role, and it is upstream of evaluation: **choosing which messages
+to look at.** When the user asks to process "everything from today", narrowing the search is
+selection, not evaluation — the labels each selected message then receives are unaffected by
+when the run happens.
+
+It also makes a run reproducible. Because evaluation does not depend on when it runs, the same
+email evaluated twice yields the same labels — if an outcome ever differs, the labels changed,
+never the clock.
+
+## The `IL/` namespace
+
+**Inbox Labeler owns the entire `IL/` namespace.** Every Gmail label whose name starts with
+`IL/` is Inbox Labeler's to create, apply and remove — it is the whole of Inbox Labeler's
+model, expressed as Gmail labels. The namespace is not a place for the user to keep labels of
+their own: if they ask you to hand-create or hand-maintain one, explain that Inbox Labeler
+manages that namespace and that the way to get a new `IL/` label is to add a label.
+
+Every kind of Gmail label Inbox Labeler works with lives inside it:
+
+| Kind | Origin | Logical label | Gmail label |
+| --- | --- | --- | --- |
+| **business labels** | the `label` of a detection or derived label | `Invoice`, `Large payment needs attention` | `IL/Invoice`, `IL/Large payment needs attention` |
+| **system labels** | Inbox Labeler's own state and outcome | `processed`, `no-match` | `IL/processed`, `IL/no-match` |
+
+Both label types produce business labels; nothing in Gmail distinguishes a derived label's
+output from a detection label's.
+
+The two system labels:
+
+| Gmail label | Meaning |
+| --- | --- |
+| `IL/processed` | Inbox Labeler has finished evaluating this message. |
+| `IL/no-match` | No **detection** label matched this message. |
+
+`IL/processed` records **processing state** — that the work happened. `IL/no-match` records
+the **outcome** of detection — that no detection label matched. They serve different purposes
+and are applied independently of one another.
+
+`IL/no-match` is about detection only, and is decided before derived labels are evaluated. So a
+message can carry `IL/no-match` together with a derived business label, in the one case where
+that is possible: a derived label with no `required_labels` triggering on a message no detection
+label matched. That is rare and it is correct — detection found nothing, interpretation found
+something.
+
+`processed` and `no-match` are **reserved system labels**. The lowercase spelling is the
+convention that marks them as internal: user labels are readable phrases, system labels are
+not. Inbox Labeler rejects them on create, on rename and on delete, case-insensitively, so
+`Processed` and `NO-MATCH` are refused too. If a user asks for one, explain that it is Inbox
+Labeler's own state rather than something a label can model, and agree on a different label.
+
+**The boundary runs the other way too: Inbox Labeler never modifies a Gmail label outside
+`IL/`.** Everything outside the namespace belongs to Gmail or to the user — `INBOX`, `UNREAD`,
+`STARRED`, `IMPORTANT`, `CATEGORY_*`, and every label they made themselves. Read them freely
+when they help a decision; never add or remove one.
+
+## Storage
+
+Labels are stored in the **Inbox Labeler MCP server**. There is nothing local to read and
+nothing to load first — an empty list is a normal starting state, not an error. Reach them only
+through the MCP tools below, which validate before writing.
+
+How often each label matches is kept apart from the labels, in the same server, written only by
+`record_matches` and read only by `get_matches`. No label ever holds a count.
+
+**Two sets of tools share three names.** Inbox Labeler's MCP exposes `create_label`,
+`update_label` and `delete_label` for **labels**, and Gmail's connector exposes `create_label`,
+`update_label` and `delete_label` for **Gmail labels**. All three names collide. They are
+different things, and confusing them writes to the wrong place. In this document the Inbox
+Labeler tools are always named with a note — "Inbox Labeler's `create_label`" — and a bare
+`create_label`, `update_label`, `delete_label`, `list_labels`, `label_message`,
+`unlabel_message`, `search_threads` or `get_thread` always means Gmail's.
+
+**Identity is the authenticated MCP session.** Never ask the user for an account id and never
+pass one to any tool.
+
+**Inbox Labeler records that a label matched, never what it matched.** A count carries the
+label, the calendar day taken from the email's own timestamp, and nothing else — no subject, no
+sender, no recipients, no message or thread id, nothing that could lead back to a message. The
+store answers "how often does this label fire" and is unable to answer anything else. Renaming
+a label carries its counts across and deleting one removes them, so the labels and their counts
+never disagree about which labels exist.
+
+## Managing labels
+
+Use Inbox Labeler's MCP tools:
 
 ```text
-1  classify detection labels                                     (step 4)
-2  evaluate derived labels                                       (step 5)
-3  determine attention                                           (step 6)
-4  determine the complete set of IL/ labels this message needs
-5  MAILBOX COMMIT — establish that whole set, IL/processed included
-6  call record_matches, if any semantic label matched
+# list every label
+get_labels
+
+# create a detection label — type defaults to detection
+create_label   label:       "Invoice"
+               instruction: "The message is an invoice or bill for a purchase or service."
+
+# create a derived label — the reference lists take several labels
+create_label   label:               "Large payment needs attention"
+               type:                "derived"
+               instruction:         "A payment this large should be looked at before it is due."
+               required_labels:     ["Large amount"]
+               recommended_labels:  ["Invoice"]
+
+# update a label — pass only the fields that change
+update_label   label:       "Invoice"
+               instruction: "Invoices and receipts, but not payment reminders."
+
+# rename a label — every reference to it is rewritten in the same write
+update_label   label:     "Invoice"
+               new_label: "Invoice or receipt"
+
+# delete a label
+delete_label   label: "Invoice or receipt"
 ```
 
-**The mailbox is the primary operational state; match history is secondary bookkeeping.** That is
-what fixes this order: `IL/processed` is established *before* anything is recorded, so a message
-whose matches were counted can never look unprocessed to a later run.
+`update_label` and `delete_label` address a label by its text, matched case-insensitively, so
+`"large amount"` finds `Large amount`. If the user's wording does not match a stored label, call
+`get_labels` and match it yourself; if several plausibly fit, ask instead of guessing. There is
+no tool that fetches one label — `get_labels` returns them all, and you pick.
 
-**Step 4 — the complete set**, worked out before anything is written: every semantic label that
-matched as `IL/<label>`, detection and derived alike; `IL/no-match` when no detection label matched;
-and `IL/processed`, always. Policy texts carry no prefix, so `Large amount` becomes
-`IL/Large amount`. Every label must exist before the commit — from
-[step 2](#2-prepare-the-mailbox), or by repeating its preparation at the point of use.
+Every tool answers with the resulting label — including `type`, so the kind of label is always
+visible. On failure it answers with the reason instead.
 
-**Step 5 — the mailbox commit**, before anything is recorded. Prefer one operation where the mail
-system applies several labels at once — `apply ["IL/Invoice", "IL/Large amount", "IL/processed"]`.
-**Accepting several labels in one call is not a guarantee that they are applied together:** treat it
-as atomic **only where the mail system explicitly guarantees atomicity**. Otherwise a call can leave
-a message partly labelled, or succeed while its response is lost.
+### Modelling what the user asked for
 
-**Without a multi-label operation, write them separately, in this order:**
+The user describes a label they want. Working out *how* to model it is your job. Never ask
+which type they want, never make them think about detection versus derived, and never default
+to detection without looking at the concept first.
+
+Start from meaning: **what would have to be true of an email for this label to belong on it?**
+
+- If that can be recognised **directly in the email**, it is a **detection label** —
+  `Invoice`, `Newsletter`, `Login`, `Flight cancellation`, `Large amount`.
+- If it is an **interpretation of things already recognised**, it is a **derived label** —
+  `Large payment needs attention`, `Travel disruption`, `Commercial opportunity`.
+
+Then ask **how many concepts the request contains.** One request does not imply one label:
+"invoices with unusually large amounts", "a cancellation or severe delay that ruins a trip" and
+"login codes and password reset links" all name more than one thing, and only some of them
+should become more than one label. Put every concept you find through the reuse question:
+
+> Would this concept be worth detecting on its own, on mail that has nothing to do with the
+> rest of this request?
+
+- **Yes, for more than one of them** — model each as its own detection label, and add a derived
+  label on top when the combination carries meaning or behaviour the parts do not: its own name,
+  its own interpretation, or its own attention. That derived label is what the user asked for;
+  the detection labels underneath are what make the answer reusable.
+- **No** — the concepts are one aspect described in several words. Model it as a single detection
+  label and let the instruction carry the detail.
+
+**Several concepts mentioned is not a reason to split — several concepts reusable apart is.**
+Wording that is tightly coupled, or that names parts nobody would look for on their own,
+describes one recognisable aspect, and one detection label models it best. When splitting would
+buy no reuse, it only buys labels nobody wanted. Prefer the simplest model that preserves reuse:
+as few labels as express the idea, and no fewer. Then:
+
+1. **Call `get_labels` first.** The detection labels that already exist are your vocabulary.
+   Reuse them instead of creating a near-duplicate: if `Large amount` is there, do not add
+   `Big amount`.
+2. **Name the observations the concept rests on.** When the user's label is an interpretation
+   and the observations it needs do not exist yet, those become supporting detection labels.
+3. **Create the supporting detection labels first**, then the derived label. Its references
+   must already exist, and a label's type cannot be changed afterwards — so decide the shape
+   before creating anything.
+
+Choosing between the two reference lists follows from the user's wording:
+
+- **`required_labels` is an AND gate** — every one of them must have matched. Use it for
+  observations that all have to hold.
+- **`recommended_labels` is context** — any subset may be present. Use it when one observation
+  *or* another is enough to make the interpretation worth considering, and let the instruction
+  weigh them.
+
+**A derived label should be able to say no.** The required labels decide which messages are
+considered; the instruction decides which of those the label belongs on. Put every derived
+label through the rejection question:
+
+> Is there a message where every required label matches and this label still does not belong?
+
+`Review requested` answers yes — a pull request whose comments are addressed to someone else
+matches the gate and is rejected anyway — and `Input requested` answers yes for the same
+reason. A label that answers no is not interpreting anything: its instruction restates the
+conjunction, and what it really adds is a threshold or an attention level. That can be worth
+having, but say which of the two it is rather than presenting it as a new concept.
+
+If an interpretation seems to need another interpretation, the missing piece is a detection
+label — derived labels never reference derived labels.
+
+Model the timeless meaning, not the current relevance. A concept that only makes sense relative
+to today — `Expired`, `Still open`, `Needs attention today` — cannot be a label at all; see
+[Labels are timeless](#labels-are-timeless) and offer the part that can be read off the email.
+
+#### Example: an interpretation over new observations
+
+> Create a label called Travel disruption for emails where a cancellation or severe delay is
+> likely to disrupt a trip.
+
+"Likely to disrupt a trip" is a judgement, not something you read off the page. The observable
+facts are the cancellation and the delay, and *either* one alone can disrupt a trip — so they
+are recommended, not required:
 
 ```text
-1  every required semantic label  IL/<label>
-2  IL/no-match, when applicable
-3  IL/processed  — last within the mailbox phase
+Flight cancellation      detection
+Flight delay             detection
+Travel disruption        derived   (recommended: Flight cancellation, Flight delay)
 ```
 
-`IL/processed` goes on **after** the labels it vouches for. Written earlier it would produce a
-message that looks processed while it is not — and normal processing skips such a message rather
-than fixing it.
+#### Example: an interpretation over observations that must both hold
 
-**A write that failed or whose outcome is unclear is decided by re-reading the mailbox, not by its
-return value** — see
-[B. The mailbox commit did not clearly succeed](#b-the-mailbox-commit-did-not-clearly-succeed).
+> Create a label called Large payment needs attention for invoices with unusually large amounts
+> that should be reviewed.
 
-**Step 6 is one `record_matches` call**, made only after the commit succeeded, naming every
-semantic label that matched with that message's own timestamp:
+Being an invoice and carrying a large amount are two separate observations, and here the user
+wants both:
 
 ```text
-record_matches(labels: ["Invoice", "Large amount", "Large payment needs attention"],
-               email_timestamp: "2026-08-20T10:12:00Z")
+Invoice                     detection
+Large amount                 detection
+Large payment needs attention  derived   (required: Invoice, Large amount)
 ```
 
-- **The timestamp is the email's own, never the moment you are running** — a message written in
-  March counts towards March — and needs a UTC offset, or it is refused rather than guessed.
-- **Never name the same label twice in one call.** The whole call is refused.
-- **No semantic matches, no call.** Such a message still got its markers in the commit, and markers
-  are never recorded as matches.
-- **Pass label names and the timestamp, and nothing else.** Not the subject, sender, recipients,
-  body, message or thread id, or anything about an attachment. Inbox Labeler keeps counts, not mail.
+Had they said "large payments, especially invoices", the amount would be the gate and the
+invoice merely context: `required: Large amount`, `recommended: Invoice`.
 
-When a step does not succeed, see
-[Failure, retry and consistency](#failure-retry-and-consistency).
+#### Example: reuse instead of rebuilding
 
-### Colour follows attention
+> Add Commercial opportunity for mail that might turn into business.
 
-A semantic label's mailbox colour is fixed presentation derived from that label's `attention`. The
-MCP does not store it; it is never a second source of truth.
+If `Newsletter` and `Invoice` already exist but nothing recognises an inbound enquiry, add only
+the missing observation and build on what is there:
 
-| `attention` | `backgroundColor` | `textColor` |
+```text
+Inbound enquiry              detection   (new — the missing observation)
+Commercial opportunity       derived     (recommended: Inbound enquiry, Newsletter)
+```
+
+#### Example: several concepts, still one label
+
+> Create a label called Login for login codes and password reset links.
+
+Two concepts, and neither answers the reuse question. Nobody wants login codes labelled apart
+from password resets — they are one aspect, mail that gets the user into an account, and one
+Gmail label is what was asked for. Splitting here would add labels and buy no reuse:
+
+```text
+Login    detection   ("The message carries a login code, a sign-in link or a password reset.")
+```
+
+The instruction carries the detail the split would have expressed.
+
+#### Say the model out loud when it is more than one label
+
+When the model needs more than one label, describe it in two or three lines, then create it.
+Do not wait for approval unless the user's intent is genuinely unclear:
+
+> I would model this using two detection labels and one derived label:
+>
+> - `Flight cancellation`
+> - `Flight delay`
+> - `Travel disruption`
+>
+> This keeps the reusable observations separate from the higher-level interpretation.
+
+When a single detection label is all it takes — "add a label for newsletters" — just create it
+and report the result. No explanation, no options, no questions.
+
+Guidance:
+
+- Ask for anything missing rather than inventing it. A precise instruction describes the
+  aspect being detected clearly enough to decide on a real message — at whatever breadth the
+  user intends. Wording that sharpens that aspect belongs in the instruction ("invoices, but
+  not payment reminders"); each label describes its own aspect and leaves the others to
+  describe theirs.
+- Take the aspect as the user frames it. If they describe something broad, keep it broad; if
+  they describe several things they want as separate Gmail labels, create one label per Gmail
+  label. The breadth is theirs to choose, so do not push toward finer or coarser labels. That
+  is about breadth, not structure: splitting an interpretation into the observations it rests
+  on is modelling, and it never narrows what the user asked for — they still get the label they
+  named, and the supporting detection labels are what make it work.
+- Store the label, never the Gmail label. If the user says `IL/Invoices`, store `Invoices` —
+  Inbox Labeler rejects anything starting with `IL/`, because it adds the namespace itself. Talk
+  about labels the way the user does; just strip the prefix before it reaches `label`.
+- `processed` and `no-match` are reserved system labels, since they resolve to Inbox Labeler's
+  own `IL/processed` and `IL/no-match`. Inbox Labeler rejects them on create, rename and delete,
+  in any casing. If a user asks for one, explain that Inbox Labeler uses it for its own state and
+  agree on a different label rather than retrying.
+- `type` follows from the model you chose above, not from anything the user has to say. It
+  defaults to `detection` and appears in the output either way, so the kind is never hidden.
+- `required_labels` and `recommended_labels` are lists and take the exact text of an
+  existing detection label. On update they replace the stored list rather than adding to it;
+  passing an empty list clears it. Create the detection labels first — a reference to a label
+  that does not exist is rejected.
+- **A label's type is immutable.** `update_label` refuses to turn a detection label into a
+  derived one or the other way round. If the user wants the other kind, create a new label — and say that the
+  old label's Gmail label stays on the mail that already carries it, since nothing revisits
+  processed messages.
+- **A detection label cannot be deleted while a derived label references it.** `delete_label`
+  refuses and names the derived labels involved. Nothing is cleaned up automatically: either update
+  those derived labels to drop the reference, or delete them first. Tell the user which choice
+  they are making rather than picking for them.
+- Before deleting, confirm which label is meant if the reference is ambiguous.
+- After a successful change, report the resulting label back to the user.
+
+### Adding a label to an existing set
+
+When the user wants another aspect detected, model it as above and create it. Existing labels
+keep their instructions unchanged and the new ones take their place beside them — because
+labelling is additive, adding a label never requires adjusting the others.
+
+Labels that frequently land on the same mail while detecting different aspects are each doing
+their own job, and both belong in the list. Two labels are the same label only when they detect
+the same aspect — the same purpose and essentially the same instruction.
+
+Labels are unique ignoring case, so a create can fail because that label already exists. Offer
+a different wording, or ask whether the existing label should be updated instead. If the user
+wants the existing label to read better, `update_label` with `new_label` renames it and
+carries every reference along.
+
+## Processing the inbox
+
+Only do this when the user explicitly asks. There is no scheduler and nothing runs in the
+background. There is exactly one command:
+
+| The user says | Command | Scope | Per run |
+| --- | --- | --- | --- |
+| "process my inbox" | **process** | unread inbox messages **without** `IL/processed` — new mail only | at most 10 |
+| "apply attention" | **attention** | unread inbox messages **with** `IL/processed` — already labelled mail | — |
+
+The two never overlap: `process` classifies mail that has no `IL/processed`, `attention` acts on
+mail that has it. Neither does the other's job, and **`attention` only runs when the user asks
+for it** — it is never part of a `process` run.
+
+Recording matches is not a third command. It is a step inside `process`, runs on every message
+that run labels, and is never something the user has to ask for: "process my inbox" already
+means classify, label, and record. If the user does ask for it on its own — after labelling
+something by hand, say — call `record_matches` for those labels with that message's own
+timestamp, and change nothing else.
+
+It begins with a precondition — labels must be available, read from the Inbox Labeler MCP
+server. See [step zero](#step-zero-make-sure-labels-are-available). It stops after ten messages; see
+[every run handles at most ten messages](#every-run-handles-at-most-ten-messages).
+
+Each message then goes through two stages — **detection first, then derived**:
+
+```text
+Email
+  ↓
+Detection labels
+  ↓
+IL/no-match          (when no detection label matched)
+  ↓
+Derived labels
+  ↓
+IL/processed        (last, always)
+```
+
+`process` looks at mail Inbox Labeler has not seen yet and leaves already-processed messages
+alone. `IL/processed` is what keeps them out of scope, so a run never redoes work and later runs
+continue with what is left — no cursor, no bookkeeping.
+
+**Labelling only ever moves forward.** A message keeps the labels it was given, so editing or
+deleting a label changes what *new* mail receives and leaves already-processed mail as it is. If
+a user expects a change to reach mail that was labelled earlier, say plainly that it will not.
+
+A **message** is the unit of work — never a
+thread. Only unread inbox messages are ever touched, so archived mail and read mail are out of
+scope in both commands. `IL/processed` records that a message was evaluated and `IL/no-match`
+records that the evaluation produced no matches. Unread is only a scope filter — **never
+change the unread state** (no marking as read) and never treat unread as the processing state.
+
+### Step zero: make sure labels are available
+
+**Every command starts here.** Processing without labels is meaningless, so before touching a
+single message, establish that they exist. There is one way to do that.
+
+1. **Call `get_labels`.** That is the store; there is nothing local and nothing to load first.
+2. **It returns labels.** Continue with the flow below. These are the labels this run uses —
+   never a remembered set, never an earlier run's.
+3. **It returns an empty list.** **Stop.** Tell the user plainly that no labels are configured
+   and offer to create some. Do not process anything and do not invent a starter set.
+4. **The call fails** — the MCP server is unreachable, the session is not authenticated, or the
+   call errors. **Report the error verbatim and stop.** Do not fall back to an empty list, do
+   not process part of the inbox, and do not guess at labels.
+
+The distinction between step 3 and step 4 is the one that matters. *Nothing configured* is a
+normal state with an obvious next action; *something broken* must never be silently treated as
+*nothing there*, because that would relabel a mailbox from an empty rulebook.
+
+### Every run handles at most ten messages
+
+**A run processes no more than ten messages, and then stops.** Fewer is fine: if only three are
+eligible, a run handles three; if none are, it handles none. Everything beyond the tenth is
+left alone.
+
+The limit changes *how many* messages a run touches, never *which* ones. Selection, ordering
+and the per-message rules are untouched — the run simply ends early.
+
+Nothing is needed to keep the rest for later. An unhandled message never received
+`IL/processed`, so it is still in scope exactly as it was, and the next run continues in the
+same order. There is no cursor to keep and no state to write.
+
+Always say how many you handled and whether more remain, so the user knows another run is
+worth it.
+
+### process
+
+1. Complete [step zero](#step-zero-make-sure-labels-are-available). Then resolve each label to
+   its Gmail name — `Large amount` → `IL/Large amount` — and work with the resolved names from
+   here on; Gmail knows nothing about the unprefixed form.
+2. Run `list_labels` and note the ids of `IL/processed`, `IL/no-match` and every resolved
+   business label, together with each business label's current Gmail color where it already
+   exists. Create any that are missing with `create_label`, passing the resolved name and the
+   color for that label's Attention from the table in
+   [Gmail label colors](#gmail-label-colors) (the `IL` parent is created automatically); create
+   `IL/processed` and `IL/no-match` with no color, since they are not business labels. For a
+   business label that already exists, compare its current color to that table's value and call
+   `update_label` only when they differ — this is also where a color catches up after its
+   label's Attention changed.
+3. Find candidate threads with `search_threads`, query
+   `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display
+   name. If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use
+   `pageSize: 50`.
+4. **Work through the pages in order, and stop at ten messages.** Keep calling `search_threads`
+   with the returned `nextPageToken` while you still need messages; once ten have been
+   processed, stop and fetch no further page. If the pages run out first, you are done — fewer
+   than ten is fine, and so is none. Narrow the query only if the user explicitly asked for a
+   narrower scope (e.g. "everything from today" → add `newer_than:1d`). That is selection; it
+   does not change what any selected message means.
+5. For each thread, call `get_thread` and pick out the individual messages that are in the
+   inbox, unread, and lack the `IL/processed` id in `labelIds`. Gmail returns a whole thread
+   when any one of its messages matches, so a result can mix in-scope and out-of-scope
+   messages — check every message and skip the ones that do not qualify. Take them in the order
+   the search returned them and count only the ones you actually process against the ten.
+6. **Detection stage.** For each in-scope message, work through the whole list of detection
+   labels and decide each one independently, keeping the ones whose aspect is present. Subject,
+   sender and snippet are usually enough; use the full body from `get_thread` when they are not.
+   The result is the complete set of triggered detection labels — empty, one, several, or all.
+   Note one short reason per match: that is the **evidence**, and the derived stage needs it.
+7. Apply the detection outcome with `label_message`, which branch depending on whether the set
+   is empty:
+   - **At least one detection label triggered** — apply the resolved business label of every
+     triggered label.
+   - **No detection label triggered** — apply `IL/no-match`.
+8. **Derived stage.** Evaluate every derived label against the message, using the detection
+   result as context — see [The derived-label prompt](#the-derived-label-prompt). Apply the
+   resolved business label of each derived label that triggered. Skip a derived label whose
+   `required_labels` did not all match; that is not a failure, it simply does not apply here.
+9. Apply `IL/processed` last, once both stages finished and every business label is in place.
+   If either stage is incomplete or a labelling call fails, leave `IL/processed` off so the
+   message is picked up again on the next run.
+10. **Record what matched.** Every message this run labelled gets one call, once it is fully
+    labelled — this step is part of every `process` run and is never skipped:
+
+    ```text
+    record_matches   labels:          [<each business label applied>]
+                     email_timestamp: <the message's own timestamp>
+    ```
+
+    One call per message, naming every business label that matched it — detection labels and
+    derived labels alike, without their `IL/` prefix. A label that did not match is not passed.
+    `IL/no-match` and `IL/processed` are Inbox Labeler's own state rather than labels, and are
+    never recorded. A message that got `IL/no-match` matched nothing, so it has no call.
+
+    **The timestamp is the email's own, not the moment you are running.** A message written in
+    March counts towards March, which is what lets a run over old mail line up with the rest of
+    the history. Give it with a UTC offset — `2026-08-20T10:12:00Z` or
+    `2026-08-20T12:12:00+02:00`; without one it is refused rather than guessed.
+
+    **Pass the label names and that timestamp, and nothing else.** Not the subject, the sender,
+    the recipients, the body, the message or thread id, or anything about an attachment: the
+    store keeps counts, not mail. Nothing in it identifies an email, so a message reported twice
+    is counted twice — report each one once.
+
+    If a `record_matches` call fails, **say so in the summary and carry on**. Recording is bookkeeping
+    and does not decide anything: the classification stands, the Gmail labels stay as they are,
+    and the message keeps its `IL/processed`. Do not evaluate the message again and do not
+    re-apply labels that are already on it in order to retry the bookkeeping — that would change
+    the mailbox to fix a counter. Say which messages went unrecorded and why.
+11. Report a short summary: how many messages were processed, which message got which business
+    labels and why, which got `IL/no-match`, and anything you were unsure about instead of
+    guessing silently. Say which labels came from interpretation when a derived label triggered.
+    When a derived label's `required_labels` all matched but the interpretation rejected it, say
+    so and explain briefly why — a rejected candidate is the clearest sign the interpretation is
+    doing work.
+    **If the run stopped at the ten-message limit, say so** and that another `process` run will
+    continue with the rest — otherwise the user has no way to tell a finished inbox from a
+    truncated run.
+
+## Attention
+
+**Attention is not a label.** It is what a label asks of the user, declared per label and
+computed per message. It is never written to Gmail and never stored on a message.
+
+| Level | What the label is saying |
+| --- | --- |
+| `none` | the user never needs to see this |
+| `normal` | *(the default)* leave the message alone |
+| `high` | important, and stays important |
+
+**The highest-priority level among the labels a message carries wins**, ranked `high` > `none` >
+`normal`:
+
+- one label at `high` → `high`
+- otherwise, one label at `none` → `none`
+- otherwise → `normal`
+
+`normal` loses to both because it is the *absence* of a request — the default a label gets when
+nothing was said about it. A label that does ask for something outranks it, and asking for
+attention outranks asking for none. So `Invoice` (`normal`) together with `Newsletter` (`none`)
+comes out `none`: the one label with an opinion is the one that has it. A message with no labels
+at all comes out `normal`, so it is left alone.
+
+Apply the ranking above exactly as written and never rank the levels by eye:
+`Invoice` (`normal`) with `Delivery arriving soon` (`high`) is `high`; `Invoice` (`normal`) with
+`Newsletter` (`none`) is `none`. A label that `get_labels` does not have takes no part in the
+calculation — leave it out entirely and never guess its Attention.
+
+The policies are fixed, not configurable:
+
+| Attention | Policy | Effect |
+| --- | --- | --- |
+| `none` | `mark_read_after: 24h` | mark read once the message is 24h old, otherwise nothing |
+| `normal` | — | nothing |
+| `high` | `star: true` | star it, and keep it starred |
+
+Ages count from **when the message was received**, which is the only timestamp available. The
+24h threshold is inclusive — exactly 24h qualifies.
+
+### Gmail label colors
+
+Attention also decides each business label's **Gmail color** — presentation only, never a
+second source of truth. Take it from this table and never choose a color by hand:
+
+| Attention | `backgroundColor` | `textColor` |
 | --- | --- | --- |
 | `none` | `#cccccc` | `#000000` |
 | `normal` | `#fce8b3` | `#000000` |
 | `high` | `#efa093` | `#000000` |
 
-- **Colours are written in [step 2](#2-prepare-the-mailbox) and nowhere else** — on creation, and on
-  a label whose attention changed since.
-- **Compare before writing**, which keeps repeated runs idempotent.
-- **The state markers get no colour**, and never pick a colour by hand. These three rows are the
-  whole mapping.
-- **Colour never blocks anything.** Without colour support, carry on; where one cannot be set, name
-  the label and continue.
-
-## Failure, retry and consistency
-
-**This is the authoritative failure section.** Every other part of this document refers here.
-
-What is protected, in this order: **correct mailbox state**, then **no duplicate processing or
-duplicate counts**, then **complete match history**. Losing a history update in an exceptional
-failure is acceptable; making a processed message eligible for reprocessing to repair its history is
-not. History is additive and Inbox Labeler stores **no message id and no idempotency key**, so
-nothing server-side can tell a message was recorded before: **`IL/processed` is the whole of the
-protection.** Two hard rules follow:
-
-- **Never process or record a message that already carries `IL/processed`.** It is finished; leave
-  it alone, including when its history might be incomplete.
-- **Within one processing attempt, call `record_matches` at most once for that message.**
-
-### A. Failure before the mailbox commit
-
-Classification could not complete, or a required semantic label could not be prepared or created.
-
-- Do **not** establish `IL/processed`, and do **not** call `record_matches`.
-- Report the message as incomplete and say what failed.
-
-The message is untouched as far as processing is concerned and stays eligible for the next run. A
-colour that could not be set is **not** this case — name the label and carry on.
-
-### B. The mailbox commit did not clearly succeed
-
-A mailbox write failed, or its outcome is unclear because the response was lost or the call timed
-out.
-
-**A failed or unclear write says nothing reliable about the mailbox.** Unless the mail system
-guarantees atomicity and reported a clean failure, **re-read the message's current `IL/` mailbox
-labels** and decide from what is actually there. Never assume the write left no trace, and never
-assume `IL/processed` is absent just because the call did not report success.
-
-**State A — the complete required set is present, `IL/processed` included.** The commit succeeded,
-whatever the response said. Treat it as
-[C. The mailbox commit succeeded](#c-the-mailbox-commit-succeeded) and proceed to `record_matches`
-if any semantic label matched. Do **not** repeat the mailbox writes.
-
-**State B — `IL/processed` is absent.** The commit is incomplete.
-
-- Do **not** call `record_matches`.
-- Report the partial mailbox state, naming which labels are present. **Do not claim anything was
-  rolled back** — semantic labels already applied stay applied.
-- The message remains eligible for a later normal processing attempt, which re-applies what is
-  already there — harmless — and completes the commit.
-
-**State C — `IL/processed` is present, but a required semantic label or `IL/no-match` is missing.**
-**This is an inconsistent processed state, and it is the one failure that does not heal.**
-
-- Do **not** call `record_matches`.
-- **Report it prominently**, naming the message and exactly which labels are missing, and do **not**
-  describe the message as safely processed.
-- **Do not say a normal run will repair it.** It will not: normal processing skips anything carrying
-  `IL/processed`, which is precisely why this state persists.
-- Do **not** silently remove `IL/processed`, and do not invent a repair procedure.
-
-Leave the decision — complete the labels by hand, or remove `IL/processed` so a normal run can redo
-the message — to the user.
-
-### C. The mailbox commit succeeded
-
-Once the complete set is established, `IL/processed` included, **the message is processed** from the
-mailbox's point of view. That is the state that counts.
-
-Only now may match history be updated.
-
-### D. `record_matches` definitely failed
-
-The commit succeeded and the call was refused, with the refusal seen — a repeated label name, a
-timestamp without an offset, a label the policy does not have.
-
-- **The message stays processed.** Do **not** remove `IL/processed` or any semantic label.
-- Report that **mailbox processing succeeded and match-history recording failed**, with the reason.
-- **A normal processing run must not pick this message up again to repair its history.**
-
-### E. `record_matches` outcome is uncertain
-
-The commit succeeded and the response was lost or the call timed out, so the server may or may not
-have recorded.
-
-- **The message stays processed.**
-- **Report the match-history state as uncertain** — never as definitely failed, never as definitely
-  recorded.
-- Do **not** retry the call automatically.
-- Do **not** remove `IL/processed`, and do **not** make the message eligible for normal processing
-  again.
-
-Avoiding duplicate history matters more than completing it.
-
-### Missing marker capability
-
-If [step 2](#2-prepare-the-mailbox) did not establish that `IL/processed` can be read, created and
-applied, this run does not process anything — classification may be presented as a plan. Asking the
-user "has this been processed before?" is **not** a substitute for the marker.
-
-### Scope of a failure
-
-**One failing message is not a failing run.** Report it and carry on with the rest.
-
-## Label semantics
-
-### Labels are identified by their text
-
-A label's text is its **only** identifier — no separate name, no id. References name it exactly,
-spaces included.
-
-Inbox Labeler normalises before comparing or storing: **leading and trailing whitespace trimmed,
-internal runs of whitespace collapsed to a single space**, then uniqueness decided **ignoring
-case**. So `Delivery` and `delivery` are the same label, and `"  Large   amount "` is the same label
-as `Large amount`. Use these same rules when comparing a mailbox label's text against the policy.
-
-Write labels as ordinary phrases — `Delivery arriving soon`, not `DeliveryArrivingSoon` —
-capitalising the first word only, unless a word is a proper noun or acronym.
-
-### Labels are timeless
-
-> **Evaluate every label as if you were reading the email at the moment it was written.**
-
-The current date never influences whether a label applies, and neither does how long ago the message
-arrived. A relative date inside the message — "tomorrow", "next Tuesday" — is a fact *about the
-message*, read against the message's own date. The same message evaluated twice yields the same
-labels; if an outcome differs, the policy changed, never the clock. So an email from last week
-saying "your package arrives tomorrow" can still correctly receive a label about imminence.
-
-**"Is this still relevant?" is a different question.** Labels like `Expired` or `Needs attention
-today` compare a message against the clock and cannot be labels at all. Say so plainly and offer the
-timeless part instead: "payment due soon" can be read off a message; whether that date has passed
-cannot.
-
-Time has one legitimate role, upstream of evaluation: **choosing which messages to look at.**
-
-### Detection and derived labels
-
-- **Detection** — *what can I directly observe in this message?* They recognise facts, and they are
-  the default.
-- **Derived** — *given the message and the detection labels that matched, what does this mean?* They
-  interpret facts detection already established.
-
-`required_labels` is an **AND gate**: every one must have matched, or the derived label is not
-evaluated at all for that message. `recommended_labels` is **context, not a gate**: any subset may
-be present, and their absence never blocks anything.
-
-Both lists hold plain label texts, both may be empty, and both may **only** name detection labels.
-There is no chaining from one derived label to another.
-
-## Batch and inbox processing
-
-### One message at a time
-
-The unit of work is a **message**, never a thread. A search may return a whole thread when one of
-its messages matches, so **re-check each message's own eligibility before processing it**, exactly as
-[step 3](#3-select-the-messages-to-process) requires. Classify a message completely — steps 4 to 8 —
-before moving to the next.
-
-### Scope and the two markers
-
-Eligibility is [step 3](#3-select-the-messages-to-process) — **in the inbox, unread, and without
-`IL/processed`**. This section is what the two markers mean.
-
-| Marker | Meaning |
-| --- | --- |
-| `IL/processed` | Inbox Labeler has finished evaluating this message |
-| `IL/no-match` | **no detection label matched** this message |
-
-**Only `IL/processed` takes part in eligibility.** `IL/no-match` never does: it records what the
-detection stage concluded and decides nothing about whether a message may be processed.
-
-**Never infer `IL/processed` from `IL/no-match`.** After a completed commit a no-match message
-carries both, and it is `IL/processed` that keeps it out of a later run. But the write order puts the
-marker last, so without atomicity a message can carry `IL/no-match` with `IL/processed` absent —
-[State B](#b-the-mailbox-commit-did-not-clearly-succeed). Such a message is **still eligible** on a
-later run if it is still in the inbox, still unread and still without `IL/processed`: the re-check
-asks about `IL/processed`, and about nothing else.
-
-`IL/no-match` is about the **detection stage only**, not "no Inbox Labeler label matched": a message
-can legitimately carry `IL/no-match` **and** a derived label, when a derived label with no
-`required_labels` triggers on a message no detection label matched.
-
-**Inbox Labeler owns the `IL/` namespace and nothing outside it.** Read the user's own mailbox
-labels freely when they help a decision; never add or remove one.
-
-### Bound each run
-
-**A run processes at most ten messages and then stops. Ten is a hard maximum, not a default.**
-Fewer is fine: if only three are eligible, handle three; if none are, handle none.
-
-**Nothing raises it.** "Process fifty", "process my entire inbox", "process all my unread mail",
-"ignore the limit" — each is answered with a run of at most ten and a plain statement that more
-remain. There is no flag, no phrasing and no user request that produces an eleventh message in one
-run, and there is no override to offer as a workaround. Someone who wants more runs it again. This
-is a blast-radius limit: labelling only moves forward, so mail labelled in error stays labelled.
-
-The limit changes *how many* messages a run touches, never *which* ones or how they are judged.
-Eligibility is [step 3](#3-select-the-messages-to-process) and is untouched by it. A message skipped
-by the per-message re-check was never eligible, so it does not count against the ten. Everything
-beyond the limit never received `IL/processed`, so it is still in scope for the next run and there
-is no cursor to keep.
-
-**Always say how many you handled and whether more eligible messages remain.** Within a run, size is
-never a reason to pause: do not sample, do not ask for confirmation because the inbox is large, and
-do not cut a message short because it matched many labels.
-
-### Reporting
-
-Say how many messages were handled, which got which labels and why, which matched nothing, which
-labels came from interpretation, and where a derived label's gate matched but the interpretation
-still said no. Name any message that went unrecorded and why, and report anything you were unsure
-about rather than guessing silently. If the run stopped at its bound, say so.
-
-## Apply attention
-
-**Only when the user asks.** Never part of processing.
-
-It brings mailbox state in line with the attention the labels of **already-classified** mail imply.
-It classifies nothing, reads no message content, and adds or removes no `IL/` label.
-
-**Its scope is the mirror image of normal processing**, and the two never overlap:
-
-| Workflow | Scope |
-| --- | --- |
-| **normal processing** ([step 3](#3-select-the-messages-to-process)) | inbox **and** unread **and** **not** `IL/processed` |
-| **apply attention** | inbox **and** unread **and** `IL/processed` |
-
-Both are scoped to unread inbox mail; they differ only in the marker. Read mail is out of scope for
-both.
-
-1. **Call `get_labels`** for the current policy. Attention is read from it, never from the mailbox.
-2. Select messages that are in the inbox, unread, and **do** carry `IL/processed`. Re-check those
-   three on each message before acting on it, for the same reason
-   [step 3](#3-select-the-messages-to-process) does.
-3. **Read the labels already on the message**, keeping the `IL/` ones and stripping the prefix. Do
-   not look at the body and do not reconsider whether a label belongs there.
-4. **Keep only the ones the current policy still has**, matched by [Inbox Labeler's own
-   rules](#labels-are-identified-by-their-text). `IL/processed` and `IL/no-match` are state, not
-   meaning, and never take part. An `IL/` label matching **no** policy label is obsolete or unknown:
-   leave it out entirely and **never guess its attention**. **Collect these and report them
-   separately**; deleting them is the user's call. If nothing is left, the message comes out
-   `normal`.
-5. Compute the effective attention over the rest, ranked as in [step 6](#6-determine-attention).
-6. Carry out the policy for that level:
-
-   | Attention | Action |
-   | --- | --- |
-   | `high` | star the message, and keep it starred |
-   | `none` | mark it read once it is **at least 24 hours old**; otherwise do nothing |
-   | `normal` | no action |
-
-   Age counts from when the message was received, and the threshold is inclusive. Skip an action
-   whose state already holds. **If the mail system cannot perform one, report that limitation** and
-   leave the message alone; never substitute another.
-7. Report what changed per message, what was left alone, and which obsolete `IL/` labels you found.
-
-**Starring and marking read are the only two things this workflow writes.** It never touches an
-`IL/` label in either direction, and never the message content. Marking read belongs here and
-nowhere else: **processing never changes the unread state** — unread is a scope filter, not a
-processing state.
-
-## Editing the label policy
-
-A separate workflow. **Only when the user explicitly asks** to create, change, rename or delete a
-label. Processing never does this.
-
-Read the policy with `get_labels` first — the existing detection labels are the vocabulary. Reuse
-them rather than creating a near-duplicate: if `Large amount` is there, do not add `Big amount`.
-
-### Working out the shape
-
-Deciding *how* to model what the user describes is your job; never ask them to choose between
-detection and derived. **What would have to be true of a message for this label to belong on it?**
-Observable **directly in the message** → **detection**. An **interpretation of things already
-recognised** → **derived**.
-
-Put each concept in the request through the reuse question — *would this be worth detecting on its
-own, on mail unrelated to the rest of this request?* **Yes, for more than one** → each becomes its
-own detection label, with a derived label on top when the combination carries meaning the parts do
-not. **No** → one detection label, with the instruction carrying the detail. *Several concepts
-mentioned is not a reason to split — several concepts reusable apart is.*
-
-Create supporting detection labels **before** the derived label that references them: references
-must already exist, and a label's type cannot be changed afterwards.
-
-Put every derived label through the rejection question — *is there a message where every required
-label matches and this label still does not belong?* If not, the label is not interpreting anything;
-say whether what it really adds is a threshold or an attention level.
-
-### Rules
-
-- `create_label` requires `label` and `instruction`; `type` defaults to detection and `attention`
-  to normal.
-- Creating a label whose text collides with an existing one, ignoring case, is refused.
-- `update_label` with `new_label` renames, and rewrites every reference in the same write.
-- `delete_label` removes the label **and its whole match history**, and is refused while another
-  label still references it.
-- Reference lists may only name detection labels.
-- **Editing the policy never changes mail that was already classified.** If the user expects a
-  change to reach earlier mail, say plainly that it will not: labelling only moves forward.
-
-## Reading history
-
-`get_matches` returns, per label, a count per calendar day and the timestamp of the newest message
-it matched. **The daily buckets are UTC calendar days**, taken from each message's own timestamp, so
-a message counts towards the UTC day it was sent — not the day it was processed, and not the
-reader's local day.
-
-**It must never influence classification.** Do not consult it to decide whether a label applies, and
-do not let a label's history change how a message is judged.
-
-## Safety and consistency rules
-
-A checklist, not a second authority. Each rule's full statement is where it is linked.
-
-- **`get_labels` is the source of truth**, on every run. An empty policy stops the run.
-- **Detection before derived, always**, and **the instruction decides, not the name.**
-- **Attention comes from the matched labels' policy**, by the fixed ranking.
-- **Normal processing is inbox and unread and not `IL/processed`** — all three, re-checked per
-  message. [Step 3](#3-select-the-messages-to-process) is authoritative; a read message, an archived
-  one, and one already carrying the marker are each out of scope.
-- **Never change the unread state during processing.** Unread is a scope filter, not a processing
-  state, and marking read belongs to [apply attention](#apply-attention) alone.
-- **Ten messages per run is a hard maximum**, not a default, and no request raises it. See
-  [Bound each run](#bound-each-run).
-- **Labelling only ever adds**, and only inside `IL/`. Never remove a mailbox label, never archive,
-  never delete, never reply; the user's own labels are read-only.
-- **`record_matches` uses the email's own timestamp**, with a UTC offset, and carries nothing about
-  the message itself.
-- **Never mutate the policy unless the user asked to change it.**
-- **If mail tools are unavailable, do not fake it.** See [Preconditions](#preconditions).
-
-The per-message order lives in
-[step 8](#8-commit-the-mailbox-state-then-record-what-matched); what any failure means lives in
-[Failure, retry and consistency](#failure-retry-and-consistency).
+This table is the one place this mapping lives; nothing else — not a helper, not a test —
+hardcodes a color. Detection Labels and Derived Labels are
+business labels alike, so this applies to both identically, and never to `IL/processed` or
+`IL/no-match` — they are Inbox Labeler's own state, not something a user's Attention describes,
+and are created and left with no color.
+
+Colors are synchronized wherever [process step 2](#process) brings Gmail's labels in line with
+the labels — whether a business label is being created for the first time or its Attention just
+changed. Compare a label's current Gmail color to this table before touching it:
+**matching already → do nothing**;
+this is what keeps repeated synchronization idempotent. A color change never touches a message
+— it recolors the Gmail label itself, not anything that carries it.
+
+If a color update fails, say which Gmail label could not be recolored and continue with the
+rest. **Never undo the label or its Attention change because a color update failed**,
+and never report synchronization as successful when it was not.
+
+### attention
+
+**Only run this when the user asks.** It is never part of `process`.
+
+The command brings Gmail's own state in line with the attention the labels already imply. It
+**does not classify anything** and it **never adds or removes an `IL/` label** — `process` owns
+labelling, `attention` owns the Gmail state that follows from it.
+
+1. Complete [step zero](#step-zero-make-sure-labels-are-available); without labels there is
+   no attention to apply.
+2. Run `list_labels` and note the id of `IL/processed` and of every label's resolved Gmail name.
+   Create nothing here — a label that does not exist in Gmail cannot be on a message.
+3. Find candidate threads with `search_threads`, query
+   `in:inbox is:unread label:<IL/processed id>`. This is the mirror image of `process`: only
+   mail that **has** been processed.
+4. For each thread, call `get_thread` and pick out the messages that are in the inbox, unread
+   and carry `IL/processed`.
+5. **Read the labels already on the message.** Take its `labelIds`, keep the ones that resolve
+   to an `IL/` name, and strip the prefix to get the labels. Ignore `IL/processed` and
+   `IL/no-match` — they are state, not meaning. Do not evaluate the email, do not consult its
+   content, and do not reconsider whether a label belongs there.
+6. Work out the effective level over those labels with the ranking in
+   [Attention](#attention). A label that `get_labels` no longer has takes no part in the
+   calculation — leave it out, and name any you found in the report.
+7. Read the policy for that level from the table in [Attention](#attention), against the age of
+   the message, and carry out what it says:
+   - `star` → `label_message` with `STARRED`
+   - `mark_read` → `unlabel_message` with `UNREAD`
+   - nothing → leave the message untouched
+
+   `STARRED` and `UNREAD` are the only two things this command writes, and it uses those tools
+   for nothing else. Skip an action whose state already holds — do not re-star a starred message.
+8. Report what changed per message and what was left alone.
+
+Two boundaries this command must not cross. It never touches an `IL/` label, in either
+direction — no adding, no removing, not even `IL/processed`, and no recoloring either; Gmail
+label color is synchronized in `process` step 2, never here. And it never looks at the email
+itself: the labels on the message are the whole input.
+
+## The derived-label prompt
+
+When you evaluate a derived label, give yourself exactly four things:
+
+1. **the email** — sender, subject, and enough body to judge
+2. **the detection labels that matched** — only the ones that matched, never the ones that did
+   not
+3. **the evidence** for each of those matches — the one-line reason noted in the detection stage
+4. **the derived label's instruction**
+
+Nothing else. Lay them out in three sections — `Email`, `Detection Results`, `Task`:
+
+```text
+Email
+
+From:    billing@stripe.com
+Subject: Your invoice INV-4021 is due
+Body:    … 1,450.00 EUR due on 12 August …
+
+Detection Results
+
+Invoice
+Evidence: states "invoice INV-4021" with an amount due
+
+Large amount
+Evidence: 1,450.00 EUR, over the 100 threshold
+
+Task
+
+Determine whether the following Derived Label applies.
+
+Label:
+Large payment needs attention
+
+Instruction:
+A payment this large should be looked at before it is due.
+
+Answer yes or no and explain briefly.
+```
+
+One derived label per prompt, one section per kind of input. `Detection Results` lists only
+labels that matched, each with its evidence; if none matched, the section says so rather than
+listing anything. The brief explanation is the derived label's own evidence — carry it into the
+run summary the same way detection evidence is carried.
+
+Treat the listed detection labels as established facts and reason from them — do not re-check
+whether the email really is an invoice. The email is there for the details the labels do not
+carry, like the due date or who sent it. Read those details as they stood when the email was
+written: a due date is a fact of the email, not something to compare against today's date.
+
+Keep each derived label's evaluation independent: one derived label's outcome is never input to
+another. If a derived label needs a fact no detection label provides, the answer is a new
+detection label, not a longer derived instruction.
+
+Rules while processing (`process`):
+
+- **No labels, no processing.** Never touch a message before step zero has produced labels. An
+  empty rulebook does not mean "nothing matches" — it means the run should not have started, and
+  treating the two alike would mark real mail as `IL/no-match`.
+- **The MCP holds the labels; Gmail holds the mail.** Inbox Labeler's MCP server has no access
+  to the mailbox, and the Gmail connector knows nothing about labels. Never look for labels in
+  Gmail and never look for mail in the MCP.
+- **Detection first, derived second, always.** A derived label is never evaluated before the
+  detection stage has finished for that message, because its input is the detection result.
+- **Judge every message as of the day it was written.** Neither stage consults the current date
+  or time, and an email's age never changes what it means — see
+  [Labels are timeless](#labels-are-timeless). The only time-dependent choice in a run is which
+  messages to select, and only when the user asked for a narrower scope.
+- **Resolve labels once, then stay in Gmail terms.** Every Gmail call and every comparison
+  against a message's `labelIds` uses the resolved `IL/…` name, spaces included, and processing
+  output names labels the way the user sees them in Gmail — report `IL/Large amount`, not
+  `Large amount`. The unprefixed form belongs to the labels themselves; only Inbox Labeler's
+  own tools deal in it.
+- **Every message goes through the full list.** Each detection label gets its own decision for
+  that message, and each one that triggers contributes its Gmail label. A message that triggers
+  six labels gets six Gmail labels; how many a message ends up with is simply how many of the
+  user's labels found their aspect in it.
+- **`IL/no-match` reflects the detection stage.** A processed message carries either at least
+  one detection business label or `IL/no-match`, never both. Derived labels do not affect it.
+- **`IL/processed` is always last and always earned.** Never leave it on a message whose
+  evaluation did not complete successfully.
+- **Labelling only ever adds.** `process` removes no label from any message, inside the `IL/`
+  namespace or outside it. Gmail's own labels (`INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`,
+  `CATEGORY_*`) and every user label are read-only to it, and so is anything Inbox Labeler
+  applied on an earlier run. Never archive, delete, or reply — labelling is its entire job.
+  `STARRED` and `UNREAD` belong to the `attention` command, and to nothing else.
+- **Never stop for the wrong reason.** Ten messages is the only limit. Within a run, size is
+  never a reason to pause: do not sample, do not ask for
+  confirmation because the inbox is large, and do not cut a message short because it triggered
+  many labels. Label each message with everything it triggered.
+- One failing message is not a failing run: report it and continue with the rest.
+- If Gmail tools are unavailable, do not fake it: report which messages you cannot reach and
+  present the labelling decisions as a plan, applying nothing.
+- If Inbox Labeler's MCP is unavailable, the run has not started — see
+  [step zero](#step-zero-make-sure-labels-are-available). Never classify against remembered
+  labels.
