@@ -1058,12 +1058,17 @@ work and deliberately not part of this one.
 
 ## Repository layout
 
-Two Agent Skills implement Inbox Labeler:
+Three Agent Skills implement Inbox Labeler, in two arrangements:
 
 | Skill | Owns |
 | --- | --- |
-| **`inbox-labeler`** | the labels, and the Gmail work — `process` and `attention` |
-| **`gdrive-store`** | the canonical state in Google Drive — `labels.json` and `matches.json`, loading and saving both |
+| **`inbox-labeler`** | **local:** the labels, and the Gmail work — `process` and `attention` |
+| **`gdrive-store`** | **local:** the canonical state in Google Drive — `labels.json` and `matches.json`, loading and saving both |
+| **`inbox-labeler-mcp`** | **hosted:** the same product against the remote MCP, where the policy and the history live server-side and there are no local files |
+
+The first two are one arrangement and the third is the other; nothing is shared between them at
+runtime. Both process the **same mail**, under the same rule — a message is eligible when it is in
+the inbox, unread and not yet carrying `IL/processed` — and both stop after **ten messages**.
 
 ```
 skills/inbox-labeler/
@@ -1075,6 +1080,9 @@ skills/gdrive-store/
 ├── SKILL.md              how to load and save the canonical state in Drive
 ├── store.py              validation and stable serialisation
 └── test.sh               its own test suite
+skills/inbox-labeler-mcp/
+├── SKILL.md              the hosted instructions — the MCP holds the policy, no local files
+└── test.sh               the invariants that prose alone would let drift
 data/
 ├── labels.example.json   documentation only, never read at runtime
 ├── labels.json           the working copy — local, gitignored, created on first use
@@ -1137,6 +1145,7 @@ directory, so your own labels are never touched:
 ```bash
 skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
 skills/gdrive-store/test.sh         # validation and serialisation, for both files
+skills/inbox-labeler-mcp/test.sh    # the hosted skill's rules, which are prose only
 ```
 
 Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD

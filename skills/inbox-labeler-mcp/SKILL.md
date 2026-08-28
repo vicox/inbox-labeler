@@ -14,7 +14,7 @@ Three workflows, kept apart:
 
 | Workflow | What it does | When it runs |
 | --- | --- | --- |
-| **Process labels** | classify messages against the policy | the user asks to process or label the inbox |
+| **Process labels** | classify unread inbox messages that are not already processed, against the policy | the user asks to process or label the inbox |
 | **Apply attention** | act on what the policy implies for already-classified mail | only when the user asks |
 | **Update matches** | record matched labels for successfully handled messages | inside processing, when reliable processed-marker capability exists — never asked for |
 
@@ -46,6 +46,8 @@ it can do the same things.
 **To process an inbox at all:**
 
 - read inbox messages
+- tell whether a message is **in the inbox** and whether it is **currently unread** — both are part
+  of what makes a message eligible; see [step 3](#3-select-the-messages-to-process)
 - inspect the mailbox labels already on a message, and the mailbox labels that exist
 - create Inbox Labeler's mailbox labels in the `IL/` namespace
 - apply those labels to messages
@@ -55,7 +57,7 @@ Inbox Labeler state goes on as one commit, and fewer writes means fewer ways for
 applied. **It does not by itself make the change all-or-nothing** — that depends on what the mail
 system guarantees. Where only separate writes are available, processing still works. Both cases,
 and how to tell what actually happened, are in
-[step 7](#7-commit-the-mailbox-state-then-record-what-matched).
+[step 8](#8-commit-the-mailbox-state-then-record-what-matched).
 
 **To apply attention, additionally:**
 
@@ -167,7 +169,76 @@ If the retry fails as well, the message is handled by
 **Create nothing outside `IL/`**, and never rename, recolour or otherwise modify a mailbox label of
 the user's own.
 
-### 3. Evaluate detection labels
+### 3. Select the messages to process
+
+**During normal processing, consider only messages that are currently in the inbox, are currently
+unread, and do not carry `IL/processed`.** This is the authoritative eligibility rule; everywhere
+else in this document refers here. All three conditions are required:
+
+| Condition | What it establishes |
+| --- | --- |
+| in the **inbox** | mail the user has not filed or archived away |
+| currently **unread** | **scope** — mail the user has not dealt with yet |
+| no **`IL/processed`** | **completion** — work Inbox Labeler has not already done |
+
+**A message failing any one of them is skipped.** It is not classified, receives no semantic `IL/`
+label, no `IL/no-match` and no `IL/processed`, and is never recorded.
+
+**Unread and `IL/processed` are different things and neither substitutes for the other.** Unread is
+a **scope filter**; `IL/processed` is a **processing state**. They answer different questions, which
+is why both are required:
+
+- A **read** message with no `IL/processed` is **out of scope**, deliberately. Inbox Labeler labels
+  mail the user still has to deal with, and read mail has been dealt with. Normal processing never
+  reaches back for it.
+- An **unread** message carrying `IL/processed` is **out of scope for normal processing**, because
+  the work is finished. That message is what [apply attention](#apply-attention) works on.
+
+**Processing never changes a message's read state.** Marking read belongs to apply attention and to
+nothing else.
+
+#### Narrow the search where the mail system can
+
+Ask the mail system for candidates that are already in the inbox, unread and without `IL/processed`,
+using whatever its search supports. **Narrowing the search is an optimisation, never the
+guarantee** — the per-message re-check below is what actually enforces eligibility, including on a
+mail system whose search cannot express one of the three conditions at all.
+
+Gmail, as **one example** of what that looks like:
+
+```text
+in:inbox is:unread -label:<the IL/processed mailbox label>
+```
+
+Some Gmail connectors want that label's **id** rather than its display name; use whichever the
+connected one accepts. **This is an illustration, not the interface.** Another mail system expresses
+the same three conditions in its own syntax, and one that cannot express them at all is handled
+entirely by the re-check below.
+
+The user may narrow selection further — "everything from today" — and that is selection, not
+meaning: it changes which messages are considered, never how any of them is judged.
+
+#### Re-check every message individually
+
+**A search result is a suggestion; the message itself is the authority.** Mail systems return
+thread-shaped results, so one matching message can bring along others that do not qualify, and a
+message's state can change between the search and the moment it is reached.
+
+**Immediately before processing each individual message, re-check all three conditions on that
+message:**
+
+1. Is it **in the inbox**?
+2. Is it **currently unread**?
+3. Does it **lack `IL/processed`**?
+
+**Only if all three are true may that message be processed.** If any one is false, skip it: do not
+classify it, do not apply a semantic `IL/` label, do not apply `IL/no-match`, do not apply
+`IL/processed`, and do not call `record_matches`. A skipped message does not count against the
+run's limit — see [Bound each run](#bound-each-run).
+
+Steps 4 to 8 below then run for each message that qualified, one message at a time.
+
+### 4. Evaluate detection labels
 
 For each message, work through **every** detection label and decide each one **independently**.
 Whether a label applies depends on exactly two things: the message, and that label's own
@@ -180,7 +251,7 @@ Whether a label applies depends on exactly two things: the message, and that lab
 - **Note one short reason per match.** That is the **evidence**, and the derived stage and the
   summary both need it.
 
-### 4. Evaluate derived labels
+### 5. Evaluate derived labels
 
 Only after the detection stage has finished for that message.
 
@@ -230,7 +301,7 @@ its evidence; if none matched, say so rather than listing anything. Treat those 
 established facts — do not re-check whether the message really is an invoice. The email is there
 for details the labels do not carry, like a due date.
 
-### 5. Determine attention
+### 6. Determine attention
 
 Attention is **not a label**. It is what a label asks of the user, declared per label and computed
 per message. It is never stored on a message.
@@ -258,7 +329,7 @@ A message with no matched labels comes out `normal`, so it is left alone.
 This is Inbox Labeler's policy. **Do not invent a different priority scheme**, do not weight by
 how many labels matched, and do not let your own reading of a message override it.
 
-### 6. Present or act on the result
+### 7. Present or act on the result
 
 Attention decides prioritisation and presentation. It **never** causes a label to be invented.
 
@@ -266,15 +337,15 @@ When presenting mail, order by attention — `high` first, then `normal`, then `
 which labels produced each level. During processing, reporting the level is enough; changing
 mailbox state is the separate **apply attention** workflow.
 
-### 7. Commit the mailbox state, then record what matched
+### 8. Commit the mailbox state, then record what matched
 
 **This is the authoritative per-message sequence.** Nothing else in this document restates it;
 everywhere else refers here.
 
 ```text
-1  classify detection labels                                     (step 3)
-2  evaluate derived labels                                       (step 4)
-3  determine attention                                           (step 5)
+1  classify detection labels                                     (step 4)
+2  evaluate derived labels                                       (step 5)
+3  determine attention                                           (step 6)
 4  determine the complete set of IL/ labels this message needs
 5  MAILBOX COMMIT — establish that whole set, IL/processed included
 6  call record_matches, if any semantic label matched
@@ -581,17 +652,33 @@ There is no chaining from one derived label to another.
 ### One message at a time
 
 The unit of work is a **message**, never a thread. A mail search may return a whole thread when any
-one of its messages matches, so check every message in a result and skip the ones out of scope.
-Classify a message completely — the seven steps above — before moving to the next.
+one of its messages matches, so **re-check each message's own eligibility before processing it** —
+in the inbox, unread, no `IL/processed` — and skip the ones that fail, exactly as
+[step 3](#3-select-the-messages-to-process) requires. Classify a message completely — steps 4 to 8
+above — before moving to the next.
 
 ### Scope and the two markers
 
-Process **unread inbox messages that do not already carry `IL/processed`**.
+Normal processing is scoped to messages that are **in the inbox, unread, and without
+`IL/processed`**. The rule and its enforcement are [step 3](#3-select-the-messages-to-process); this
+section is about what the two markers mean.
 
 | Marker | Meaning |
 | --- | --- |
 | `IL/processed` | Inbox Labeler has finished evaluating this message |
 | `IL/no-match` | **no detection label matched** this message |
+
+**Only `IL/processed` takes part in eligibility.** `IL/no-match` never does: it records what the
+detection stage concluded and decides nothing about whether a message may be processed.
+
+**Never infer `IL/processed` from `IL/no-match`.** After a commit that *completed*, a no-match
+message carries both — `IL/no-match` from the middle of the write and `IL/processed` from the end of
+it — and it is the second one that keeps the message out of a later run. But the write order is
+semantic labels, then `IL/no-match` where it applies, then `IL/processed`, and where the mail system
+gives no atomicity that order can stop halfway: a message can carry `IL/no-match` with `IL/processed`
+absent, which is [State B](#b-the-mailbox-commit-did-not-clearly-succeed). Such a message is
+**still eligible** on a later run if it is still in the inbox, still unread and still without
+`IL/processed` — the re-check asks about `IL/processed`, and about nothing else.
 
 `IL/no-match` is about the **detection stage only**. It does not mean "no Inbox Labeler label
 matched". A message can legitimately carry `IL/no-match` **and** a derived label, in exactly one
@@ -606,18 +693,30 @@ labels freely when they help a decision; never add or remove one.
 
 ### Bound each run
 
-**By default, handle at most ten messages per run, then stop.** Fewer is fine: if only three are
-eligible, handle three. **If the user explicitly asks for a different bounded number, honour it.**
-Do not raise the bound on your own initiative and do not treat "process my inbox" as unbounded.
+**A run processes at most ten messages and then stops. Ten is a hard maximum, not a default.**
+Fewer is fine: if only three are eligible, handle three; if none are, handle none.
 
-Everything beyond the bound is left alone. It never received `IL/processed`, so it is still in scope
+**Nothing raises it.** "Process fifty", "process my entire inbox", "process all my unread mail",
+"ignore the limit" — each of those is answered with a run of at most ten and a plain statement that
+more remain. There is no flag, no phrasing and no user request that produces an eleventh message in
+one run, and there is no override to offer as a workaround. Someone who wants more runs it again.
+
+This is a blast-radius limit rather than a preference: ten messages is how much a run can get wrong
+before a person sees it, and labelling only ever moves forward, so mail labelled in error stays
+labelled.
+
+The limit changes *how many* messages a run touches, never *which* ones or how they are judged.
+Eligibility is [step 3](#3-select-the-messages-to-process) and is untouched by it; the run simply
+ends early. A message skipped by the per-message re-check was never eligible, so it does not count
+against the ten.
+
+Everything beyond the limit is left alone. It never received `IL/processed`, so it is still in scope
 for the next run and there is no cursor to keep.
 
-The bound changes *how many* messages a run touches, never *which* ones or how they are judged.
-
-**Always say how many you handled and whether more remain**, so the user knows another run is worth
-it. Within a run, size is never a reason to pause: do not sample, do not ask for confirmation
-because the inbox is large, and do not cut a message short because it matched many labels.
+**Always say how many you handled and whether more eligible messages remain**, so the user knows
+another run is worth it. Within a run, size is never a reason to pause: do not sample, do not ask
+for confirmation because the inbox is large, and do not cut a message short because it matched many
+labels.
 
 ### Reporting
 
@@ -634,8 +733,20 @@ This acts on mail that has **already** been classified and brings mailbox state 
 attention the labels already imply. It classifies nothing, reads no message content, and adds or
 removes no `IL/` label.
 
+**Its scope is the mirror image of normal processing**, and the two never overlap:
+
+| Workflow | Scope |
+| --- | --- |
+| **normal processing** ([step 3](#3-select-the-messages-to-process)) | inbox **and** unread **and** **not** `IL/processed` |
+| **apply attention** | inbox **and** unread **and** `IL/processed` |
+
+Both are scoped to unread inbox mail; they differ only in the marker. Read mail is out of scope for
+both.
+
 1. **Call `get_labels`** for the current policy. Attention is read from it, never from the mailbox.
-2. Select unread inbox messages that **do** carry `IL/processed`.
+2. Select messages that are in the inbox, unread, and **do** carry `IL/processed`. Re-check those
+   three on each message before acting on it, for the same reason
+   [step 3](#3-select-the-messages-to-process) does.
 3. **Read the labels already on the message.** Take its mailbox labels and keep the `IL/` ones,
    stripping the prefix. Do not look at the message body and do not reconsider whether a label
    belongs there.
@@ -650,7 +761,7 @@ removes no `IL/` label.
      exist. Do not delete them; that is the user's call.
    - If nothing is left after this filter, the message has no matched labels and comes out `normal`.
 5. Compute the effective attention over the remaining labels, with the ranking in
-   [step 5](#5-determine-attention).
+   [step 6](#6-determine-attention).
 6. Carry out the policy for that level:
 
    | Attention | Action |
@@ -748,12 +859,18 @@ and do not let a label's history change how a message is judged.
 - **Never mutate the policy unless the user asked to change it.**
 - **Labelling only ever adds.** Never remove a mailbox label, never archive, never delete, never
   reply.
-- **Never change the unread state during processing.**
+- **Normal processing is inbox and unread and not `IL/processed`** — all three, re-checked per
+  message. [Step 3](#3-select-the-messages-to-process) is authoritative; a read message, an archived
+  one, and one already carrying the marker are each out of scope.
+- **Never change the unread state during processing.** Unread is a scope filter, not a processing
+  state, and marking read belongs to [apply attention](#apply-attention) alone.
+- **Ten messages per run is a hard maximum**, not a default, and no request raises it. See
+  [Bound each run](#bound-each-run).
 - **If mail tools are unavailable, do not fake it.** What each missing capability means is in
   [Preconditions](#preconditions).
 
 The order of operations for one message lives in
-[step 7](#7-commit-the-mailbox-state-then-record-what-matched), and what any failure means lives in
+[step 8](#8-commit-the-mailbox-state-then-record-what-matched), and what any failure means lives in
 [Failure, retry and consistency](#failure-retry-and-consistency). Those two sections are
 authoritative; this list adds nothing to them and must not be read as a second version of them.
 
@@ -776,7 +893,7 @@ Then:       record_matches(["Invoice", "Large amount", "<the derived label>"],
 ```
 
 The sequence and the conditions are in
-[step 7](#7-commit-the-mailbox-state-then-record-what-matched); this is only what it looks like on one
+[step 8](#8-commit-the-mailbox-state-then-record-what-matched); this is only what it looks like on one
 message.
 
 ### A gate that matched and an interpretation that said no
