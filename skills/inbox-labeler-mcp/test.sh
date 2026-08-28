@@ -372,7 +372,7 @@ check "a message is still the unit of work" \
 check "detection still precedes derived" \
     "$(says "$SAFETY" 'Detection before derived, always')" "1"
 check "required_labels is still an AND gate and recommended_labels still context" \
-    "$(says "$ALL" 'An AND gate' 'Context, not a gate')" "2"
+    "$(says "$ALL" 'is an AND gate' 'is context, not a gate')" "2"
 check "there is still no chaining between derived labels" \
     "$(says "$ALL" 'There is no chaining from one derived label to another')" "1"
 check "the commit sequence is still authoritative" \
