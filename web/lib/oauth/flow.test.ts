@@ -12,6 +12,19 @@ import test from "node:test";
  * callback does once it has verified an identity — so these tests stand in for
  * the callback's output rather than skipping past the flow.
  */
+/**
+ * Counted as though this were running behind the trusted ingress.
+ *
+ * `callerBucket` only tells callers apart where the platform has established the
+ * address itself — on Vercel, where `X-Forwarded-For` is overwritten by the
+ * ingress. Everywhere else every caller shares one bucket, which is the
+ * conservative answer and is what a laptop gets. These tests need the production
+ * behaviour, because a room full of independent clients is what they are about;
+ * `rate-limit.test.ts` covers both modes and the attempt to forge a way out of
+ * the shared one.
+ */
+process.env.VERCEL = "1";
+
 process.env.PUBLIC_ORIGIN = "http://localhost:3000";
 process.env.OAUTH_SIGNING_SECRET = "test-signing-secret-of-at-least-32-bytes";
 process.env.GOOGLE_CLIENT_ID = "test-google-client-id";
@@ -20,10 +33,13 @@ process.env.GOOGLE_CLIENT_SECRET = "test-google-client-secret";
 const { handleRegistration } = await import("./registration.ts");
 const { handleAuthorize, handleConsent } = await import("./authorization.ts");
 const { handleToken } = await import("./exchange.ts");
+const { handleProviderCallback } = await import("./callback.ts");
 const { AUTHORIZATION_CODE_TTL_MS, oauthStore } = await import("./store.ts");
 const { createPkce } = await import("./pkce.ts");
 const { deployment, signingKey } = await import("./config.ts");
 const { identityProvider } = await import("./provider.ts");
+
+type IdentityProvider = import("./provider.ts").IdentityProvider;
 const { accessTokenVerifier } = await import("./tokens.ts");
 const { database } = await import("../db.ts");
 
@@ -482,11 +498,18 @@ test("the binding cookie is HttpOnly, SameSite=Strict and scoped to the flow", a
   assert.match(header, /il_consent_[0-9a-f]{16}=/, "named after this flow, not shared");
   assert.match(header, /HttpOnly/);
   assert.match(header, /SameSite=Strict/);
-  assert.match(header, /Path=\/oauth/);
-  // Not Secure here only because the test origin is loopback, where a browser
-  // would reject a Secure cookie over plain http. The attribute is derived from
-  // the configured origin — deployment.test.ts asserts the production case.
+  // `Path=/` rather than `/oauth`, because production names this cookie with the
+  // `__Host-` prefix and a browser refuses such a cookie on any other path. The
+  // trade is deliberate: a cookie sent on requests that ignore it costs nothing,
+  // where a cookie a sibling subdomain can forge costs a flow. See lib/cookies.ts.
+  assert.match(header, /Path=\//);
+  assert.equal(header.includes("Path=/oauth"), false);
+  // Not Secure here, and not `__Host-` prefixed, only because the test origin is
+  // loopback: a browser rejects a Secure cookie over plain http, and the prefix
+  // requires Secure. Both are derived from the configured origin — the production
+  // case is asserted in cookies.test.ts.
   assert.equal(header.includes("Secure"), false, "loopback development");
+  assert.equal(header.includes("__Host-"), false, "loopback development");
 });
 
 test("answering an approval clears that flow's binding, whatever the answer", async () => {
@@ -1560,12 +1583,257 @@ test("no address reaches the rate-limit table", async () => {
   // Not just these two: nothing in the table may look like an address at all,
   // which is the assertion that keeps holding when someone adds a third
   // endpoint and reaches for the address again.
+  //
+  // Two shapes are legitimate. A caller the ingress established is a keyed digest;
+  // a caller it did not — a request in this suite that sent no forwarded address —
+  // is the literal shared bucket. Neither can contain an address, which is the
+  // property, and there is no third shape.
   for (const row of rows) {
     assert.doesNotMatch(row.bucket, /\d+\.\d+\.\d+\.\d+/, `${row.bucket} looks like an address`);
-    assert.match(row.bucket, /^(authorize|register):[0-9a-f]{32}$/);
+    assert.match(row.bucket, /^(authorize|register|signin):([0-9a-f]{32}|shared)$/);
   }
 
   // And the namespaces are still telling the two endpoints apart.
   assert.ok(rows.some((row) => row.bucket.startsWith("authorize:")));
   assert.ok(rows.some((row) => row.bucket.startsWith("register:")));
+});
+
+
+// --- the Google leg belongs to the browser that approved --------------------
+//
+// The approval and the identity have to come from the same person. Between them
+// sits one URL — the redirect to Google that an approval produces — and the
+// `state` in it names a parked login that has *already been approved*. If that
+// URL is all it takes, then anything which completes the Google leg with it walks
+// away with an InboxLabeler authorization code for whichever account signed in:
+// browser A's approval joined to browser B's identity, which is the one thing an
+// authorization flow exists to prevent.
+//
+// So the approval hands the browser a second value, and the callback requires it
+// back. These tests are that property, from both ends.
+
+/** The whole `name=value` pair the approval set for the Google leg, if any. */
+function providerCookie(response: Response): string | null {
+  for (const header of response.headers.getSetCookie()) {
+    const pair = header.split(";")[0] ?? "";
+    const separator = pair.indexOf("=");
+    if (separator === -1) continue;
+    if (!pair.slice(0, separator).startsWith("il_provider_")) continue;
+    if (!pair.slice(separator + 1)) continue;
+    return pair;
+  }
+  return null;
+}
+
+/** A provider that authenticates one account without going near Google. */
+function providerFor(userId: string): IdentityProvider {
+  return {
+    name: "stub",
+    authorizationOrigin: "https://accounts.google.example",
+    authorizationUrl: () => "https://accounts.google.example/authorize",
+    identify: async () => ({ user: { id: userId }, email: "signed-in@example.com" }),
+  };
+}
+
+/** Comes back from Google as a browser carrying `cookies`. */
+function providerCallback(
+  state: string,
+  cookies: string | readonly string[] | null,
+  userId = "google:the-approver",
+) {
+  const carried = cookies === null ? [] : typeof cookies === "string" ? [cookies] : [...cookies];
+  return handleProviderCallback(
+    new Request(`${ORIGIN}/oauth/callback?code=google-code&state=${encodeURIComponent(state)}`, {
+      headers: carried.length ? { cookie: carried.join("; ") } : {},
+    }),
+    providerFor(userId),
+  );
+}
+
+/** Walks a client all the way to an approved authorization waiting at Google. */
+async function upToGoogle() {
+  const { clientId, pkce, reference, cookie } = await upToConsent();
+  const approved = await approve(reference, cookie);
+
+  assert.equal(approved.status, 302, "the approval was accepted");
+  const googleUrl = approved.headers.get("location") ?? "";
+  const state = new URL(googleUrl).searchParams.get("state") ?? "";
+  const binding = providerCookie(approved);
+
+  assert.ok(state, "the redirect to Google carries a state");
+  assert.ok(binding, "and the approval binds the Google leg to this browser");
+
+  return { clientId, pkce, googleUrl, state, binding };
+}
+
+/** The code a callback handed to the client, from its redirect. */
+function codeFrom(response: Response): string | null {
+  const location = response.headers.get("location");
+  if (!location) return null;
+  return new URL(location).searchParams.get("code");
+}
+
+test("a second browser cannot complete an authorization the first one approved", async () => {
+  // 1-3. Browser A starts, approves, and the Google URL is captured.
+  const { clientId, pkce, state, binding } = await upToGoogle();
+
+  // 4-5. Browser B opens that exact URL and completes the provider callback. It
+  // holds none of A's cookies, which is the whole of what it lacks.
+  const stolen = await providerCallback(state, null, "google:the-thief");
+
+  assert.equal(stolen.status, 400, "browser B is refused");
+  assert.equal(codeFrom(stolen), null, "and receives no authorization code");
+  const body = await stolen.text();
+  assert.equal(body.includes("code"), false, "nothing code-shaped in the body either");
+  assert.match(body, /browser/, "and is told what was wrong, which it can act on");
+
+  // 6-7. Browser A then completes the original flow, and must succeed — B's
+  // attempt matched no row, so it consumed nothing.
+  const completed = await providerCallback(state, binding, "google:the-approver");
+
+  assert.equal(completed.status, 302);
+  const code = codeFrom(completed);
+  assert.ok(code, "browser A receives the authorization code");
+
+  // And it is a real one: it redeems for an access token belonging to A's account.
+  const { status, body: tokens } = await token({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: REDIRECT_URI,
+    client_id: clientId,
+    code_verifier: pkce.verifier,
+    resource: `${ORIGIN}/mcp`,
+  });
+
+  assert.equal(status, 200, JSON.stringify(tokens));
+  const claims = await accessTokenVerifier(deployment(), signingKey()).verifyAccessToken(
+    tokens.access_token as string,
+  );
+  assert.equal(claims.extra?.userId, "google:the-approver", "the approver, not the thief");
+});
+
+test("a forged provider binding is refused and still consumes nothing", async () => {
+  const { state, binding } = await upToGoogle();
+
+  for (const forged of [
+    // A value of the right shape, invented.
+    `${binding.split("=")[0]}=aW52ZW50ZWQtdmFsdWUtb2YtdGhlLXJpZ2h0LXNoYXBl`,
+    // The right value under the wrong flow's name.
+    `il_provider_0000000000000000=${binding.split("=")[1]}`,
+    // Empty.
+    `${binding.split("=")[0]}=`,
+  ]) {
+    const refused = await providerCallback(state, forged);
+    assert.equal(refused.status, 400, forged);
+    assert.equal(codeFrom(refused), null, forged);
+  }
+
+  // Every one of those left the approval alone.
+  assert.ok(codeFrom(await providerCallback(state, binding)), "the approver can still finish");
+});
+
+test("the provider binding is spent with the state, so the leg cannot be replayed", async () => {
+  const { state, binding } = await upToGoogle();
+
+  assert.ok(codeFrom(await providerCallback(state, binding)), "the first completion works");
+
+  const again = await providerCallback(state, binding);
+  assert.equal(again.status, 400, "and the second finds nothing");
+  assert.equal(codeFrom(again), null);
+});
+
+test("a duplicate provider cookie is read as no cookie rather than as one of them", async () => {
+  // What cookie tossing from a sibling subdomain produces. Choosing either copy
+  // would be choosing on a rule the attacker also knows, so an ambiguous header
+  // resolves to nothing and the flow fails closed.
+  const { state, binding } = await upToGoogle();
+  const name = binding.split("=")[0];
+
+  const refused = await providerCallback(state, [binding, `${name}=something-else`]);
+
+  assert.equal(refused.status, 400);
+  assert.equal(codeFrom(refused), null);
+  // And the legitimate browser, presenting one cookie, still completes.
+  assert.ok(codeFrom(await providerCallback(state, binding)));
+});
+
+test("two authorizations approved in one browser complete independently", async () => {
+  const first = await upToGoogle();
+  const second = await upToGoogle();
+
+  // The browser holds both bindings at once, which is what connecting two MCP
+  // clients looks like. Each callback finds its own by name.
+  const both = [first.binding, second.binding];
+
+  assert.ok(codeFrom(await providerCallback(second.state, both)), "the second completes");
+  assert.ok(codeFrom(await providerCallback(first.state, both)), "and so does the first, after it");
+});
+
+test("answering one Google leg does not clear another flow's binding", async () => {
+  const first = await upToGoogle();
+  const second = await upToGoogle();
+
+  const answered = await providerCallback(first.state, [first.binding, second.binding]);
+  const cleared = answered.headers.getSetCookie().map((one) => one.split("=")[0]);
+
+  assert.equal(cleared.length, 1, "exactly one cookie is touched");
+  assert.equal(cleared[0], first.binding.split("=")[0], "and it is this flow's");
+  assert.match(answered.headers.getSetCookie()[0] ?? "", /Max-Age=0/);
+
+  // Which is to say the second flow is still completable.
+  assert.ok(codeFrom(await providerCallback(second.state, second.binding)));
+});
+
+test("a callback carrying no state clears nothing and consumes nothing", async () => {
+  const waiting = await upToGoogle();
+
+  const response = await handleProviderCallback(
+    new Request(`${ORIGIN}/oauth/callback?code=google-code`, {
+      headers: { cookie: waiting.binding },
+    }),
+    providerFor("google:whoever"),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(response.headers.getSetCookie(), [], "no cookie is cleared");
+  assert.ok(codeFrom(await providerCallback(waiting.state, waiting.binding)), "still completable");
+});
+
+test("the binding cookie for the Google leg is HttpOnly, Lax and scoped to the flow", async () => {
+  const { reference, cookie: consent } = await upToConsent();
+  const approved = await approve(reference, consent);
+
+  const cookie = approved.headers.getSetCookie().find((one) => one.startsWith("il_provider_")) ?? "";
+
+  assert.match(cookie, /^il_provider_[0-9a-f]{16}=/, "named after this flow, not shared");
+  assert.match(cookie, /HttpOnly/, "no script may read it");
+  // Lax, not Strict: it is presented on a top-level navigation arriving from
+  // Google, and Strict would withhold it there — no authorization could ever
+  // complete. The consent binding above keeps Strict, where it belongs.
+  assert.match(cookie, /SameSite=Lax/);
+  assert.match(cookie, /Path=\//);
+  assert.equal(cookie.includes("Secure"), false, "loopback development");
+  assert.equal(cookie.includes("__Host-"), false, "loopback development");
+
+  // And the value goes nowhere else: not into the URL the browser is sent to, not
+  // into a parameter a client supplied or could read.
+  const value = cookie.split(";")[0]?.split("=")[1] ?? "";
+  const googleUrl = approved.headers.get("location") ?? "";
+  assert.ok(value);
+  assert.equal(googleUrl.includes(value), false, "no binding value travels in a URL");
+  assert.equal(approved.headers.get("location")?.includes("il_provider"), false);
+});
+
+test("the redirect to Google demands that an account be chosen", async () => {
+  const { googleUrl } = await upToGoogle();
+  const url = new URL(googleUrl);
+
+  // The same requirement the website's own sign-in makes. A browser holding
+  // several Google sessions is made to say which one is connecting the client,
+  // rather than having one chosen for it silently.
+  assert.equal(url.searchParams.get("prompt"), "select_account");
+  assert.equal(url.origin, "https://accounts.google.com");
+  assert.equal(url.searchParams.get("scope"), "openid email", "and nothing more is asked for");
+  assert.equal(url.searchParams.get("code_challenge_method"), "S256");
+  assert.equal(url.searchParams.get("redirect_uri"), `${ORIGIN}/oauth/callback`);
 });

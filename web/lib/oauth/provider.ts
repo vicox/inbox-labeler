@@ -72,6 +72,11 @@ export type IdentityProvider = {
    * the way back: `state` finds the parked request, `nonce` ties the identity
    * token to this one login, and `codeChallenge` is our own PKCE for the leg to
    * the provider — this server is a public client there too.
+   *
+   * A provider is also required to make the user *choose* which account this is,
+   * rather than answering with whichever one the browser is already signed in to.
+   * It is not a parameter because no caller here wants it otherwise: see the
+   * implementation for what it costs and what it prevents.
    */
   authorizationUrl(request: {
     redirectUri: string;
@@ -145,9 +150,39 @@ export async function identifyUser(
   // which is otherwise only reachable by signing a token as Google.
   provider: IdentityProvider = identityProvider(),
 ): Promise<AuthenticatedUser> {
-  const { user, email } = await provider.identify(response);
+  return (await admittedIdentity(response, provider)).user;
+}
 
-  requireAllowed(email);
+/**
+ * The same thing, for the one caller that needs the address as well.
+ *
+ * The browser sign-in keeps it, and only it. A dashboard has to be able to say
+ * *which* Google account it is showing — that is the whole answer to somebody
+ * with several of them wondering whose labels these are — and its session
+ * re-asks the access list on every request, which needs an address the browser
+ * cannot influence. So the address travels one step further than it does for an
+ * MCP client, into a session row that lives as long as that session and no
+ * longer.
+ *
+ * It is still not the identity. The user key is the provider subject here as
+ * everywhere: see `AuthenticatedUser` and `lib/oauth/access.ts`.
+ *
+ * `identifyUser` above is this function with the address dropped again, so both
+ * flows apply one access check written in one place — a second provider, or a
+ * change to what "allowed" means, cannot reach one and miss the other.
+ */
+export async function admittedIdentity(
+  response: {
+    code: string;
+    redirectUri: string;
+    codeVerifier: string;
+    nonce: string;
+  },
+  provider: IdentityProvider = identityProvider(),
+): Promise<VerifiedIdentity> {
+  const identity = await provider.identify(response);
 
-  return user;
+  requireAllowed(identity.email);
+
+  return identity;
 }

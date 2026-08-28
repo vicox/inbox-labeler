@@ -18,9 +18,12 @@ import type { IdentityProvider, VerifiedIdentity } from "./provider.ts";
  * away and deliberately not requested — a name and a picture would tell
  * InboxLabeler nothing it needs, and data that is never collected cannot leak.
  *
- * The address is used and dropped. It leaves this module only as far as the seam
- * in `provider.ts`, which asks the access list about it and returns the identity
- * alone; nothing stores it, and no token or MCP result carries it.
+ * The address leaves this module only as far as the seam in `provider.ts`, which
+ * asks the access list about it. For an MCP client's authorization it is dropped
+ * there and goes no further. For a website sign-in it travels one step more, into
+ * the browser-session row that the dashboard reads to say which Google account it
+ * is showing — and out again when that session ends. No token and no MCP result
+ * ever carries it.
  */
 
 /**
@@ -75,6 +78,28 @@ export function google(): IdentityProvider {
         nonce,
         code_challenge: codeChallenge,
         code_challenge_method: "S256",
+        // `prompt=select_account` is Google's name for "show the chooser", and it
+        // is sent on every authorization this server starts — the website's own
+        // sign-in and an MCP client's alike.
+        //
+        // Without it, a browser holding several Google sessions has one of them
+        // chosen for it, and the person at the keyboard is never told which. The
+        // symptom is not an error: they arrive at a dashboard, or connect a
+        // client, as an identity they did not pick, and the only sign is that
+        // their labels appear to be missing. This deployment has already seen that
+        // confusion.
+        //
+        // Unconditional rather than a per-flow option, because there is no flow
+        // here that wants the other behaviour. An identity provider whose answer
+        // depended on which of our flows asked would be a provider with two
+        // meanings, and the extra click it costs someone with one account is the
+        // whole of the price.
+        //
+        // It is not a substitute for the browser bindings in `flow-binding.ts`.
+        // This makes the *chosen* account visible to the person choosing; the
+        // bindings are what keep the browser that approved and the browser that
+        // signs in the same browser. Neither does the other's job.
+        prompt: "select_account",
       }).toString();
       return url.toString();
     },

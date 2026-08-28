@@ -12,6 +12,7 @@ const DEPLOYMENT: Deployment = {
   tokenEndpoint: "https://inboxlabeler.example/oauth/token",
   registrationEndpoint: "https://inboxlabeler.example/oauth/register",
   callbackEndpoint: "https://inboxlabeler.example/oauth/callback",
+  webCallbackEndpoint: "https://inboxlabeler.example/auth/callback",
   resourceMetadataUrl: "https://inboxlabeler.example/.well-known/oauth-protected-resource/mcp",
   hostname: "inboxlabeler.example",
   insecure: false,

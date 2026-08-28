@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { database } from "../db.ts";
-import { migrate } from "../db/migrate.ts";
+import { prepareSchema } from "../db/migrate.ts";
 
 /**
  * The OAuth flow state that has to outlive a request, and the contract every
@@ -51,6 +51,12 @@ export type RegisteredClient = {
  * Each reference is unguessable and spent on first use, which is what makes the
  * first one a CSRF token for the consent form as well as a lookup key: a page
  * that was never served the form cannot forge a submission of it.
+ *
+ * Both parks are bound to the browser walking the flow, and the binding is
+ * required rather than optional — there is no way to write an unbound record or to
+ * take one without presenting a binding. The reference on its own is not evidence
+ * of a browser: the attacker who matters here registered the client and made the
+ * request, so they hold every reference the flow mints. See `lib/oauth/flow-binding.ts`.
  */
 export type PendingLogin = {
   clientId: string;
@@ -154,6 +160,22 @@ export const PENDING_LOGIN_TTL_MS = 10 * 60_000;
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 
 /**
+ * How long a client registration survives without being used.
+ *
+ * Registration is open by necessity — dynamic registration is how a client that
+ * has never met this server gets an id — so without this the table is the one
+ * thing here that grows and never shrinks, and a rate limit only bounds how fast.
+ * Ninety days is comfortably longer than the thirty a refresh token lives, so no
+ * client that is still in use can reach it, and a client that has lapsed will
+ * simply register again, which is the mechanism it already implements.
+ *
+ * "Used" means an authorization was started for it. Looking a client up is not
+ * use: a token request quotes an id it was given, and counting that would keep a
+ * registration alive on the strength of a stranger guessing at it.
+ */
+export const CLIENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
+
+/**
  * How long a rate-limit bucket is kept after anyone last touched it.
  *
  * A bucket has a window rather than a lifetime, so it is aged out instead of
@@ -185,23 +207,24 @@ export type OAuthStore = {
   /**
    * Parks a request and returns the single-use reference that resumes it.
    *
-   * `consentSession` binds the record to one browser: the value is given to that
+   * `browserBinding` ties the record to one browser: the value is given to that
    * browser as a cookie, and only a request carrying it back can resume this
-   * record. Omitted for the second park, where the reference travels as the
-   * identity provider's `state` and there is no form to protect.
+   * record. Required, so that a record which anything could resume is not
+   * expressible.
    */
-  parkLogin(login: Omit<PendingLogin, "expiresAt">, consentSession?: string): Promise<string>;
+  parkLogin(login: Omit<PendingLogin, "expiresAt">, browserBinding: string): Promise<string>;
   /**
    * Resumes a parked request, spending its reference.
    *
-   * `consentSession` is what the caller's browser presented, or null when the
-   * record is not expected to carry a binding. It is matched as part of the same
-   * statement that spends the reference, so a mismatch finds nothing — the check
-   * cannot be forgotten at a call site, because there is no call without it.
+   * `browserBinding` is what the caller's browser presented. It is matched as part
+   * of the same statement that spends the reference, so a mismatch finds nothing
+   * *and consumes nothing* — the legitimate browser's parked request survives
+   * somebody else's attempt on it, and the check cannot be forgotten at a call
+   * site because there is no call without it.
    */
   takeLogin(
     reference: string,
-    consentSession: string | null,
+    browserBinding: string,
     now?: number,
   ): Promise<PendingLogin | undefined>;
 
@@ -329,10 +352,9 @@ async function open(): Promise<OAuthStore> {
   const driver = await database();
   const { OAUTH_SCHEMA, sqlOAuthStore } = await import("./store/sql.ts");
 
-  // Migrating here as well as from `npm run db:migrate` is belt and braces: a
-  // deploy should run the command in its own step, and an instance that comes up
-  // against an un-migrated database should still work rather than serve errors
-  // until someone notices.
-  await migrate(driver, OAUTH_SCHEMA);
+  // Outside production this migrates; in production it checks and refuses. A
+  // deploy runs `npm run db:migrate` in its own step, and DDL never runs because
+  // a request arrived. See lib/db/migrate.ts.
+  await prepareSchema(driver, OAUTH_SCHEMA);
   return sqlOAuthStore(driver);
 }

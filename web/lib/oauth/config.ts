@@ -56,6 +56,22 @@ export type Deployment = {
   registrationEndpoint: string;
   /** Where the identity provider sends the user back to. */
   callbackEndpoint: string;
+  /**
+   * Where the identity provider sends a *browser* back to, which is a different
+   * place on purpose.
+   *
+   * The two flows come back from Google to two endpoints because they resume two
+   * different things: `callbackEndpoint` finds an MCP client's parked
+   * authorization request and answers it with a code, this one finds a browser's
+   * parked sign-in and answers it with a session cookie. Sharing one endpoint
+   * would mean a single handler holding both kinds of state and deciding between
+   * them per request — and the failure mode of getting that wrong is a browser
+   * sign-in redeemable as an MCP authorization. Two URLs, two tables, no
+   * decision to get wrong.
+   *
+   * Both have to be registered with the Google client: see web/.env.example.
+   */
+  webCallbackEndpoint: string;
   /** The RFC 9728 document a 401 points an unauthenticated client at. */
   resourceMetadataUrl: string;
   /** The issuer's hostname, for the transport's Origin check. */
@@ -84,6 +100,7 @@ export function deployment(): Deployment {
     tokenEndpoint: `${origin}/oauth/token`,
     registrationEndpoint: `${origin}/oauth/register`,
     callbackEndpoint: `${origin}/oauth/callback`,
+    webCallbackEndpoint: `${origin}/auth/callback`,
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL(resource)),
     hostname: new URL(origin).hostname,
     insecure: isLoopback(new URL(origin)),

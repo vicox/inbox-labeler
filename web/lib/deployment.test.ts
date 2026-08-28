@@ -101,6 +101,7 @@ test("every public URL is derived from the configured origin", async () => {
     tokenEndpoint: "https://inboxlabeler.com/oauth/token",
     registrationEndpoint: "https://inboxlabeler.com/oauth/register",
     callbackEndpoint: "https://inboxlabeler.com/oauth/callback",
+    webCallbackEndpoint: "https://inboxlabeler.com/auth/callback",
     resourceMetadataUrl:
       "https://inboxlabeler.com/.well-known/oauth-protected-resource/mcp",
     hostname: "inboxlabeler.com",

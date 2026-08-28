@@ -1,9 +1,10 @@
 import { codeRedirect, errorRedirect, type Redirectable } from "./authorization-request.ts";
 import { ConfigurationError, deployment } from "./config.ts";
 import { AccessDeniedError } from "./access.ts";
+import { clearProviderBinding, providerBindingOf } from "./flow-binding.ts";
 import { IdentityError } from "./google.ts";
 import { wrongOrigin } from "./origin.ts";
-import { identifyUser } from "./provider.ts";
+import { identifyUser, identityProvider, type IdentityProvider } from "./provider.ts";
 import { configurationFault, errorPage } from "./responses.ts";
 import { oauthStore } from "./store.ts";
 
@@ -19,8 +20,24 @@ import { oauthStore } from "./store.ts";
  * from this request's own query string. The provider returns two things and two
  * only: an authorization code of its own, and the reference that finds the
  * record.
+ *
+ * And the record is not found by that reference alone. It was parked bound to a
+ * value this browser holds as a cookie, and the binding is matched by the same
+ * statement that spends the reference — so a `state` that reaches a *different*
+ * browser finds nothing and consumes nothing. Without that, the Google URL an
+ * approval produces would be enough on its own to collect a code for whichever
+ * account the browser opening it happens to be signed in to, which would join one
+ * person's approval to another person's identity. See flow-binding.ts.
  */
-export async function handleProviderCallback(request: Request): Promise<Response> {
+export async function handleProviderCallback(
+  request: Request,
+  // The identity provider, as a seam. Only a test passes one: the round trip to
+  // Google is the single step of this flow that cannot be exercised without a real
+  // Google account, and everything it guards — which browser may complete an
+  // approved authorization, and what the code that comes out is bound to — is
+  // exactly what has to be proved. The same seam `admittedIdentity` has.
+  provider: IdentityProvider = identityProvider(),
+): Promise<Response> {
   let config;
   try {
     config = deployment();
@@ -37,12 +54,30 @@ export async function handleProviderCallback(request: Request): Promise<Response
     return errorPage("invalid_request", "The sign-in response carried no state.", 400);
   }
 
-  const login = await (await oauthStore()).takeLogin(reference, null);
+  // Cleared on every answer below, honoured or not, and only ever this flow's.
+  const forget = clearProviderBinding(reference, config);
+
+  // Refused before the store is touched, so a browser that was never given the
+  // binding cannot consume the approval it is trying to use. There is nothing to
+  // report to a client here: without the parked record we do not know which
+  // client this was, so the person in front of the browser is told instead.
+  const presented = providerBindingOf(request, reference, config);
+  if (!presented) {
+    return errorPage(
+      "invalid_request",
+      "This sign-in did not come back to the browser that started it. Start again from your MCP client.",
+      400,
+      forget,
+    );
+  }
+
+  const login = await (await oauthStore()).takeLogin(reference, presented);
   if (!login) {
     return errorPage(
       "invalid_request",
-      "This sign-in has expired or was already completed. Start again from your MCP client.",
+      "This sign-in has expired, was already completed, or was approved in a different browser. Start again from your MCP client.",
       400,
+      forget,
     );
   }
 
@@ -59,6 +94,7 @@ export async function handleProviderCallback(request: Request): Promise<Response
         } satisfies Redirectable,
         config.issuer,
       ),
+      forget,
     );
 
   const failed = params.get("error");
@@ -76,12 +112,15 @@ export async function handleProviderCallback(request: Request): Promise<Response
 
   let user;
   try {
-    user = await identifyUser({
-      code: providerCode,
-      redirectUri: config.callbackEndpoint,
-      codeVerifier: login.providerCodeVerifier,
-      nonce: login.nonce,
-    });
+    user = await identifyUser(
+      {
+        code: providerCode,
+        redirectUri: config.callbackEndpoint,
+        codeVerifier: login.providerCodeVerifier,
+        nonce: login.nonce,
+      },
+      provider,
+    );
   } catch (error) {
     if (error instanceof ConfigurationError) return configurationFault(error, "text");
     // Authenticated, and still not permitted. Said plainly, because the person
@@ -112,12 +151,11 @@ export async function handleProviderCallback(request: Request): Promise<Response
     userId: user.id,
   });
 
-  return redirect(codeRedirect(login.redirectUri, code, config.issuer, login.clientState));
+  return redirect(codeRedirect(login.redirectUri, code, config.issuer, login.clientState), forget);
 }
 
-function redirect(location: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { location, "cache-control": "no-store" },
-  });
+function redirect(location: string, setCookie: string): Response {
+  const headers = new Headers({ location, "cache-control": "no-store" });
+  headers.append("set-cookie", setCookie);
+  return new Response(null, { status: 302, headers });
 }

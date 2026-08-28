@@ -61,4 +61,4 @@ export function operator(): Operator | null {
 }
 
 /** The date the legal pages last changed in substance. */
-export const LEGAL_UPDATED = "27 August 2026";
+export const LEGAL_UPDATED = "28 August 2026";

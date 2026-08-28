@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AccessDeniedError, allowlist, requireAllowed } from "./access.ts";
+import { AccessDeniedError, allowlist, allows, requireAllowed } from "./access.ts";
+import { ConfigurationError } from "./config.ts";
 import { identityFromClaims } from "./google.ts";
 import { IdentityError } from "./google.ts";
 import { identifyUser, type IdentityProvider } from "./provider.ts";
@@ -17,6 +18,12 @@ import { identifyUser, type IdentityProvider } from "./provider.ts";
  * The invariant running through all of it: the address decides access and the
  * subject decides identity. A test that found an address where a user id belongs
  * would be finding a bug.
+ *
+ * And one asymmetry, which is the third section below: what "no list" means
+ * depends on where this runs. On a laptop it is an open door, because a developer
+ * signing in to their own machine is not an access-control question. In production
+ * it is a fault, because a closed beta must not become public by way of a variable
+ * that was renamed, blanked, or lost on the way into an environment.
  */
 
 /** Runs `work` with `ALLOWED_EMAILS` set to `value`, or unset when null. */
@@ -39,7 +46,26 @@ async function outcome(work: () => unknown): Promise<string> {
     return "allowed";
   } catch (error) {
     if (error instanceof AccessDeniedError || error instanceof IdentityError) return error.message;
+    if (error instanceof ConfigurationError) return `configuration: ${error.message}`;
     throw error;
+  }
+}
+
+/**
+ * Runs `work` as though this process were a production deployment.
+ *
+ * Next.js types `NODE_ENV` as read-only, which is right for application code and
+ * exactly what has to be overridden here: the point is to be the other environment
+ * for a moment. Restored afterwards.
+ */
+async function inProduction<T>(work: () => T | Promise<T>): Promise<T> {
+  const mutable = process.env as Record<string, string | undefined>;
+  const before = mutable.NODE_ENV;
+  mutable.NODE_ENV = "production";
+  try {
+    return await work();
+  } finally {
+    mutable.NODE_ENV = before;
   }
 }
 
@@ -86,7 +112,7 @@ test("a near miss is a miss", async () => {
   });
 });
 
-// --- no list means no restriction -----------------------------------------
+// --- outside production, no list means no restriction ---------------------
 
 test("an unset list allows anyone, which is what a local checkout wants", async () => {
   const allowed = await withAllowlist(null, () => outcome(() => requireAllowed("anyone@example.com")));
@@ -95,10 +121,7 @@ test("an unset list allows anyone, which is what a local checkout wants", async 
   assert.equal(await withAllowlist(null, allowlist), null);
 });
 
-test("an empty or blank list is the same as no list, not a locked door", async () => {
-  // A variable set to "" or " , , " is somebody who has not decided yet. Reading
-  // it as "nobody" would lock the operator out of their own deployment, which is
-  // never what an empty string was trying to say.
+test("an empty or blank list is the same as no list on a laptop", async () => {
   for (const written of ["", "   ", ",", " , , "]) {
     assert.equal(
       await withAllowlist(written, () => outcome(() => requireAllowed("anyone@example.com"))),
@@ -107,6 +130,83 @@ test("an empty or blank list is the same as no list, not a locked door", async (
     );
     assert.equal(await withAllowlist(written, allowlist), null, JSON.stringify(written));
   }
+});
+
+// --- in production, no list means nobody ----------------------------------
+//
+// The closed beta must not open itself because a variable went missing. Every way
+// of having no list is the same fault, and every one of them refuses.
+
+test("production refuses to admit anyone when there is no list at all", async () => {
+  for (const written of [null, "", " ", "   ", ",", ",,", " , , ", "\t", "\n"]) {
+    const refusal = await inProduction(() =>
+      withAllowlist(written, () => outcome(() => requireAllowed("anyone@example.com"))),
+    );
+
+    assert.match(refusal, /^configuration: ALLOWED_EMAILS/, JSON.stringify(written));
+    // It names the variable and what to do, because the operator is the only
+    // person who can act on it and the log is the only place they will see it.
+    assert.match(refusal, /closed beta/);
+    assert.match(refusal, /nobody is admitted/);
+  }
+});
+
+test("production refuses the question rather than answering it, so nothing reads as allowed", async () => {
+  // The distinction that matters: `allows` must not return true, and must not
+  // return false either — "there is no list" is not an answer about a person, and
+  // a caller that treated it as one could get it the wrong way round.
+  await inProduction(() =>
+    withAllowlist(null, () => {
+      assert.throws(() => allows("anyone@example.com"), ConfigurationError);
+      assert.throws(() => allowlist(), ConfigurationError);
+    }),
+  );
+});
+
+test("production with a list behaves exactly as anywhere else", async () => {
+  await inProduction(() =>
+    withAllowlist("invited@example.com, other@example.com", async () => {
+      assert.equal(await outcome(() => requireAllowed("invited@example.com")), "allowed");
+      assert.equal(await outcome(() => requireAllowed("other@example.com")), "allowed");
+      assert.match(await outcome(() => requireAllowed("stranger@example.com")), /not on this/);
+      // Case and surrounding space are ignored in production too: one rule,
+      // wherever it runs.
+      assert.equal(await outcome(() => requireAllowed("  Invited@Example.COM ")), "allowed");
+    }),
+  );
+});
+
+test("removing the last address closes the deployment rather than opening it", async () => {
+  // The operational shape of the change: an operator with one tester on the list
+  // takes them off. The wrong outcome here is not "the tester is refused", it is
+  // "everybody is admitted".
+  await inProduction(() =>
+    withAllowlist("last@example.com", async () => {
+      assert.equal(await outcome(() => requireAllowed("last@example.com")), "allowed");
+    }),
+  );
+
+  const afterRemoval = await inProduction(() =>
+    withAllowlist("", () => outcome(() => requireAllowed("last@example.com"))),
+  );
+  assert.match(afterRemoval, /^configuration:/);
+
+  const strangerAfterRemoval = await inProduction(() =>
+    withAllowlist("", () => outcome(() => requireAllowed("stranger@example.com"))),
+  );
+  assert.match(strangerAfterRemoval, /^configuration:/);
+});
+
+test("an MCP client's authorization is refused the same way, not admitted", async () => {
+  // The boundary the OAuth callback goes through. A configuration fault here is
+  // answered as a server fault by the route, never as a successful sign-in.
+  const refusal = await inProduction(() =>
+    withAllowlist(null, () =>
+      outcome(() => identifyUser(RESPONSE, providerReturning("anyone@example.com", "google:xyz"))),
+    ),
+  );
+
+  assert.match(refusal, /^configuration: ALLOWED_EMAILS/);
 });
 
 test("the parsed list drops blanks and keeps the rest", async () => {

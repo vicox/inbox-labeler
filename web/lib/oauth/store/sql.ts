@@ -2,6 +2,7 @@ import type { SqlDriver } from "../../db/driver.ts";
 import type { SchemaModule } from "../../db/migrate.ts";
 import {
   AUTHORIZATION_CODE_TTL_MS,
+  CLIENT_RETENTION_MS,
   PENDING_LOGIN_TTL_MS,
   RATE_LIMIT_RETENTION_MS,
   REFRESH_TOKEN_TTL_MS,
@@ -188,9 +189,17 @@ export const OAUTH_SCHEMA: SchemaModule = {
       `,
     },
     {
-      // Consent is bound to the browser that was shown the page. Without this the
-      // reference in the form is enough on its own, and an attacker who made the
-      // request holds it — so they can have someone else's browser submit it.
+      // Each pause in the flow is bound to the browser walking through it. Without
+      // this the reference is enough on its own, and an attacker who made the
+      // request holds it — so they can have someone else's browser use it.
+      //
+      // The column is named for the pause it was introduced for and now carries
+      // the binding of whichever pause parked the row: the consent binding on the
+      // first park, a fresh provider-leg binding on the second. It is left
+      // nullable as it shipped — the application requires a binding on every park
+      // and presents one on every take, so no row written by current code can have
+      // a null here, and a rename would break an in-flight approval during the
+      // window between migrating and deploying. See lib/oauth/flow-binding.ts.
       version: 3,
       sql: `
         ALTER TABLE oauth_pending_logins ADD COLUMN consent_session_hash bytea;
@@ -207,6 +216,30 @@ export const OAUTH_SCHEMA: SchemaModule = {
           count        integer NOT NULL
         );
         CREATE INDEX oauth_rate_limits_window_start ON oauth_rate_limits (window_start);
+      `,
+    },
+    {
+      // When each client was last put to use, so that a registration nobody ever
+      // came back for can age out. Everything else here expires; this table was
+      // the one that only grew, and open registration means whoever wants to can
+      // make it grow.
+      //
+      // Existing rows are seeded with `now()` rather than with `registered_at`,
+      // which is the difference between a safe migration and one that deletes
+      // working clients. Nothing recorded use before this column existed, so a
+      // client registered longer ago than the retention window would otherwise be
+      // swept on the first registration after the migration — while still in
+      // active use, because using it is exactly what was never recorded. Seeding
+      // from the migration gives every existing client a full window in which to
+      // prove itself, and costs one row per abandoned registration for one window.
+      version: 5,
+      sql: `
+        ALTER TABLE oauth_clients ADD COLUMN last_used_at timestamptz;
+        UPDATE oauth_clients SET last_used_at = now() WHERE last_used_at IS NULL;
+        ALTER TABLE oauth_clients
+          ALTER COLUMN last_used_at SET NOT NULL,
+          ALTER COLUMN last_used_at SET DEFAULT now();
+        CREATE INDEX oauth_clients_last_used_at ON oauth_clients (last_used_at);
       `,
     },
   ],
@@ -240,6 +273,24 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
     }
   };
 
+  /**
+   * Drops client registrations nobody has used for the retention window.
+   *
+   * Separate from `sweep` because this table ages out by `last_used_at` rather
+   * than expiring by `expires_at`, and because a client is not a credential — it
+   * is a registration that a lapsed client re-creates on its own. Failures are
+   * swallowed for the same reason as every other sweep here.
+   */
+  const sweepClients = async (now: number): Promise<void> => {
+    try {
+      await driver.query(`DELETE FROM oauth_clients WHERE last_used_at <= $1`, [
+        new Date(now - CLIENT_RETENTION_MS),
+      ]);
+    } catch {
+      // Left to the next registration.
+    }
+  };
+
   const sweep = async (table: string, now: number): Promise<void> => {
     try {
       await driver.query(`DELETE FROM ${table} WHERE expires_at <= $1`, [new Date(now)]);
@@ -260,8 +311,8 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
       };
 
       await driver.query(
-        `INSERT INTO oauth_clients (client_id, redirect_uris, client_name, registered_at)
-         VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO oauth_clients (client_id, redirect_uris, client_name, registered_at, last_used_at)
+         VALUES ($1, $2, $3, $4, $4)`,
         [
           registered.clientId,
           registered.redirectUris,
@@ -269,6 +320,10 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
           new Date(registered.registeredAt),
         ],
       );
+      // On the way past, and only here: this is the write that makes the table
+      // grow, so it is the write that pays for keeping it bounded. Indexed on
+      // last_used_at, so it is a range delete rather than a scan.
+      await sweepClients(Date.now());
       return registered;
     },
 
@@ -288,7 +343,7 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
       };
     },
 
-    async parkLogin(login, consentSession) {
+    async parkLogin(login, browserBinding) {
       const value = reference();
       const expiresAt = Date.now() + PENDING_LOGIN_TTL_MS;
 
@@ -310,29 +365,40 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
           new Date(expiresAt),
           // Only the hash, like every other reference here: a copy of the
           // database must not be a set of usable browser bindings.
-          consentSession === undefined ? null : referenceHash(consentSession),
+          referenceHash(browserBinding),
         ],
       );
       await sweep("oauth_pending_logins", Date.now());
+
+      // An authorization was started for this client, which is what "used" means.
+      // Deliberately not on `client()`: a token request quotes an id it was given,
+      // and a stranger guessing at ids must not be able to keep a registration
+      // alive. Failures are swallowed — housekeeping must never fail a login.
+      try {
+        await driver.query(`UPDATE oauth_clients SET last_used_at = $2 WHERE client_id = $1`, [
+          login.clientId,
+          new Date(),
+        ]);
+      } catch {
+        // Left to the next authorization.
+      }
       return value;
     },
 
-    async takeLogin(value, consentSession, now = Date.now()) {
+    async takeLogin(value, browserBinding, now = Date.now()) {
       const rows = await driver.query<PendingLoginRow>(
         // The binding is matched inside the statement that spends the reference,
-        // so it is not a check a caller could skip. `IS NOT DISTINCT FROM` makes
-        // the comparison symmetric about null: a bound record cannot be taken
-        // without the cookie, and an unbound one cannot be taken with one.
+        // so it is not a check a caller could skip — and a mismatch matches no
+        // row, which means it deletes nothing: the browser that legitimately
+        // parked this record can still resume it after somebody else has tried.
+        // `IS NOT DISTINCT FROM` keeps the comparison symmetric about null, so a
+        // row written before bindings were required cannot be taken with one.
         `DELETE FROM oauth_pending_logins
          WHERE reference_hash = $1 AND expires_at > $2
            AND consent_session_hash IS NOT DISTINCT FROM $3
          RETURNING client_id, redirect_uri, code_challenge, scope, resource,
                    client_state, nonce, provider_code_verifier, expires_at`,
-        [
-          referenceHash(value),
-          new Date(now),
-          consentSession === null ? null : referenceHash(consentSession),
-        ],
+        [referenceHash(value), new Date(now), referenceHash(browserBinding)],
       );
       const row = rows[0];
       if (!row) return undefined;
@@ -555,6 +621,14 @@ export function sqlOAuthStore(driver: SqlDriver): OAuthStore {
         [new Date(now - RATE_LIMIT_RETENTION_MS)],
       );
       removed += buckets.length;
+
+      // Client registrations age out the same way, by last use rather than by an
+      // expiry of their own.
+      const clients = await driver.query<{ id: unknown }>(
+        `DELETE FROM oauth_clients WHERE last_used_at <= $1 RETURNING 1 AS id`,
+        [new Date(now - CLIENT_RETENTION_MS)],
+      );
+      removed += clients.length;
 
       return removed;
     },

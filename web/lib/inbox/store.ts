@@ -1,6 +1,6 @@
 import { database } from "../db.ts";
 import type { SqlDriver } from "../db/driver.ts";
-import { migrate } from "../db/migrate.ts";
+import { prepareSchema } from "../db/migrate.ts";
 import type { AuthenticatedUser } from "../identity.ts";
 import type { Attention, Label, LabelType, ReferenceField } from "./labels.ts";
 import type { Matches } from "./matches.ts";
@@ -125,7 +125,7 @@ function prepared(): Promise<SqlDriver> {
   preparing ??= (async () => {
     const driver = await database();
     const { INBOX_SCHEMA } = await import("./store/schema.ts");
-    await migrate(driver, INBOX_SCHEMA);
+    await prepareSchema(driver, INBOX_SCHEMA);
     return driver;
   })().catch((error: unknown) => {
     preparing = undefined;

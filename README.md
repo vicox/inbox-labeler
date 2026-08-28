@@ -616,13 +616,23 @@ file documents each variable in full; in short:
 | `GOOGLE_CLIENT_ID` | a Google OAuth 2.0 "Web application" client |
 | `GOOGLE_CLIENT_SECRET` | its secret |
 | `DATABASE_URL` | Postgres, holding the OAuth flow state and each user's labels and matches. **Required in production**; unset in development, which uses an embedded Postgres instead |
-| `ALLOWED_EMAILS` | optional: comma-separated addresses allowed to sign in. Unset means any verified Google account may — see [Who may sign in](#who-may-sign-in) |
+| `ALLOWED_EMAILS` | comma-separated addresses allowed to sign in. **Required in production**, where an unset, empty or blank list admits nobody; optional in development, where it admits anyone — see [Who may sign in](#who-may-sign-in) |
 | `DEV_DATABASE_DIR` | development only: where that embedded database keeps its files. Unset means in-memory |
 
-The Google client needs one authorised redirect URI, matching `PUBLIC_ORIGIN`:
-`http://localhost:3000/oauth/callback` locally. The scopes are `openid email` — the
-address is read to check the access list below and then dropped, and `profile` is
-not requested, so Inbox Labeler never learns a name or a picture.
+The Google client needs **two** authorised redirect URIs, both derived from
+`PUBLIC_ORIGIN`, because two different flows come back from Google:
+
+| Redirect URI | Comes back from |
+| --- | --- |
+| `<origin>/oauth/callback` | an **MCP client** being authorized |
+| `<origin>/auth/callback` | a **person signing in** to the website |
+
+Locally that is `http://localhost:3000/oauth/callback` and
+`http://localhost:3000/auth/callback`. Register both: the one you forget fails with
+Google's `redirect_uri_mismatch`, and nothing else says why.
+
+The scopes are `openid email` — the address is read to check the access list below,
+and `profile` is not requested, so Inbox Labeler never learns a name or a picture.
 
 `.env.local` is gitignored. `.env.example` holds names and never values.
 
@@ -630,12 +640,16 @@ not requested, so Inbox Labeler never learns a name or a picture.
 
 Signing in requires a Google account, and Google will vouch for anybody's.
 `ALLOWED_EMAILS` is the whole of Inbox Labeler's access control, and how a private
-beta is closed. It is **optional**, and has exactly two behaviours:
+beta is closed. It is **required in production**, and what "no list" means depends
+on where the code is running:
 
-| `ALLOWED_EMAILS` | Who may authenticate |
-| --- | --- |
-| configured | only the listed addresses |
-| unset or empty | any Google account with a verified email address |
+| `ALLOWED_EMAILS` | Production | Development |
+| --- | --- | --- |
+| configured | only the listed addresses | only the listed addresses |
+| unset, empty, blank, or only commas | **nobody** — the deployment refuses every sign-in | any Google account with a verified email address |
+
+Every way of naming no addresses is the same thing and gets the same answer: unset,
+`""`, `" "`, `","`, `" , , "` all normalise to an empty list.
 
 To close it, list the addresses, comma-separated:
 
@@ -659,39 +673,53 @@ Google callback  →  verify identity  →  check the list  →  AuthenticatedUs
 ```
 
 **The address decides access, not identity.** The user is still the Google
-subject, which survives them changing their address — so a beta tester who renames
-their account keeps their labels. Nothing stores the address, and no token,
-database row or MCP result carries it.
+subject — `google:<the verified sub>` — which survives them changing their address,
+so a beta tester who renames their account keeps their labels. The address is never
+the tenant key, never in a token we issue, and never in an MCP result.
 
-#### Why an empty list is not an error
+Where it *is* stored is one place, and only for the website: a **browser session row**
+keeps the verified address for as long as that session lasts, because the dashboard
+shows you which Google account it is displaying and because the list above is
+re-checked against it on every request the session makes. An **MCP client's**
+authorization stores no address at all — it is checked against the list and dropped.
 
-Leaving `ALLOWED_EMAILS` unset accepts every Google account, and that is a
-decision rather than a gap. It is what makes the variable optional, and it buys
-three things worth having in a V1:
+#### Why production fails closed
 
-- **A local checkout works after `npm install`**, with no list to invent or keep
-  up to date.
-- **Closing the beta is one variable**, set in one place, with nothing else to
-  change or deploy.
-- **There is one rule, not one per environment.** Requiring the list only in
-  production would mean the behaviour you tested locally is not the behaviour that
-  runs — and an access rule that differs by environment is the kind that is
-  discovered rather than reviewed.
+A closed beta must not become public because a variable was renamed, blanked, or
+lost on the way into an environment. So in production, no list means **nobody**:
+the deployment raises a configuration error, refuses the requests that need it, and
+writes the reason to its own log — exactly as it does for a missing signing secret
+or a missing database.
 
-Reading an empty string as "nobody" was the other option, and it is worse: an
-unset variable is somebody who has not chosen yet, not somebody who has chosen to
-lock everyone — including themselves — out of their own deployment.
+It refuses rather than answering "you are not on the list", and the difference
+matters. There *is* no list, so that answer would be a lie told to somebody who may
+well be invited, and it would leave you with a deployment that looks healthy, admits
+nobody, and says nothing about why. A configuration fault names the cause where the
+operator can read it.
 
-So a hosted deployment with no list is open to every Google account. Set the
-variable when the answer is "these people".
+Two consequences worth knowing before you set it:
+
+- **Removing the last address closes the deployment**, rather than opening it. That
+  is the point, but it means the variable is not a place to empty out temporarily.
+- **A signed-in browser loses the dashboard on its next page load.** The list is
+  re-checked on every request rather than only at sign-in, so an operator's change
+  reaches people who are already signed in.
+
+Outside production the same absence means the opposite — any verified Google account
+may sign in — and that is deliberately scoped to development: a checkout has to work
+after `npm install` with no list to invent, and a developer signing in to their own
+machine is not an access-control question. It is a development affordance, not a rule
+with an exception.
 
 ### Where hosted state lives
 
-Four things have to outlive a request: registered clients, logins in progress,
-authorization codes and refresh tokens. They are in **Postgres**, and the reason is
-narrower than "it needs a database" — it is that two of them must be spendable
-exactly once. An authorization code presented twice, by two instances, in the same
-millisecond, may be honoured once; so may a refresh token. Each is one statement:
+Six things have to outlive a request: registered clients, logins in progress,
+authorization codes and refresh tokens for the MCP flow, and — for the website
+rather than for MCP clients — sign-ins in progress and signed-in browser sessions.
+They are in **Postgres**, and the reason is narrower than "it needs a database": most
+of them must be spendable **exactly once**. An authorization code presented twice, by
+two instances, in the same millisecond, may be honoured once; so may a refresh token,
+and so may either kind of login in progress. Each is one statement:
 
 ```sql
 DELETE FROM oauth_authorization_codes
@@ -722,8 +750,13 @@ Initialise or update the schema, before the new code serves traffic:
 npm run db:migrate     # idempotent, and safe to run from several instances at once
 ```
 
+In production this is **required**, and it is the only thing that changes the schema
+there: an instance checks that the migrations its code needs have been applied and
+refuses rather than applying them itself. Run it before the build that needs it goes
+live — see [Deploying it](#deploying-it) for the exact order.
+
 Expired rows are deleted opportunistically after writes, and `npm run db:migrate` is
-the only step a deploy needs. Cleanup is never load-bearing: every read filters on
+the only schema step a deploy needs. Cleanup is never load-bearing: every read filters on
 expiry, so an expired code is refused whether or not anything has swept it.
 
 ### Per-user state
@@ -884,9 +917,10 @@ All four are required together. With any of them unset, `/impressum`, `/privacy`
 and `/terms` answer `404` rather than render a disclosure that names nobody. No
 other route reads them.
 
-`ALLOWED_EMAILS` is optional and separate from those: with it, only the listed
-addresses may sign in; without it, any Google account with a verified email may.
-Both are intended — see [Who may sign in](#who-may-sign-in).
+`ALLOWED_EMAILS` is separate from those and is **required in production**: it must
+name at least one invited address, or nobody is admitted. Unset, empty, blank and
+comma-only are all the same misconfiguration and all refuse every sign-in — see
+[Who may sign in](#who-may-sign-in).
 
 `PUBLIC_ORIGIN` is an origin, not the MCP endpoint's URL — `https://inboxlabeler.com`, never
 `…/mcp`; a path, query or fragment is refused rather than silently dropped. It must
@@ -918,23 +952,49 @@ intended consequence, not a limitation to work around.
 ```text
 Authorised JavaScript origin   https://inboxlabeler.com
 Authorised redirect URI        https://inboxlabeler.com/oauth/callback
+Authorised redirect URI        https://inboxlabeler.com/auth/callback
 ```
 
-Neither is written down in the application. The callback URL is derived from
-`PUBLIC_ORIGIN`, so pointing the deployment at a different domain needs no code
-change — only the matching entry here.
+**Both redirect URIs, because two different flows come back from Google:**
+`/oauth/callback` is where an **MCP client's** authorization returns, and
+`/auth/callback` is where a **person signing in to the website** returns. They resume
+different records and neither can do the other's job. Miss one and that flow fails
+with Google's `redirect_uri_mismatch`, while the other keeps working — so the symptom
+is "sign-in is broken but my MCP client is fine", or the reverse.
 
-**4. Migrate.** Once, against the production database, before the new code serves:
+None of the three is written down in the application. Both callback URLs are derived
+from `PUBLIC_ORIGIN`, so pointing the deployment at a different domain needs no code
+change — only the matching entries here.
+
+**4. Migrate — before the new build serves, not after.** This step is **required in
+production**, and it is the only thing that changes the schema there:
 
 ```bash
 cd web
 DATABASE_URL='<the pooled Neon string>' npm run db:migrate
 ```
 
-It is idempotent and safe to run twice or from two places at once, and it prints what
-it applied. Opening a store migrates too, so a forgotten run is not an outage — but
-only the command can be ordered in a deploy. A failure exits non-zero with the
-Postgres error rather than continuing.
+**Production never migrates itself.** A production instance opening a store *checks*
+that the migrations its code needs have been applied and raises a configuration error
+if any are missing; it runs no DDL of its own, and reads one row to decide. A request
+from the internet must not be what migrates a database — the first request after a
+deploy is an arbitrary one, several instances would race to be it, and a migration
+failing halfway would do so inside somebody's page load with nobody watching.
+
+So the order is fixed, and getting it backwards is an outage rather than a delay:
+
+```text
+1  set or verify the production environment variables
+2  DATABASE_URL='<pooled Neon string>' npm run db:migrate
+3  confirm it succeeded — it prints what it applied
+4  only then deploy or promote the new build
+```
+
+Outside production the schema is still brought up to date automatically, so a local
+checkout needs no extra step.
+
+The command is idempotent and safe to run twice or from two places at once. A failure
+exits non-zero with the Postgres error rather than continuing.
 
 The command refuses to run without `DATABASE_URL`. It will not quietly migrate the
 embedded development database instead — a deploy step whose variable failed to reach
@@ -984,6 +1044,17 @@ work and deliberately not part of this one.
 - **No `revocation_endpoint`**, and registration uses the mechanism the MCP
   specification now marks deprecated (RFC 7591) because it is the one clients speak
   today. Client ID Metadata Documents are the successor to add.
+- **The authentication tests drive handlers, not a browser.** They build a `Request`,
+  read the `Set-Cookie` back, and hand it to the next call — which proves the server's
+  half of every rule and none of the browser's. What no test yet exercises: a
+  production build served over HTTP, a real cookie jar in two isolated browser
+  contexts, a browser actually honouring `__Host-` and `SameSite` across the return
+  from Google, duplicate cookies, two callbacks racing, an empty allowlist in a
+  genuinely production process, the response cache headers as sent, and a
+  migrate-then-deploy against a real database. Each of those is currently correct by
+  construction and asserted at the handler; this is a regression-detection gap rather
+  than a known fault, and it is worth closing **before an external beta** rather than
+  for owner-only testing.
 
 ## Repository layout
 
@@ -1012,7 +1083,7 @@ web/
 ├── app/                  the web UI, and the MCP and OAuth routes
 └── lib/
     ├── identity.ts       who an authenticated request belongs to — one stable id
-    ├── db.ts, db/        one Postgres connection, and the migrations for both schemas
+    ├── db.ts, db/        one Postgres connection, and the migrations for all three schemas
     ├── mcp/              the MCP server, its tools, and the auth boundary
     ├── inbox/            per-user labels and match history — labels.py's semantics
     └── oauth/            the authorization server: discovery, grants, tokens

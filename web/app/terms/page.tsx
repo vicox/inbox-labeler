@@ -28,12 +28,15 @@ export default function Terms() {
         <h2>Who may use it</h2>
         <p>
           Use is limited to people who have been invited. Access is granted per e-mail address, and the
-          operator decides which addresses are on the list and may add or remove one at any time.
+          operator decides which addresses are on the list and may add or remove one at any time. With
+          no list configured, the service admits nobody.
         </p>
         <p>
-          Removing an address stops that account from signing in again. Credentials already issued to an
-          MCP client may remain usable until they expire or are revoked by hand — so removal prevents
-          future sign-in rather than ending every active connection at that instant.
+          Removing an address stops that account from signing in again, and closes the website
+          dashboard to a browser that is already signed in as soon as it loads another page.
+          Credentials already issued to an MCP client may remain usable until they expire or are
+          revoked by hand — so for those, removal prevents future sign-in rather than ending every
+          active connection at that instant.
         </p>
       </section>
 

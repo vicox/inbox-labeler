@@ -1,10 +1,15 @@
 /**
  * `npm run db:migrate` — brings every schema in the database up to date.
  *
- * A deployment should run this before the new code starts serving, so that a
- * schema change is a step someone ordered rather than a side effect of whichever
- * instance booted first. Opening a store migrates its own schema too, so a
- * missed run is not an outage — but only the command can be placed in a deploy.
+ * **In production this is the only thing that migrates.** An instance opening a
+ * store checks that the migrations its code needs have been applied and raises a
+ * configuration error if any are missing; it runs no DDL of its own. So a missed
+ * run *is* an outage there, and the order is fixed: migrate, confirm, then deploy
+ * the build that needs it. See `prepareSchema` in ./migrate.ts for why a request
+ * from the internet must never be what changes a schema.
+ *
+ * Outside production, opening a store still migrates, so a checkout needs no
+ * separate step — but only this command can be placed in a deploy.
  *
  * Idempotent and safe to run concurrently: see `migrate` for how the tracking
  * table's own primary key does that without a lock.
@@ -12,10 +17,11 @@
 import { migrate, type SchemaModule } from "./migrate.ts";
 import { INBOX_SCHEMA } from "../inbox/store/sql.ts";
 import { OAUTH_SCHEMA } from "../oauth/store/sql.ts";
+import { WEB_SCHEMA } from "../web/store/sql.ts";
 import type { SqlDriver } from "./driver.ts";
 
 /** Every schema, in no particular order: they share no version sequence. */
-const SCHEMAS: readonly SchemaModule[] = [OAUTH_SCHEMA, INBOX_SCHEMA];
+const SCHEMAS: readonly SchemaModule[] = [OAUTH_SCHEMA, INBOX_SCHEMA, WEB_SCHEMA];
 
 const url = process.env.DATABASE_URL?.trim();
 

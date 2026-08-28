@@ -1,3 +1,4 @@
+import { ConfigurationError } from "../oauth/config.ts";
 import { UNIQUE_VIOLATION, isSqlState, type SqlDriver } from "./driver.ts";
 
 /**
@@ -31,9 +32,77 @@ export type Migration = { version: number; sql: string };
 export type SchemaModule = { module: string; migrations: readonly Migration[] };
 
 /**
+ * Makes a module's schema ready to use, in the way this environment allows.
+ *
+ * The two environments do genuinely different things here, and that is the point
+ * of the function existing:
+ *
+ *   development   migrate, so a checkout works after `npm install` and a schema
+ *                 change is picked up by whichever process needs it.
+ *
+ *   production    check, and refuse. A request from the internet must never be
+ *                 what causes DDL to run: the first request after a deploy would
+ *                 be an arbitrary one, several instances would race to be it, and
+ *                 a migration failing halfway would do so inside somebody's page
+ *                 load with nobody watching. Schema changes are a step an operator
+ *                 takes — `npm run db:migrate` — and this is where a deployment
+ *                 that skipped it says so instead of guessing.
+ *
+ * The production path reads one row and writes nothing, not even the tracking
+ * table: a missing tracking table is itself the answer, so creating it would be
+ * the very DDL this exists to avoid.
+ */
+export async function prepareSchema(driver: SqlDriver, schema: SchemaModule): Promise<void> {
+  if (process.env.NODE_ENV !== "production") {
+    await migrate(driver, schema);
+    return;
+  }
+  await requireSchema(driver, schema);
+}
+
+/**
+ * Refuses unless every migration this code needs has already been applied.
+ *
+ * Named versions rather than a count, so a database migrated by a *newer* deploy
+ * than this one still satisfies an older instance — which is what a rollback looks
+ * like, and it should not be an outage.
+ */
+async function requireSchema(driver: SqlDriver, schema: SchemaModule): Promise<void> {
+  const wanted = schema.migrations.map((migration) => migration.version);
+  if (!wanted.length) return;
+
+  // Asked as its own question first, because a statement naming a table that does
+  // not exist fails when Postgres plans it — a WHERE clause guarding the reference
+  // never gets the chance to be false.
+  const [tracking] = await driver.query<{ present: boolean }>(
+    "SELECT to_regclass('schema_migrations') IS NOT NULL AS present",
+  );
+
+  const applied = tracking?.present
+    ? (
+        await driver.query<{ version: number }>(
+          "SELECT version FROM schema_migrations WHERE module = $1",
+          [schema.module],
+        )
+      ).map((row) => row.version)
+    : [];
+
+  const missing = wanted.filter((version) => !applied.includes(version));
+  if (missing.length) {
+    throw new ConfigurationError(
+      `The ${schema.module} schema is not up to date: migration(s) ` +
+        `${missing.join(", ")} have not been applied. Run \`npm run db:migrate\` against ` +
+        `this deployment's DATABASE_URL before the new code serves traffic. ` +
+        `Production never migrates from a request.`,
+    );
+  }
+}
+
+/**
  * Brings one module's schema up to date, returning how many steps ran.
  *
- * Idempotent, so it is safe on every deploy and safe twice.
+ * Idempotent, so it is safe on every deploy and safe twice. Called by
+ * `npm run db:migrate`, and by `prepareSchema` outside production.
  */
 export async function migrate(driver: SqlDriver, schema: SchemaModule): Promise<number> {
   await ensureTrackingTable(driver);

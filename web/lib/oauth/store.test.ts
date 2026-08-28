@@ -6,6 +6,7 @@ import test, { after, describe } from "node:test";
 
 import {
   AUTHORIZATION_CODE_TTL_MS,
+  CLIENT_RETENTION_MS,
   PENDING_LOGIN_TTL_MS,
   RATE_LIMIT_RETENTION_MS,
   REFRESH_TOKEN_TTL_MS,
@@ -56,6 +57,16 @@ async function redeem(store: OAuthStore, code: string, now?: number) {
   const redemption = await store.redeemCode(code, allow, now);
   return redemption.outcome === "redeemed" ? redemption.grant : undefined;
 }
+
+/**
+ * The browser binding every park below uses.
+ *
+ * One value shared across these tests on purpose: what they are about is how a
+ * reference is spent, and the binding is required for a record to exist at all.
+ * That the binding must *match* is `flow.test.ts`' subject, where there are two
+ * browsers to tell apart.
+ */
+const BINDING = "a-browser-binding";
 
 const LOGIN = {
   clientId: "client-1",
@@ -136,9 +147,9 @@ for (const driver of drivers) {
 
     test("a parked login is visible to another store instance", async () => {
       const { store, driver: sql } = await fresh();
-      const reference = await store.parkLogin(LOGIN);
+      const reference = await store.parkLogin(LOGIN, BINDING);
 
-      const resumed = await sqlOAuthStore(sql).takeLogin(reference, null);
+      const resumed = await sqlOAuthStore(sql).takeLogin(reference, BINDING);
 
       assert.equal(resumed?.nonce, "nonce");
       assert.equal(resumed?.providerCodeVerifier, "verifier");
@@ -226,10 +237,10 @@ for (const driver of drivers) {
 
     test("a parked login resumes once, which is what makes the consent form single-use", async () => {
       const { store } = await fresh();
-      const reference = await store.parkLogin(LOGIN);
+      const reference = await store.parkLogin(LOGIN, BINDING);
 
-      assert.equal((await store.takeLogin(reference, null))?.nonce, "nonce");
-      assert.equal(await store.takeLogin(reference, null), undefined);
+      assert.equal((await store.takeLogin(reference, BINDING))?.nonce, "nonce");
+      assert.equal(await store.takeLogin(reference, BINDING), undefined);
     });
 
     // --- the two races ----------------------------------------------------
@@ -278,10 +289,10 @@ for (const driver of drivers) {
 
     test("simultaneous resumptions of one parked login: exactly one succeeds", async () => {
       const { store } = await fresh();
-      const reference = await store.parkLogin(LOGIN);
+      const reference = await store.parkLogin(LOGIN, BINDING);
 
       const attempts = await Promise.all(
-        Array.from({ length: 12 }, () => store.takeLogin(reference, null)),
+        Array.from({ length: 12 }, () => store.takeLogin(reference, BINDING)),
       );
 
       assert.equal(attempts.filter((attempt) => attempt !== undefined).length, 1);
@@ -321,10 +332,10 @@ for (const driver of drivers) {
 
     test("an expired parked login is rejected", async () => {
       const { store } = await fresh();
-      const reference = await store.parkLogin(LOGIN);
+      const reference = await store.parkLogin(LOGIN, BINDING);
 
       assert.equal(
-        await store.takeLogin(reference, null, Date.now() + PENDING_LOGIN_TTL_MS + 1),
+        await store.takeLogin(reference, BINDING, Date.now() + PENDING_LOGIN_TTL_MS + 1),
         undefined,
       );
     });
@@ -347,7 +358,7 @@ for (const driver of drivers) {
     test("cleanup removes expired records and leaves live ones", async () => {
       const { store, driver: sql } = await fresh();
       await store.issueCode(GRANT);
-      await store.parkLogin(LOGIN);
+      await store.parkLogin(LOGIN, BINDING);
       await store.issueRefreshToken(GRANT);
 
       const live = await store.cleanup();
@@ -410,7 +421,7 @@ for (const driver of drivers) {
       const { store, driver: sql } = await fresh();
       const code = await store.issueCode(GRANT);
       const token = await store.issueRefreshToken(GRANT);
-      const login = await store.parkLogin(LOGIN);
+      const login = await store.parkLogin(LOGIN, BINDING);
 
       for (const [table, column, value] of [
         ["oauth_authorization_codes", "code_hash", code],
@@ -440,7 +451,7 @@ for (const driver of drivers) {
 
     test("no store keeps a Google secret or any signing material", async () => {
       const { store, driver: sql } = await fresh();
-      await store.parkLogin(LOGIN);
+      await store.parkLogin(LOGIN, BINDING);
 
       // Every column of the parked row, as text. The provider code verifier is
       // ours and belongs here; a client secret or a signing key never would.
@@ -466,7 +477,7 @@ for (const driver of drivers) {
 
     test("a login stores one user-free record: identity arrives later", async () => {
       const { store, driver: sql } = await fresh();
-      await store.parkLogin(LOGIN);
+      await store.parkLogin(LOGIN, BINDING);
 
       const rows = await sql.query<Record<string, unknown>>("SELECT * FROM oauth_pending_logins");
       assert.equal("user_id" in rows[0], false, "nobody is identified until the callback");
@@ -479,7 +490,7 @@ for (const driver of drivers) {
 
       assert.equal(await redeem(store, "made-up"), undefined);
       assert.equal((await store.rotateRefreshToken("made-up", allow)).outcome, "unknown");
-      assert.equal(await store.takeLogin("made-up", null), undefined);
+      assert.equal(await store.takeLogin("made-up", BINDING), undefined);
       assert.equal(await store.client("made-up"), undefined);
     });
 
@@ -506,9 +517,9 @@ for (const driver of drivers) {
       // The store writes `clientState ?? null`, so an absent one and an
       // undefined one are the same row — which is the case a client that sent
       // no `state` produces.
-      const reference = await store.parkLogin({ ...LOGIN, clientState: undefined });
+      const reference = await store.parkLogin({ ...LOGIN, clientState: undefined }, BINDING);
 
-      assert.equal((await store.takeLogin(reference, null))?.clientState, undefined);
+      assert.equal((await store.takeLogin(reference, BINDING))?.clientState, undefined);
     });
 
     // --- migrations -------------------------------------------------------
@@ -707,6 +718,68 @@ for (const driver of drivers) {
       );
     });
 
+    // --- client registrations age out by use ------------------------------
+    //
+    // The one table here that used to only grow. Registration is open by
+    // necessity, so a ceiling on rate decides how fast it grows and this decides
+    // how large it gets.
+
+    test("registering marks the client used, and starting an authorization marks it again", async () => {
+      const { store, driver: sql } = await fresh();
+      const registered = await store.registerClient({ redirectUris: ["https://client.example/cb"] });
+
+      const used = async () => {
+        const [row] = await sql.query<{ last_used_at: Date }>(
+          "SELECT last_used_at FROM oauth_clients WHERE client_id = $1",
+          [registered.clientId],
+        );
+        return row!.last_used_at.getTime();
+      };
+
+      const atRegistration = await used();
+      assert.equal(atRegistration, registered.registeredAt, "seeded from the registration");
+
+      await store.parkLogin({ ...LOGIN, clientId: registered.clientId }, BINDING);
+      assert.ok(await used() >= atRegistration, "starting an authorization is use");
+    });
+
+    test("a client nobody has used for the retention window is swept, and a live one is not", async () => {
+      const { store, driver: sql } = await fresh();
+
+      const abandoned = await store.registerClient({ redirectUris: ["https://one.example/cb"] });
+      const live = await store.registerClient({ redirectUris: ["https://two.example/cb"] });
+
+      // Only the first is aged; the second keeps the timestamp it was given.
+      await sql.query("UPDATE oauth_clients SET last_used_at = $2 WHERE client_id = $1", [
+        abandoned.clientId,
+        new Date(Date.now() - CLIENT_RETENTION_MS - 1),
+      ]);
+
+      // The sweep runs on the write that makes the table grow, which is the only
+      // place it needs to: registration.
+      await store.registerClient({ redirectUris: ["https://three.example/cb"] });
+
+      assert.equal(await store.client(abandoned.clientId), undefined, "the abandoned one is gone");
+      assert.ok(await store.client(live.clientId), "the live one is untouched");
+    });
+
+    test("a client that keeps authorizing is never swept, however old its registration", async () => {
+      const { store, driver: sql } = await fresh();
+      const client = await store.registerClient({ redirectUris: ["https://client.example/cb"] });
+
+      // Registered long ago...
+      await sql.query("UPDATE oauth_clients SET registered_at = $2 WHERE client_id = $1", [
+        client.clientId,
+        new Date(Date.now() - CLIENT_RETENTION_MS * 4),
+      ]);
+      // ...and used just now, which is what the sweep measures.
+      await store.parkLogin({ ...LOGIN, clientId: client.clientId }, BINDING);
+
+      await store.registerClient({ redirectUris: ["https://other.example/cb"] });
+
+      assert.ok(await store.client(client.clientId), "age of registration is not disuse");
+    });
+
     test("concurrent migrations settle on one application of each version", async () => {
       const { driver: sql } = await fresh();
 
@@ -719,7 +792,7 @@ for (const driver of drivers) {
       );
       assert.deepEqual(
         rows.map((row: { version: number }) => row.version),
-        [1, 2, 3, 4],
+        [1, 2, 3, 4, 5],
       );
     });
   });

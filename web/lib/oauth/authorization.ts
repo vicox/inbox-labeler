@@ -4,11 +4,12 @@ import { errorRedirect, validateAuthorization } from "./authorization-request.ts
 import { deployment, signingKey } from "./config.ts";
 import { consentPage, handOffPage } from "./consent.ts";
 import {
-  clearConsentSession,
-  consentSessionOf,
-  newConsentSession,
-  setConsentSession,
-} from "./consent-session.ts";
+  clearConsentBinding,
+  consentBindingOf,
+  newBinding,
+  setConsentBinding,
+  setProviderBinding,
+} from "./flow-binding.ts";
 import { challengeFor, createPkce } from "./pkce.ts";
 import { wrongOrigin } from "./origin.ts";
 import {
@@ -87,7 +88,7 @@ export async function handleAuthorize(request: Request): Promise<Response> {
   const { verifier } = createPkce();
   // The value the browser will hold, and the record it unlocks. Only its hash is
   // stored, so the cookie is the only copy that can be presented.
-  const consentSession = newConsentSession();
+  const consentSession = newBinding();
   const reference = await store.parkLogin({
     clientId: validated.clientId,
     redirectUri: validated.redirectUri,
@@ -116,7 +117,7 @@ export async function handleAuthorize(request: Request): Promise<Response> {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
-        "set-cookie": setConsentSession(reference, consentSession, config, PENDING_LOGIN_TTL_MS / 1000),
+        "set-cookie": setConsentBinding(reference, consentSession, config, PENDING_LOGIN_TTL_MS / 1000),
         // A consent decision has to be made on this page, not inside someone
         // else's. Framing it is how a clickjacking attack collects an approval
         // the user believed was something else.
@@ -161,8 +162,8 @@ export async function handleConsent(request: Request): Promise<Response> {
   // The binding the browser is carrying. A cross-site submission has none,
   // because the cookie is SameSite=Strict — and an approval without one resumes
   // nothing, because the record was parked with a binding to match.
-  const presented = consentSessionOf(request, reference);
-  const forget = clearConsentSession(reference, config);
+  const presented = consentBindingOf(request, reference, config);
+  const forget = clearConsentBinding(reference, config);
 
   if (presented === null) {
     return errorPage(
@@ -207,13 +208,18 @@ export async function handleConsent(request: Request): Promise<Response> {
     );
   }
 
-  // Approved. Park it again; the new reference is what travels as the
-  // provider's `state`, so a value the provider echoes back can only have come
-  // from an approval that happened.
-  // Parked again without a binding: from here the reference travels as the
-  // provider's `state` and comes back on a top-level redirect, where a cookie
-  // would prove nothing the reference does not already prove.
-  const state = await store.parkLogin(login);
+  // Approved. Park it again; the new reference is what travels as the provider's
+  // `state`, so a value the provider echoes back can only have come from an
+  // approval that happened.
+  //
+  // Bound to a *fresh* value this browser is given as a cookie, because "an
+  // approval happened" is not the same claim as "the browser that approved is the
+  // browser signing in". Without the binding, the Google URL below is a bearer
+  // credential for this approval: opened in another browser it would mint an
+  // InboxLabeler code for whoever that browser is signed in to Google as, joining
+  // one person's approval to another person's identity. See flow-binding.ts.
+  const providerBinding = newBinding();
+  const state = await store.parkLogin(login, providerBinding);
 
   try {
     return redirect(
@@ -223,7 +229,9 @@ export async function handleConsent(request: Request): Promise<Response> {
         nonce: login.nonce,
         codeChallenge: challengeFor(login.providerCodeVerifier),
       }),
-      forget,
+      // Two cookies on one response: the consent binding is spent and taken away,
+      // and the provider binding replaces it for the leg that follows.
+      [forget, setProviderBinding(state, providerBinding, config, PENDING_LOGIN_TTL_MS / 1000)],
     );
   } catch (error) {
     return configurationFault(error, "text");
@@ -289,9 +297,11 @@ function handOff(location: string, setCookie: string): Response {
  * chance to set headers; a redirect mid-flow must not be cached, so the header
  * matters.
  */
-function redirect(location: string, setCookie?: string): Response {
+function redirect(location: string, setCookies: string | string[] = []): Response {
   const headers = new Headers({ location, "cache-control": "no-store" });
-  if (setCookie) headers.append("set-cookie", setCookie);
+  for (const cookie of typeof setCookies === "string" ? [setCookies] : setCookies) {
+    headers.append("set-cookie", cookie);
+  }
   return new Response(null, { status: 302, headers });
 }
 
