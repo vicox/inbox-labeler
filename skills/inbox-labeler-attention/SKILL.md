@@ -9,6 +9,11 @@ One job: bring Gmail's own state in line with the attention the labels **already
 imply. It **does not classify anything** and it **never adds or removes an `IL/` label** —
 `inbox-labeler-process` owns labelling, this owns the Gmail state that follows from it.
 
+**Run this only when the user asks for it.** It stars mail and it marks mail read, so it is never
+automatic: it is not part of a processing run, it does not follow one, and a processing run must
+never chain into it on its own initiative. After mail has been processed, say that attention is
+available and wait to be asked.
+
 **Two connections do different things.** Inbox Labeler's MCP server holds the labels and has no
 access to the mailbox; Gmail holds the mail. `get_labels` is the MCP's; `list_labels`,
 `search_threads`, `get_thread`, `label_message` and `unlabel_message` are Gmail's. Identity is

@@ -374,7 +374,8 @@ Inbox Labeler applied earlier. Unread is a scope filter only; `process` never ch
 **Labelling only moves forward.** A message keeps the labels it was given. Editing an
 instruction changes what *new* mail receives, and deleting a label stops it being applied in
 future — neither reaches back to mail already processed, because no command revisits it. A Gmail
-label already on a message stays until you remove it in Gmail yourself.
+label already on a message therefore stays where it is: a configuration change performs no
+cleanup of its own.
 
 ### attention
 
@@ -568,8 +569,12 @@ account rather than a local file:
 | `get_server_info` | that the endpoint is reachable, and who is calling |
 
 **Processing a mailbox is not here.** Nothing in the endpoint reads mail, classifies
-it, or applies attention — `process` and `attention` remain the local skill's work.
-These tools are the state those runs would read and write, which is why
+it, or applies attention: the MCP holds configuration and match counts and has no
+access to Gmail. That mailbox work belongs to the focused agent skills, which pair
+this endpoint with a Gmail connector — `inbox-labeler-process` classifies new unread
+inbox mail and `inbox-labeler-attention` acts on what it has already labelled, while
+`inbox-labeler-setup` and `inbox-labeler-manage` use these tools for configuration
+alone. These tools are the state those runs read and write, which is why
 `record_matches` takes the labels that matched rather than an email.
 
 Every request is attributed to one user before a tool is reached:
@@ -1058,17 +1063,23 @@ work and deliberately not part of this one.
 
 ## Repository layout
 
-Three Agent Skills implement Inbox Labeler, in two arrangements:
+Six Agent Skills implement Inbox Labeler, in two arrangements:
 
 | Skill | Owns |
 | --- | --- |
 | **`inbox-labeler`** | **local:** the labels, and the Gmail work — `process` and `attention` |
 | **`gdrive-store`** | **local:** the canonical state in Google Drive — `labels.json` and `matches.json`, loading and saving both |
-| **`inbox-labeler-mcp`** | **hosted:** the same product against the remote MCP, where the policy and the history live server-side and there are no local files |
+| **`inbox-labeler-setup`** | **hosted:** initialize an empty Inbox Labeler with a starter label set |
+| **`inbox-labeler-manage`** | **hosted:** create, model, rename and delete labels |
+| **`inbox-labeler-process`** | **hosted:** classify new unread inbox mail, and record what matched |
+| **`inbox-labeler-attention`** | **hosted:** star or mark read the mail that has already been processed |
 
-The first two are one arrangement and the third is the other; nothing is shared between them at
-runtime. Both process the **same mail**, under the same rule — a message is eligible when it is in
-the inbox, unread and not yet carrying `IL/processed` — and both stop after **ten messages**.
+The first two are one arrangement and the last four are the other; nothing is shared between them
+at runtime. The local skill does every job in one document; the hosted side is one skill per job,
+so an agent asked to rename a label does not also load the ten-message bound and the Gmail query.
+Both arrangements process the **same mail**, under the same rule — a message is eligible when it
+is in the inbox, unread and not yet carrying `IL/processed` — and both stop after **ten
+messages**.
 
 ```
 skills/inbox-labeler/
@@ -1080,9 +1091,18 @@ skills/gdrive-store/
 ├── SKILL.md              how to load and save the canonical state in Drive
 ├── store.py              validation and stable serialisation
 └── test.sh               its own test suite
-skills/inbox-labeler-mcp/
-├── SKILL.md              the hosted instructions — the MCP holds the policy, no local files
-└── test.sh               the invariants that prose alone would let drift
+skills/inbox-labeler-setup/
+├── SKILL.md              the starter label set, created into an empty configuration
+└── test.sh               its own test suite
+skills/inbox-labeler-manage/
+├── SKILL.md              creating, modelling, renaming and deleting labels
+└── test.sh               its own test suite
+skills/inbox-labeler-process/
+├── SKILL.md              classifying new unread inbox mail, and recording what matched
+└── test.sh               its own test suite
+skills/inbox-labeler-attention/
+├── SKILL.md              the Gmail state that follows from the labels already on a message
+└── test.sh               its own test suite
 data/
 ├── labels.example.json   documentation only, never read at runtime
 ├── labels.json           the working copy — local, gitignored, created on first use
@@ -1143,17 +1163,24 @@ No test framework, just a shell script per skill. Each copies its module into a 
 directory, so your own labels are never touched:
 
 ```bash
-skills/inbox-labeler/test.sh        # the labels, attention, and the documented flows
-skills/gdrive-store/test.sh         # validation and serialisation, for both files
-skills/inbox-labeler-mcp/test.sh    # the hosted skill's rules, which are prose only
+skills/inbox-labeler/test.sh            # the labels, attention, and the documented flows
+skills/gdrive-store/test.sh             # validation and serialisation, for both files
+skills/inbox-labeler-setup/test.sh      # the starter set, checked as data
+skills/inbox-labeler-manage/test.sh     # the label model and the boundaries around it
+skills/inbox-labeler-process/test.sh    # eligibility, the ten-message bound, the two stages
+skills/inbox-labeler-attention/test.sh  # the scope, the ranking, and its two writes
 ```
 
 Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD
 surface, label identity and renaming, the two label types and their references including cycle
 detection, the reserved system labels, attention levels and the policy each one implies, and
-migration from older stores. A number of checks assert the *documentation* — that `SKILL.md`
-still states the processing order, the ten-message limit and the boundaries between the
-commands — because those flows live in prose rather than code and would otherwise drift.
+migration from older stores.
+
+The four hosted suites are **Markdown contract regression tests**. They ask one question — did
+someone remove or alter an explicit contract rule? — using canonical phrases, exact table data,
+counts and document order, because those flows live in prose rather than code and would otherwise
+drift. They deliberately do not try to prove that no sentence anywhere in a `SKILL.md` could
+contradict the contract; that is a reviewer's job, and each file says so.
 
 Migration is worth knowing about, and there is no command to run for it. A store written by an
 earlier version may carry a technical `id`, a separate `name`, an `IL/` prefix on the label, or

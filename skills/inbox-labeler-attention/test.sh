@@ -16,10 +16,6 @@
 # alongside these phrases would pass here — the tests catch deletion and edit of
 # the contract, which is what regressions actually look like.
 #
-# The skill is an extraction from skills/inbox-labeler-mcp/SKILL.md, so the
-# load-bearing markers are also asserted against that source: drift then fails
-# the extract while the original still passes.
-#
 # Markers avoid apostrophes: they are passed inside single-quoted shell words.
 #
 # Prints one line per check and exits non-zero if any of them fails.
@@ -27,9 +23,7 @@
 set -u
 
 SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
-REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd -P)"
 SKILL="$SCRIPT_DIR/SKILL.md"
-SOURCE="$REPO_ROOT/skills/inbox-labeler-mcp/SKILL.md"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -59,8 +53,7 @@ for marker in sys.argv[1:]:
 print(True)
 PYEOF
 
-order_check()  { SKILL="$SKILL"  python3 "$WORK/order.py" "$@"; }
-source_check() { SKILL="$SOURCE" python3 "$WORK/order.py" "$@"; }
+order_check() { SKILL="$SKILL" python3 "$WORK/order.py" "$@"; }
 
 echo "--- frontmatter ---"
 
@@ -86,11 +79,6 @@ scope=(
 )
 check "the canonical scope query and the per-message recheck" \
     "$(order_check "${scope[@]}")" "True"
-check "  …and those markers are the hosted skill own" "$(source_check "${scope[@]}")" "True"
-
-# Asserted here but not against the source: the hosted skill states the
-# thread-level recheck once, in its processing half. The extraction restates it
-# for attention, so it is a local rule with no counterpart to compare against.
 check "a thread can mix in-scope and out-of-scope messages, so each is rechecked" \
     "$(order_check 'check every message and skip the ones that do not qualify')" "True"
 
@@ -140,7 +128,6 @@ ranking=(
 )
 check "high outranks none outranks normal, and the policies are fixed" \
     "$(order_check "${ranking[@]}")" "True"
-check "  …and those markers are the hosted skill own" "$(source_check "${ranking[@]}")" "True"
 
 check "high stars, none clears UNREAD, normal does nothing" \
     "$(order_check '`star` → `label_message` with `STARRED`' \
@@ -155,6 +142,10 @@ check "an action whose state already holds is skipped" \
 echo
 echo "--- boundaries ---"
 
+check "it runs only when asked, and never as part of or after a processing run" \
+    "$(order_check 'Run this only when the user asks for it' \
+        'it is not part of a processing run, it does not follow one' \
+        'a processing run must never chain into it on its own initiative')" "True"
 check "STARRED and UNREAD are the only two writes" \
     "$(order_check '`STARRED` and `UNREAD` are the only two things this run writes')" "True"
 check "it never touches an IL/ label, and never recolors one" \

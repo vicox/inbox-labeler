@@ -16,10 +16,6 @@
 # alongside these phrases would pass here — the tests catch deletion and edit of
 # the contract, which is what regressions actually look like.
 #
-# The skill is an extraction from skills/inbox-labeler-mcp/SKILL.md, so the
-# load-bearing markers are also asserted against that source: drift then fails
-# the extract while the original still passes.
-#
 # Markers avoid apostrophes: they are passed inside single-quoted shell words.
 #
 # Prints one line per check and exits non-zero if any of them fails.
@@ -27,9 +23,7 @@
 set -u
 
 SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
-REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd -P)"
 SKILL="$SCRIPT_DIR/SKILL.md"
-SOURCE="$REPO_ROOT/skills/inbox-labeler-mcp/SKILL.md"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -61,8 +55,7 @@ for marker in sys.argv[1:]:
 print(True)
 PYEOF
 
-order_check()  { SKILL="$SKILL"  python3 "$WORK/order.py" "$@"; }
-source_check() { SKILL="$SOURCE" python3 "$WORK/order.py" "$@"; }
+order_check() { SKILL="$SKILL" python3 "$WORK/order.py" "$@"; }
 
 echo "--- frontmatter ---"
 
@@ -97,8 +90,6 @@ selection=(
 )
 check "the canonical query, the per-message recheck and the per-message count" \
     "$(order_check "${selection[@]}")" "True"
-check "  …and those markers are the hosted skill own" \
-    "$(source_check "${selection[@]}")" "True"
 
 echo
 echo "--- the bound is a maximum, not a target ---"

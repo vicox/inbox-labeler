@@ -25,6 +25,12 @@ label's identity — so it never appears in a stored label and is added only whe
 `Delivery arriving soon` becomes the Gmail label `IL/Delivery arriving soon`, spaces and all.
 Adding it is the processing skill's business, not this one's.
 
+**Inbox Labeler owns the whole `IL/` namespace in Gmail.** Every label under it belongs to Inbox
+Labeler, and it is not somewhere the user keeps labels of their own. Hand-creating, hand-editing
+and hand-removing `IL/` labels are all outside how Inbox Labeler is managed: if the user asks for
+any of them, explain that Inbox Labeler manages that namespace, and that the way to get a new one
+is to create the label here — processing puts the matching Gmail label in place on its next run.
+
 **The tools here are Inbox Labeler's MCP tools** — `get_labels`, `create_label`, `update_label`,
 `delete_label` — and they act on **label definitions**. A Gmail connector usually exposes tools
 with three of those names that act on **Gmail labels**; they are different things, and confusing
@@ -283,6 +289,28 @@ existing label should be updated instead.
 — either update those derived labels to drop the reference, or delete them first. **Tell the user
 which choice they are making rather than picking for them.** Before deleting, confirm which label
 is meant if the reference is ambiguous. Reserved system labels cannot be deleted.
+
+### Classification changes reach new mail only
+
+**Labelling only ever moves forward.** A message that has been processed is never revisited, so
+changing what a label detects changes what Inbox Labeler will apply **next** and leaves the
+mailbox as it is. An edited instruction does not re-judge a message it was applied to. A deleted
+label does not come off the mail carrying its Gmail label. A changed reference list does not undo
+an interpretation it fed. A rename is the same: references to it are rewritten, and the Gmail
+label already sitting on a message is not. There is no backfill and no cleanup step, and the
+business labels already on a message stay as they are.
+
+So when a user expects a change of this kind to reach mail they have already had labelled — "now
+fix the old ones" — **say plainly that it will not**, and that it applies from the next processing
+run onwards.
+
+**Attention metadata is the exception.** `attention` is not part of what a label detects: it is
+what the label *asks for*, and `inbox-labeler-attention` reads it fresh from `get_labels` every
+time it runs, against mail that is already processed and still unread. Raising a label from
+`normal` to `high` therefore changes nothing by itself and starts nothing — that run never happens
+automatically — but the next one **the user explicitly asks for** will use the new level, and a
+message processed under the old one may come out starred. Say so when that is what the user is
+asking about.
 
 ## Adding a label to an existing set
 

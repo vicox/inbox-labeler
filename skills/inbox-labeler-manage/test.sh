@@ -3,8 +3,7 @@
 #
 #   ./test.sh
 #
-# This skill is an extraction from skills/inbox-labeler-mcp/SKILL.md — the label
-# half of it and nothing else. The checks here are deliberately few. They are not
+# The checks here are deliberately few. They are not
 # trying to prove every sentence survived; they hold the handful of rules that,
 # if they changed, would change what an agent does with somebody's labels, plus
 # the responsibility boundary: this skill defines labels, it does not read mail.
@@ -143,6 +142,18 @@ check 'processed and no-match are the systems own labels and are refused' \
 
 check 'a stored label never carries the IL/ prefix' \
     "$(says 'it never appears in a stored label')$(says 'rejects anything starting with `IL/`')" "yesyes"
+
+check 'Inbox Labeler owns the IL/ namespace, and it is never maintained by hand' \
+    "$(says 'Inbox Labeler owns the whole `IL/` namespace in Gmail')$(says 'Hand-creating, hand-editing and hand-removing `IL/` labels are all outside how Inbox Labeler is managed')" \
+    "yesyes"
+
+check 'classification changes reach new mail only, with no backfill or cleanup' \
+    "$(says 'Labelling only ever moves forward')$(says 'A message that has been processed is never revisited')$(says 'There is no backfill and no cleanup step')" \
+    "yesyesyes"
+
+check 'an explicitly requested attention run reads the current attention metadata' \
+    "$(says 'Attention metadata is the exception')$(says 'reads it fresh from `get_labels` every time it runs')$(says 'the next one **the user explicitly asks for** will use the new level')" \
+    "yesyesyes"
 
 # --- the boundary: this skill defines labels, it does not read mail ---------
 #
