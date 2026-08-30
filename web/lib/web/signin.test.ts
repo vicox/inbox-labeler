@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 /**
@@ -50,6 +50,7 @@ const { inboxStore } = await import("../inbox/store.ts");
 type IdentityProvider = import("../oauth/provider.ts").IdentityProvider;
 type VerifiedIdentity = import("../oauth/provider.ts").VerifiedIdentity;
 type Label = import("../inbox/labels.ts").Label;
+type Matches = import("../inbox/matches.ts").Matches;
 type WebStore = import("./store.ts").WebStore;
 
 const ORIGIN = "http://localhost:3000";
@@ -185,13 +186,22 @@ async function signIn(identity: VerifiedIdentity, alsoHolding?: string): Promise
  * nowhere.
  *
  * `null` is the landing page: the branch where `app/page.tsx` renders <Landing />,
- * no store is opened, and no row is read. Every "closed to them" assertion below
- * means that, and there is no second address it could mean instead.
+ * no store is opened, and neither a label nor a match is read. Every "closed to
+ * them" assertion below means that, and there is no second address it could mean
+ * instead.
+ *
+ * Both halves come from one store opened once, which is what the page does: the
+ * visualization needs the labels and how often each has matched, and there is only
+ * one `user` in this expression for either of them to be read against.
  */
-async function home(cookieValue: string | null): Promise<{ email: string; labels: Label[] } | null> {
+async function home(
+  cookieValue: string | null,
+): Promise<{ email: string; labels: Label[]; matches: Matches } | null> {
   const visitor = await signedInVisitor(cookieValue);
   if (!visitor) return null;
-  return { email: visitor.email, labels: await (await inboxStore(visitor.user)).labels() };
+  const store = await inboxStore(visitor.user);
+  const [labels, matches] = await Promise.all([store.labels(), store.matches()]);
+  return { email: visitor.email, labels, matches };
 }
 
 /** Calls an MCP tool as one user, the way a real client would. */
@@ -837,6 +847,104 @@ test("the home page is declared private and uncacheable", async () => {
     authRule.headers.find((one) => one.key === "cache-control")?.value ?? "",
     /no-store/,
   );
+});
+
+test("the signed-in page reads the owner's matches, and only theirs", async () => {
+  // The visualization needs how often each label has matched as well as the labels,
+  // so the history is now on the same path the labels are — and under the same rule.
+  // Two accounts, each with a label of the same name, so a leak shows up as the
+  // other one's count rather than as a missing key.
+  const alpha = await signIn(account("m-alpha", "m-alpha@example.com"));
+  const beta = await signIn(account("m-beta", "m-beta@example.com"));
+
+  for (const [session, days] of [
+    [alpha, ["2026-08-20", "2026-08-21", "2026-08-22"]],
+    [beta, ["2026-08-20"]],
+  ] as const) {
+    const visitor = await signedInVisitor(session);
+    const store = await inboxStore(visitor!.user);
+    await store.createLabel({ label: "Shared", instruction: "Both accounts have one." });
+    for (const day of days) await store.recordMatches(["Shared"], `${day}T10:00:00Z`);
+  }
+
+  const counted = async (session: string) =>
+    Object.values((await home(session))!.matches).map((history) =>
+      Object.values(history.daily_matches).reduce((sum, n) => sum + n, 0),
+    );
+
+  assert.deepEqual(await counted(alpha), [3]);
+  assert.deepEqual(await counted(beta), [1], "beta sees its own count, not alpha's");
+});
+
+test("loading the signed-in page creates nothing", async () => {
+  // It renders what is there. A page that set a starter policy up on first view, or
+  // counted its own render as a match, would be writing a mailbox's rules because
+  // somebody looked at them.
+  const session = await signIn(account("read-only", "read-only@example.com"));
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const shown = await home(session);
+    assert.deepEqual(shown?.labels, [], "no starter labels appeared");
+    assert.deepEqual(shown?.matches, {}, "and no history was invented");
+  }
+});
+
+test("the signed-in page opens one store, for the session owner, and writes nothing", async () => {
+  // `home` above composes what the page does, and every isolation test runs against
+  // that composition. This is the one check that the page still *is* that
+  // composition: a literal read of the source, here to catch the wiring drifting
+  // away from the helper rather than to understand the file.
+  const page = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+
+  // One data source, and its owner is the resolved visitor — not a route parameter,
+  // a search parameter or anything else a request could carry.
+  assert.equal(page.match(/inboxStore\(/g)?.length, 1, "exactly one store is opened");
+  assert.match(page, /inboxStore\(visitor\.user\)/);
+  assert.equal(page.includes("searchParams"), false, "no search parameter is read");
+  assert.equal(page.includes("params"), false, "no route parameter is read");
+
+  // Both halves the visualization needs, from that one store.
+  assert.match(page, /store\.labels\(\)/);
+  assert.match(page, /store\.matches\(\)/);
+
+  // And nothing that would change the account by looking at it.
+  for (const mutation of ["createLabel", "updateLabel", "deleteLabel", "recordMatches"]) {
+    assert.equal(page.includes(mutation), false, `the page calls ${mutation}`);
+  }
+});
+
+test("an authenticated page never falls back to the local fixture files", async () => {
+  // The columns were first written against data/labels.json and data/matches.json,
+  // fetched through a public /api/labels. Both are gone: a signed-in reader sees
+  // their own rows or nothing, never files that belong to the local CLI and to no
+  // account at all.
+  assert.equal(
+    existsSync(new URL("../../app/api/labels", import.meta.url)),
+    false,
+    "the fixture endpoint is gone",
+  );
+
+  const root = new URL("../../", import.meta.url);
+  const offenders: string[] = [];
+  for (const dir of ["app", "components", "lib"]) {
+    const base = new URL(`${dir}/`, root);
+    for (const entry of readdirSync(base, { recursive: true, encoding: "utf8" })) {
+      // Product source only. A test is allowed to name what it forbids, and this
+      // one does — twice, in the comment above.
+      if (!/\.tsx?$/.test(entry) || /\.test\.tsx?$/.test(entry)) continue;
+      const source = readFileSync(new URL(entry, base), "utf8");
+      if (source.includes("data/labels.json") || source.includes("data/matches.json")) {
+        offenders.push(`${dir}/${entry}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], "and no source reads them");
+});
+
+test("the simple label list is no longer the signed-in surface", async () => {
+  // Replaced by the visualization rather than kept beside it: two renderings of one
+  // account's labels are two things to keep true about it.
+  assert.equal(existsSync(new URL("../../components/labels.tsx", import.meta.url)), false);
 });
 
 test("there is one application route, and no /dashboard behind it", async () => {

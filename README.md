@@ -1034,12 +1034,14 @@ browser for the consent page and Google sign-in. After that its tools are
 `get_labels`, `create_label`, `update_label`, `delete_label`, `get_matches`,
 `record_matches` and `get_server_info`, all acting on the account that signed in.
 
-**One known gap in the hosted deployment.** The web UI at `/` reads
-`data/labels.json` from the filesystem, which is the local workflow's file and is not
-part of a Vercel deployment — so the page shows an empty policy there,
-while the MCP endpoint works normally against Postgres. Giving the UI the hosted,
-per-user state means signing users in on the web as well, which is its own piece of
-work and deliberately not part of this one.
+**The web UI is per-user.** `/` is one address in two states: signed out it is the
+public landing page and its closed-beta notice, and signed in it is the visitor's own
+labels. The signed-in half reads them server-side through `inboxStore(visitor.user)` —
+the same store `get_labels` and `get_matches` answer from, scoped to the account the
+session cookie resolves to — so the page and an MCP client on one Google account
+always agree. Nothing in the web app reads `data/labels.json` or `data/matches.json`;
+those are the local workflow's files and stay where they are, for the local skill and
+`gdrive-store` to use.
 
 ### What is not finished
 

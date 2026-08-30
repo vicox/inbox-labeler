@@ -1,10 +1,10 @@
 /**
  * How often a label matches, and when it last did.
  *
- * Read from data/matches.json for display only: nothing here writes, and a label
- * with no history is a normal state rather than a gap to fill in. The store keeps
- * a label, a day and a count — there is nothing about an email to show even if
- * this wanted to.
+ * For display only: nothing here writes, and a label with no history is a normal
+ * state rather than a gap to fill in. The store keeps a label, a day and a count —
+ * there is nothing about an email to show even if this wanted to. The shape matches
+ * `lib/inbox/matches.ts` field for field.
  */
 
 export type MatchEntry = {
@@ -12,7 +12,7 @@ export type MatchEntry = {
   daily_matches: Record<string, number>;
 };
 
-/** matches.json: label text to its history. A label may simply be absent. */
+/** Label text to its history. A label that has never matched is simply absent. */
 export type Matches = Record<string, MatchEntry>;
 
 const DAY = 24 * 60 * 60 * 1000;

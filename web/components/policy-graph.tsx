@@ -1,62 +1,43 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
 import { byRelevance, connectionsOf, emphasis, type Label } from "@/lib/policy";
 import { LabelCard } from "./label-card";
 import { LabelDetail } from "./label-detail";
 
-export function PolicyGraph() {
-  const [labels, setLabels] = useState<Label[] | null>(null);
-  const [matches, setMatches] = useState<Matches>({});
-  const [error, setError] = useState<string | null>(null);
-
+/**
+ * The labels one account has, as the two columns they divide into.
+ *
+ * Given its data rather than fetching it. The page above is a Server Component
+ * that has already opened the signed-in user's store, so there is nothing here to
+ * fetch and no endpoint to fetch it from — which also means there is no request
+ * this component could be made to send on somebody else's behalf. A client
+ * component only because pointing at a label lights up what it draws on, and
+ * opening one shows its instruction; the data arrives already decided.
+ */
+export function PolicyGraph({ labels, matches }: { labels: Label[]; matches: Matches }) {
   const [focused, setFocused] = useState<string | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/labels")
-      .then(async (response) => {
-        // No policy is a normal state rather than a failure, and hosted it is the
-        // usual one: the policy lives in Postgres behind /mcp, while this view reads
-        // the local file. The server's answer for that case names the file, which a
-        // hosted reader has no access to, so the empty policy is what shows.
-        if (response.status === 404) {
-          setLabels([]);
-          return;
-        }
-
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error ?? "Could not read the policy.");
-        setLabels(body.labels as Label[]);
-        // No history is a normal state, so it never reaches the error branch.
-        setMatches((body.matches ?? {}) as Matches);
-      })
-      .catch((cause: Error) => setError(cause.message));
-  }, []);
 
   /**
    * The relationships are no longer drawn, but they still decide what lights up:
    * pointing at a label picks out the ones it draws on, or the ones that draw on
    * it, and fades the rest.
    */
-  const connections = useMemo(() => connectionsOf(labels ?? []), [labels]);
+  const connections = useMemo(() => connectionsOf(labels), [labels]);
   const lit = useMemo(() => emphasis(focused, connections), [focused, connections]);
 
-  if (error) return <Notice>{error}</Notice>;
-  if (!labels) return <Notice>Reading the policy…</Notice>;
-  // Nothing to draw. Two panels reading zero would describe this view's own empty
-  // file, and hosted a reader would take them for the state of their labels —
-  // which lives in Postgres behind /mcp and is not what this reads. So the space
-  // says how to get in instead, in the same place and the same shape as any other
-  // notice on this page.
+  // Nothing configured yet. Two panels reading zero would look like a verdict on
+  // this account's mail rather than on its setup, so the space says what is
+  // missing and where it comes from. Nothing is created by saying so.
   if (labels.length === 0) {
     return (
       <Notice>
-        <span className="block text-ink">Closed beta</span>
+        <span className="block text-ink">No labels yet</span>
         <span className="mt-1.5 block text-[12.5px] text-ink-faint">
-          Connect Inbox Labeler through your MCP client.
+          Ask your MCP client to set up Inbox Labeler, or to create a label, and it appears here.
         </span>
       </Notice>
     );

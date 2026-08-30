@@ -1,9 +1,11 @@
 /**
- * The shape of data/labels.json, and the pure derivations the UI needs from it.
+ * The shape of a label, and the pure derivations the UI needs from a set of them.
  *
- * Nothing here reads the file or knows where it lives — see app/api/labels/route.ts
- * for that. Keeping the two apart is what lets the local file be swapped for an
- * authenticated backend later without touching the rendering.
+ * Nothing here reads anything or knows where a label comes from, which is what let
+ * the local file this was first written against be swapped for the signed-in user's
+ * own store without touching the rendering. It matches `lib/inbox/labels.ts` field
+ * for field; this is the view's copy of the shape, not a second definition of what
+ * a label is.
  */
 
 export const ATTENTION_ORDER = ["high", "normal", "none"] as const;

@@ -1,8 +1,8 @@
-import { LabelList, Notice } from "@/components/labels";
 import { LegalLinks } from "@/components/legal";
 import { PolicyGraph } from "@/components/policy-graph";
 import { Account, SiteHeader, SignIn } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
+import type { Matches } from "@/lib/inbox/matches";
 import { inboxStore } from "@/lib/inbox/store";
 import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
 
@@ -40,10 +40,12 @@ import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
  * handed to the next. The response headers that say so to every cache in between
  * are in `next.config.ts`, because a Server Component cannot set one.
  *
- * What is given up is a prerendered shell for the landing half. That half is a
- * heading and a client component that fetches its own content, so there was little
- * to prerender, and a visitor with no session cookie is still answered without the
- * database being touched at all — `signedInVisitor` returns on the missing cookie.
+ * What is given up is a prerendered shell for the landing half, which is a heading
+ * and a fixed notice — little enough that prerendering it was never worth much. A
+ * visitor with no session cookie is still answered without the database being
+ * touched at all: `signedInVisitor` returns on the missing cookie, and the landing
+ * branch opens no store. Neither half fetches anything from the browser; the
+ * signed-in columns are handed their data by this page.
  */
 export const dynamic = "force-dynamic";
 
@@ -81,7 +83,19 @@ function Landing() {
         <SignIn />
       </SiteHeader>
 
-      <PolicyGraph />
+      {/*
+        The public page reads nothing. It once rendered the same columns against a
+        local fixture file, which was a demo of the product rather than anybody's
+        labels — and hosted there was no file, so this notice is what it showed. Now
+        the columns belong to the signed-in page, where the labels are real, and the
+        landing page states the one fact a stranger needs.
+      */}
+      <p className="py-24 text-center text-[14px] text-ink-soft">
+        <span className="block text-ink">Closed beta</span>
+        <span className="mt-1.5 block text-[12.5px] text-ink-faint">
+          Connect Inbox Labeler through your MCP client.
+        </span>
+      </p>
 
       {/*
         Linked rather than merely present: Google's OAuth branding step asks for a
@@ -97,7 +111,7 @@ function Landing() {
 
 /** The same address, signed in: this user's labels, and nobody else's. */
 async function Labels({ visitor }: { visitor: SignedInVisitor }) {
-  const labels = await readLabels(visitor);
+  const account = await readAccount(visitor);
 
   return (
     <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
@@ -105,27 +119,16 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
         <Account email={visitor.email} />
       </SiteHeader>
 
-      {/*
-        The site is wide; a column of instructions to read is not. So the header
-        and the footer take the page's width — the same width they take signed
-        out, from the same container — and only the labels sit in a measure worth
-        reading, centred inside it so the cards do not move when the page around
-        them gets wider.
-      */}
-      <div className="mx-auto max-w-3xl">
-        <h2 className="font-display mb-4 text-[15px] tracking-[-0.01em]">Labels</h2>
-
-        {labels === "unavailable" ? (
-          <Notice>
-            <span className="block text-ink">Your labels could not be read just now</span>
-            <span className="mt-1.5 block text-[12.5px] text-ink-faint">
-              Nothing has been changed. Try again in a moment.
-            </span>
-          </Notice>
-        ) : (
-          <LabelList labels={labels} />
-        )}
-      </div>
+      {account === "unavailable" ? (
+        <p className="py-24 text-center text-[14px] text-ink-soft">
+          <span className="block text-ink">Your labels could not be read just now</span>
+          <span className="mt-1.5 block text-[12.5px] text-ink-faint">
+            Nothing has been changed. Try again in a moment.
+          </span>
+        </p>
+      ) : (
+        <PolicyGraph labels={account.labels} matches={account.matches} />
+      )}
 
       <footer className="mt-14 border-t border-rule pt-5 sm:mt-20">
         <LegalLinks />
@@ -135,22 +138,33 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
 }
 
 /**
- * This user's labels, through the same store `get_labels` reads.
+ * This user's labels and how often each has matched, through the same store
+ * `get_labels` and `get_matches` read.
  *
  * Not through the MCP endpoint. That would mean this server holding an access
- * token for its own visitor and talking to itself over HTTP to read a table it is
- * already connected to — and two paths to the same policy that could disagree.
+ * token for its own visitor and talking to itself over HTTP to read tables it is
+ * already connected to — and two paths to the same answer that could disagree.
  * One store, one set of rules, one answer.
  *
- * Reading them never creates anything. An account with no labels is a normal state
+ * Both reads are reads. Nothing here creates a label, records a match, touches
+ * Gmail or writes anything at all: an account with no labels is a normal state
  * with an obvious next step, not a page that quietly writes a starter set on its
- * way to being rendered.
+ * way to being rendered, and a label with no history is a label that has not
+ * matched rather than a gap to fill in.
+ *
+ * The store is opened once and both halves come from it, so they cannot be for
+ * different users — there is only one `user` in this expression and it came from
+ * the session.
  */
-async function readLabels(visitor: SignedInVisitor): Promise<Label[] | "unavailable"> {
+async function readAccount(
+  visitor: SignedInVisitor,
+): Promise<{ labels: Label[]; matches: Matches } | "unavailable"> {
   try {
-    return await (await inboxStore(visitor.user)).labels();
+    const store = await inboxStore(visitor.user);
+    const [labels, matches] = await Promise.all([store.labels(), store.matches()]);
+    return { labels, matches };
   } catch (error) {
-    report("could not read labels", error);
+    report("could not read the account", error);
     return "unavailable";
   }
 }
