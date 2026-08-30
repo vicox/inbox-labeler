@@ -7,11 +7,10 @@
  * from drifting apart: they cannot differ in width, rule, spacing or alignment,
  * because there is only one of each.
  *
- * What the header deliberately does *not* carry is the account's address. It would
- * have to go between the product name and the action, which pushes the action out
- * of the corner it belongs in and, at this page's width, wraps the whole right-hand
- * block onto a second line. It belongs next to the labels it explains the ownership
- * of; see `app/page.tsx`.
+ * The right-hand slot takes whatever the visitor's session makes available: the
+ * sign-in button on its own, or the account's address and the way out. Both sides
+ * of the header are flex items of one wrapping row, so a narrow screen drops the
+ * whole right-hand slot below the product name rather than breaking it up.
  */
 
 /**
@@ -56,13 +55,42 @@ export function SignIn() {
  * server, and a GET that changes state is one a prefetch, a scanner or another
  * site's image tag can perform on somebody's behalf. The POST is refused unless it
  * came from this origin — see lib/web/signin.ts.
+ *
+ * `shrink-0` because it shares its row with an address that may be long: the
+ * address gives way, the control never does.
  */
 export function SignOut() {
   return (
-    <form action="/auth/signout" method="post">
+    <form action="/auth/signout" method="post" className="shrink-0">
       <button type="submit" className={ACTION}>
         Sign out
       </button>
     </form>
+  );
+}
+
+/**
+ * The signed-in right-hand slot: whose session this is, and the way out of it.
+ *
+ * The address is secondary to the control beside it and is styled to say so — the
+ * tagline's size and the faintest ink, against a bordered button. It answers the
+ * question somebody with several Google accounts is asking, which is whose labels
+ * these are, so it reads before the action rather than after it.
+ *
+ * It is the address Google verified at sign-in, held on the session row and nowhere
+ * else. The user's underlying identity — the provider subject that keys the labels —
+ * is never rendered, here or anywhere else on the site. There is no visible "signed
+ * in as": the sign-out button beside it already says which state this is, and a
+ * screen reader gets the sentence anyway.
+ */
+export function Account({ email }: { email: string }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-3">
+      <p className="min-w-0 truncate text-[12.5px] text-ink-faint">
+        <span className="sr-only">Signed in as </span>
+        {email}
+      </p>
+      <SignOut />
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import { LabelList, Notice } from "@/components/labels";
 import { LegalLinks } from "@/components/legal";
 import { PolicyGraph } from "@/components/policy-graph";
-import { SiteHeader, SignIn, SignOut } from "@/components/site-header";
+import { Account, SiteHeader, SignIn } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
 import { inboxStore } from "@/lib/inbox/store";
 import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
@@ -100,40 +100,32 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
   const labels = await readLabels(visitor);
 
   return (
-    <main className="mx-auto max-w-3xl px-5 py-10 sm:px-8 sm:py-14">
+    <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
       <SiteHeader>
-        <SignOut />
+        <Account email={visitor.email} />
       </SiteHeader>
 
       {/*
-        The address rides the heading rather than the header, which is where it
-        answers something: these labels, this account. Somebody with several Google
-        accounts is asking whose labels these are, and the heading is the sentence
-        that question is about. It costs no height — the heading row already
-        existed — and it leaves the top right to the one action.
-
-        It is the address Google verified at sign-in, held on the session row and
-        nowhere else. The user's underlying identity — the provider subject that
-        keys the labels — is never rendered, here or anywhere else on the site.
+        The site is wide; a column of instructions to read is not. So the header
+        and the footer take the page's width — the same width they take signed
+        out, from the same container — and only the labels sit in a measure worth
+        reading, centred inside it so the cards do not move when the page around
+        them gets wider.
       */}
-      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <h2 className="font-display text-[15px] tracking-[-0.01em]">Labels</h2>
-        <p className="min-w-0 max-w-full truncate text-[12.5px] text-ink-faint">
-          <span className="sr-only">Signed in as </span>
-          {visitor.email}
-        </p>
-      </div>
+      <div className="mx-auto max-w-3xl">
+        <h2 className="font-display mb-4 text-[15px] tracking-[-0.01em]">Labels</h2>
 
-      {labels === "unavailable" ? (
-        <Notice>
-          <span className="block text-ink">Your labels could not be read just now</span>
-          <span className="mt-1.5 block text-[12.5px] text-ink-faint">
-            Nothing has been changed. Try again in a moment.
-          </span>
-        </Notice>
-      ) : (
-        <LabelList labels={labels} />
-      )}
+        {labels === "unavailable" ? (
+          <Notice>
+            <span className="block text-ink">Your labels could not be read just now</span>
+            <span className="mt-1.5 block text-[12.5px] text-ink-faint">
+              Nothing has been changed. Try again in a moment.
+            </span>
+          </Notice>
+        ) : (
+          <LabelList labels={labels} />
+        )}
+      </div>
 
       <footer className="mt-14 border-t border-rule pt-5 sm:mt-20">
         <LegalLinks />
