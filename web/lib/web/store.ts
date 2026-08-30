@@ -18,8 +18,8 @@ import type { AuthenticatedUser } from "../identity.ts";
  *     forgotten, never revoked, so a copy taken before signing out would keep
  *     working. Here the row is deleted and the credential is dead.
  *   - **The access list has to keep applying.** A closed beta whose operator
- *     removes an address should not leave that browser reading a dashboard for
- *     days. The address is on the row, so every request can re-ask.
+ *     removes an address should not leave that browser reading somebody's labels
+ *     for days. The address is on the row, so every request can re-ask.
  *   - **Nothing about a page render needs statelessness.** It already runs
  *     several queries against this database; one more indexed probe is free,
  *     where on the MCP path it would be the only query there is.
@@ -29,7 +29,7 @@ import type { AuthenticatedUser } from "../identity.ts";
  * The user key, the verified address, and two timestamps. Not a profile, not a
  * Google token — Google's token response is verified and dropped inside
  * `lib/oauth/google.ts` and never reaches this module — and no history of what
- * was looked at. The address is here because the dashboard names it and because
+ * was looked at. The address is here because the signed-in page names it and because
  * the access list is re-checked against it; it goes when the session goes.
  *
  * ## Two tables, because there are two lifetimes
@@ -92,7 +92,7 @@ export const WEB_LOGIN_TTL_MS = 10 * 60_000;
 export const WEB_SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
 
 /**
- * The store, as the sign-in flow and the dashboard see it.
+ * The store, as the sign-in flow and the signed-in page see it.
  *
  * `takeLogin` **spends** its reference: it returns the record and makes it
  * unusable in the same indivisible step, so a `state` cannot be replayed. An

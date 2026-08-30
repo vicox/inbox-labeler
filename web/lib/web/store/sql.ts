@@ -60,7 +60,7 @@ export const WEB_SCHEMA: SchemaModule = {
         CREATE TABLE web_sessions (
           session_hash bytea PRIMARY KEY,
           -- The same provider-qualified subject that keys inbox_labels, so a
-          -- dashboard and an MCP client on one Google account are one owner.
+          -- browser and an MCP client on one Google account are one owner.
           user_id      text NOT NULL,
           email        text NOT NULL,
           created_at   timestamptz NOT NULL,

@@ -40,7 +40,7 @@ export default function Privacy() {
         </p>
         <p>
           This policy covers the hosted service at inboxlabeler.com — its web pages including the
-          signed-in dashboard at <code>/dashboard</code>, the website&rsquo;s own sign-in endpoints
+          signed-in view of your labels at <code>/</code>, the website&rsquo;s own sign-in endpoints
           under <code>/auth</code>, the endpoints an MCP client is authorized through under{" "}
           <code>/oauth</code>, and the MCP endpoint at <code>/mcp</code>.
         </p>
@@ -90,7 +90,7 @@ export default function Privacy() {
           client. When an <strong>MCP client</strong> is authorized, that is all that happens to it:
           it is checked and discarded, and not written to the database. When <strong>you sign in to
           this website</strong>, it is additionally written to the row that represents your browser
-          session, because the dashboard shows you which Google account it is displaying and because
+          session, because the site shows you which Google account its labels belong to and because
           the invitation list is re-checked against it on every page you load. It is held for as long
           as that session is, and goes when the session does — but <strong>losing access and the row
           being deleted are two different moments</strong>, and only the first is immediate. Signing
@@ -199,7 +199,7 @@ export default function Privacy() {
           else. There is no information inside a cookie — no address, no name, no identifier of yours —
           only a value that has to match a stored record for the request to mean anything. We consider
           all four strictly necessary within the meaning of § 25(2) TDDDG, being required to provide the
-          sign-in and the dashboard you asked for, and accordingly no consent banner is shown.
+          sign-in and the signed-in pages you asked for, and accordingly no consent banner is shown.
         </p>
         <p>
           On the hosted service all four are <code>HttpOnly</code> (no script can read them),{" "}
@@ -240,7 +240,7 @@ export default function Privacy() {
             <strong>
               <code>__Host-il_session</code> — your signed-in session.
             </strong>{" "}
-            Set when a sign-in completes and removed when you sign out. It is what the dashboard reads
+            Set when a sign-in completes and removed when you sign out. It is what the site reads
             to know whose labels to show. <code>SameSite=Lax</code>, seven days.
           </li>
         </ul>

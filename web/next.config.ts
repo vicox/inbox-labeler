@@ -32,14 +32,18 @@ const nextConfig: NextConfig = {
   },
 
   /**
-   * The authenticated pages, told to no cache anywhere.
+   * The pages that can carry one person's data, told to no cache anywhere.
    *
    * `dynamic = "force-dynamic"` already stops Next.js from caching these, and that
    * is not the same promise: what a page needs is that nothing *between* the
    * function and the browser keeps a copy either. A CDN, a corporate proxy or a
-   * shared browser cache holding one person's dashboard and handing it to the next
+   * shared browser cache holding one person's labels and handing them to the next
    * request for the same URL is the whole failure, and `private, no-store` is how a
    * response says so to all three.
+   *
+   * `/` is on this list because it is now both pages: a landing page for a stranger
+   * and this user's labels for whoever is signed in. Two answers at one URL is
+   * exactly the shape a shared cache gets wrong.
    *
    * Declared here rather than in the page because a Server Component cannot set a
    * response header — and because a rule about which URLs are private belongs
@@ -48,14 +52,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/dashboard",
+        source: "/",
         headers: [
           { key: "cache-control", value: "private, no-store, max-age=0, must-revalidate" },
-          // A page that exists only for one signed-in person has nothing to offer a
-          // crawler, and the header says so even where the page's own metadata is
-          // not read.
-          { key: "x-robots-tag", value: "noindex, nofollow" },
-          // Neither the dashboard nor anything else here is meant to be framed.
+          // Deliberately *not* noindex: this is the public landing page, and a
+          // crawler is never signed in, so what it can reach is the half that is
+          // meant to be found.
           { key: "x-frame-options", value: "DENY" },
           // A sign-out is a POST to this origin; a referrer leaving for another
           // site has no reason to carry the path somebody was signed in at.

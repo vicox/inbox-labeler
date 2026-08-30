@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import test from "node:test";
 
 /**
@@ -175,15 +176,19 @@ async function signIn(identity: VerifiedIdentity, alsoHolding?: string): Promise
 }
 
 /**
- * What the dashboard reads, expressed as the composition `app/dashboard/page.tsx`
- * is: a cookie resolves to an owner, and that owner opens a store.
+ * What `/` answers, expressed as the composition `app/page.tsx` is: a cookie
+ * resolves to an owner, and that owner opens a store.
  *
  * Written out here rather than by rendering the page, because this is the part
  * with the isolation in it — the page adds markup and nothing else. There is no
  * argument in this expression for an owner: it comes from the cookie or from
  * nowhere.
+ *
+ * `null` is the landing page: the branch where `app/page.tsx` renders <Landing />,
+ * no store is opened, and no row is read. Every "closed to them" assertion below
+ * means that, and there is no second address it could mean instead.
  */
-async function dashboard(cookieValue: string | null): Promise<{ email: string; labels: Label[] } | null> {
+async function home(cookieValue: string | null): Promise<{ email: string; labels: Label[] } | null> {
   const visitor = await signedInVisitor(cookieValue);
   if (!visitor) return null;
   return { email: visitor.email, labels: await (await inboxStore(visitor.user)).labels() };
@@ -251,7 +256,7 @@ async function withAllowlist<T>(value: string | undefined, work: () => Promise<T
 
 // --- the flow ---------------------------------------------------------------
 
-test("signing in leaves a session cookie and lands on the dashboard", async () => {
+test("signing in leaves a session cookie and lands on the home page", async () => {
   const { state, login } = await startSignIn();
   const { response, session } = await completeSignIn(account("s1", "s1@example.com"), {
     state,
@@ -259,13 +264,15 @@ test("signing in leaves a session cookie and lands on the dashboard", async () =
   });
 
   assert.equal(response.status, 302);
-  assert.equal(response.headers.get("location"), "/dashboard");
+  // Home is the app once there is a session to read it with; there is no second
+  // address, and nothing in this flow takes a destination from the request.
+  assert.equal(response.headers.get("location"), "/");
   assert.ok(session);
 
   const cookie = setCookieHeader(response, SESSION_COOKIE);
   assert.match(cookie, /HttpOnly/, "no script may read it");
   assert.match(cookie, /SameSite=Lax/, "it has to survive the return from Google");
-  assert.match(cookie, /Path=\//, "the dashboard, the home page and signing out all read it");
+  assert.match(cookie, /Path=\//, "the home page and signing out both read it");
   assert.match(cookie, new RegExp(`Max-Age=${WEB_SESSION_TTL_MS / 1000}\\b`));
 
   // The sign-in's own cookie is spent and taken away, whatever happened.
@@ -380,7 +387,7 @@ test("signing out cannot be done from another site", async () => {
   );
 
   assert.equal(response.status, 403);
-  assert.notEqual(await dashboard(session), null, "and the session still works");
+  assert.notEqual(await home(session), null, "and the session still works");
 });
 
 test("signing out ends the session rather than only forgetting it", async () => {
@@ -398,7 +405,7 @@ test("signing out ends the session rather than only forgetting it", async () => 
   assert.match(setCookieHeader(response, SESSION_COOKIE), /Max-Age=0/);
   // The part that matters: a copy of the cookie taken before signing out is now
   // worth nothing, which a signed cookie could not have promised.
-  assert.equal(await dashboard(session), null);
+  assert.equal(await home(session), null);
 });
 
 test("signing out with no session is answered the same way", async () => {
@@ -429,7 +436,7 @@ test("an account that is not on the access list gets nothing for authenticating"
 test("the access list is matched the way it is written: case and space are ignored", async () => {
   await withAllowlist(" Invited@Example.COM , other@example.com ", async () => {
     const session = await signIn(account("invited", "invited@example.com"));
-    assert.notEqual(await dashboard(session), null);
+    assert.notEqual(await home(session), null);
   });
 });
 
@@ -440,13 +447,13 @@ test("the access list is re-asked while a session is live, not only at sign-in",
 
   // The operator takes the address off the list while that browser is signed in.
   await withAllowlist("someone-else@example.com", async () => {
-    assert.equal(await dashboard(session), null, "the dashboard is closed to them");
+    assert.equal(await home(session), null, "the app is closed to them");
   });
 
   // And the session was ended rather than merely refused, so putting the address
   // back does not revive a week-old cookie.
   await withAllowlist("beta@example.com", async () => {
-    assert.equal(await dashboard(session), null, "the session is gone, not suspended");
+    assert.equal(await home(session), null, "the session is gone, not suspended");
   });
 });
 
@@ -454,13 +461,23 @@ test("a session cookie that was never issued resolves to nobody", async () => {
   const real = await signIn(account("s8", "s8@example.com"));
 
   for (const forged of ["", "guess", real.slice(0, -1), `${real}x`, "google:s8"]) {
-    assert.equal(await dashboard(forged), null, JSON.stringify(forged));
+    assert.equal(await home(forged), null, JSON.stringify(forged));
   }
 });
 
 // --- whose labels ------------------------------------------------------------
 
-test("the dashboard shows the signed-in account's labels and no others", async () => {
+test("signed out, the home page is the landing page and reads nobody's labels", async () => {
+  // The other half of the same URL. `home` returns null exactly where
+  // `app/page.tsx` renders <Landing />, and what matters is what does not happen on
+  // the way there: with no owner, no store is opened and no row is read, so there
+  // is nothing private for the landing HTML to carry.
+  for (const cookie of [null, "", "   ", "not-a-session", "../etc/passwd"]) {
+    assert.equal(await home(cookie), null, JSON.stringify(cookie));
+  }
+});
+
+test("the home page shows the signed-in account's labels and no others", async () => {
   // Created the way an MCP client creates them, which is the point: this is not a
   // second store with its own idea of who owns what.
   await mcp("google:alpha", "create_label", {
@@ -474,19 +491,19 @@ test("the dashboard shows the signed-in account's labels and no others", async (
 
   const alpha = await signIn(account("alpha", "alpha@example.com"));
   assert.deepEqual(
-    (await dashboard(alpha))?.labels.map((one) => one.label),
+    (await home(alpha))?.labels.map((one) => one.label),
     ["Alpha only"],
   );
 
   const beta = await signIn(account("beta", "beta@example.com"));
   assert.deepEqual(
-    (await dashboard(beta))?.labels.map((one) => one.label),
+    (await home(beta))?.labels.map((one) => one.label),
     ["Beta only"],
   );
 
   // And the first cookie still reaches only the first account, so signing in as
   // somebody else in another browser did not move anything.
-  assert.deepEqual((await dashboard(alpha))?.labels.map((one) => one.label), ["Alpha only"]);
+  assert.deepEqual((await home(alpha))?.labels.map((one) => one.label), ["Alpha only"]);
 });
 
 test("nothing a request carries can name whose labels are read", async () => {
@@ -507,7 +524,7 @@ test("nothing a request carries can name whose labels are read", async () => {
     },
   });
 
-  const shown = await dashboard(session);
+  const shown = await home(session);
   assert.equal(shown?.email, "gamma@example.com");
   assert.deepEqual(shown?.labels.map((one) => one.label), ["Gamma only"]);
 });
@@ -521,8 +538,8 @@ test("signing in as another account in one browser replaces the session", async 
   // what switching account looks like.
   const zeta = await signIn(account("zeta", "zeta@example.com"), epsilon);
 
-  assert.deepEqual((await dashboard(zeta))?.labels.map((one) => one.label), ["Zeta only"]);
-  assert.equal(await dashboard(epsilon), null, "the session it replaced is ended, not left running");
+  assert.deepEqual((await home(zeta))?.labels.map((one) => one.label), ["Zeta only"]);
+  assert.equal(await home(epsilon), null, "the session it replaced is ended, not left running");
 });
 
 test("one Google account is one owner, whether it arrives by MCP or by browser", async () => {
@@ -541,7 +558,7 @@ test("one Google account is one owner, whether it arrives by MCP or by browser",
   });
 
   const fromMcp = (await mcp(`google:${SUB}`, "get_labels")) as { labels: Label[] };
-  const fromWeb = await dashboard(await signIn(account(SUB, "parity@example.com")));
+  const fromWeb = await home(await signIn(account(SUB, "parity@example.com")));
 
   // Byte for byte the same policy, in the same order, with the same fields. Both
   // read the same rows through the same store, because the browser session
@@ -554,8 +571,8 @@ test("one Google account is one owner, whether it arrives by MCP or by browser",
   );
 });
 
-test("a Google account with no labels reaches an empty dashboard, not somebody else's", async () => {
-  const shown = await dashboard(await signIn(account("newcomer", "newcomer@example.com")));
+test("a Google account with no labels reaches an empty home page, not somebody else's", async () => {
+  const shown = await home(await signIn(account("newcomer", "newcomer@example.com")));
 
   assert.deepEqual(shown?.labels, []);
   assert.equal(shown?.email, "newcomer@example.com");
@@ -603,7 +620,7 @@ test("signing out is refused from those same origins, and the session survives",
     assert.equal(response.status, 403, origin);
   }
 
-  assert.notEqual(await dashboard(session), null, "still signed in");
+  assert.notEqual(await home(session), null, "still signed in");
 });
 
 // --- two tabs ---------------------------------------------------------------
@@ -628,8 +645,8 @@ test("two sign-ins started in one browser both complete", async () => {
   });
   assert.equal(a.response.status, 302, "and the first still can, afterwards");
 
-  assert.equal((await dashboard(a.session))?.email, "tab-a@example.com");
-  assert.equal((await dashboard(b.session))?.email, "tab-b@example.com");
+  assert.equal((await home(a.session))?.email, "tab-a@example.com");
+  assert.equal((await home(b.session))?.email, "tab-b@example.com");
 });
 
 test("answering one sign-in clears only its own cookie", async () => {
@@ -710,8 +727,8 @@ test("a duplicated session cookie resolves to nobody", async () => {
   assert.equal(response.status, 302);
 
   // Neither session was ended, because neither was read.
-  assert.notEqual(await dashboard(real), null);
-  assert.notEqual(await dashboard(other), null);
+  assert.notEqual(await home(real), null);
+  assert.notEqual(await home(other), null);
 });
 
 test("a duplicated login cookie cannot complete a sign-in", async () => {
@@ -755,7 +772,7 @@ test("signing out fails visibly when the session cannot be deleted", async () =>
 
   // The session is untouched, which is the honest state: nothing was deleted, so
   // nothing may claim to have been.
-  assert.notEqual(await dashboard(session), null);
+  assert.notEqual(await home(session), null);
 
   // And a retry against the working store does end it.
   const retried = await handleSignOut(
@@ -765,7 +782,7 @@ test("signing out fails visibly when the session cannot be deleted", async () =>
     }),
   );
   assert.equal(retried.status, 302);
-  assert.equal(await dashboard(session), null);
+  assert.equal(await home(session), null);
 });
 
 // --- two tenants, side by side ---------------------------------------------
@@ -785,30 +802,32 @@ test("two tenants resolve independently in one process, in either order", async 
     [one, "one@example.com", "One"],
     [two, "two@example.com", "Two"],
   ] as const) {
-    const shown = await dashboard(cookie);
+    const shown = await home(cookie);
     assert.equal(shown?.email, email);
     assert.deepEqual(shown?.labels.map((entry) => entry.label), [label]);
   }
 });
 
-test("the dashboard's own route is declared private and uncacheable", async () => {
+test("the home page is declared private and uncacheable", async () => {
   // A Server Component cannot set a response header, so the rule lives in the
   // Next.js config. What must be true is that nothing between the function and the
-  // browser may keep a copy of one person's dashboard: a CDN, a proxy, or a shared
-  // browser cache handing it to the next request for the same URL is the failure.
+  // browser may keep a copy of one person's labels: a CDN, a proxy, or a shared
+  // browser cache handing them to the next request for the same URL is the failure.
+  // `/` needs this precisely because it answers two different things at one URL.
   const { default: config } = await import("../../next.config.ts");
   const rules = await config.headers!();
 
-  const dashboardRule = rules.find((rule) => rule.source === "/dashboard");
-  assert.ok(dashboardRule, "the dashboard has a header rule");
+  const homeRule = rules.find((rule) => rule.source === "/");
+  assert.ok(homeRule, "the home page has a header rule");
 
-  const header = (key: string) =>
-    dashboardRule.headers.find((one) => one.key === key)?.value ?? "";
+  const header = (key: string) => homeRule.headers.find((one) => one.key === key)?.value ?? "";
 
   assert.match(header("cache-control"), /private/);
   assert.match(header("cache-control"), /no-store/);
-  assert.match(header("x-robots-tag"), /noindex/);
   assert.equal(header("x-frame-options"), "DENY");
+  // Deliberately not noindex: a crawler is never signed in, so what it can reach
+  // here is the landing page, which is meant to be found.
+  assert.equal(header("x-robots-tag"), "");
 
   // The sign-in endpoints answer redirects and refusals mid-flow, which must not
   // be cached either.
@@ -818,4 +837,18 @@ test("the dashboard's own route is declared private and uncacheable", async () =
     authRule.headers.find((one) => one.key === "cache-control")?.value ?? "",
     /no-store/,
   );
+});
+
+test("there is one application route, and no /dashboard behind it", async () => {
+  // The app used to live at its own address. It does not any more, and there is no
+  // redirect standing in for it either — a second address that renders the same
+  // rows, or resolves to the one that does, is a second thing to keep true.
+  assert.equal(
+    existsSync(new URL("../../app/dashboard", import.meta.url)),
+    false,
+    "no page renders at /dashboard",
+  );
+
+  const { default: config } = await import("../../next.config.ts");
+  assert.equal(config.redirects, undefined, "and nothing redirects from it");
 });

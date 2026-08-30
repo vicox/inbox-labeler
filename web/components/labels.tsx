@@ -1,9 +1,7 @@
-import Link from "next/link";
-
 import type { Label } from "@/lib/inbox/labels";
 
 /**
- * The signed-in dashboard's own pieces.
+ * The labels page's own pieces.
  *
  * Server components throughout, and deliberately: everything on this page is
  * already known when the HTML is written, so there is nothing for a client
@@ -25,19 +23,17 @@ import type { Label } from "@/lib/inbox/labels";
  * these. It is the address Google verified at sign-in, held on the session row and
  * nowhere else. The user's underlying identity — the provider subject that keys
  * the labels — is never rendered, here or anywhere else on the site.
+ *
+ * The product name is not a link: this *is* the page it would lead to. Signing out
+ * is the only navigation a signed-in visitor needs, so it is the only one offered.
  */
-export function DashboardHeader({ email }: { email: string }) {
+export function AccountHeader({ email }: { email: string }) {
   return (
     <header className="mb-10 border-b border-rule pb-5 sm:mb-14">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3">
         <div className="flex items-baseline gap-4">
-          <Link
-            href="/"
-            className="font-display text-[19px] tracking-[-0.01em] hover:text-ink-soft"
-          >
-            Inbox Labeler
-          </Link>
-          <p className="text-[12.5px] text-ink-faint">Dashboard</p>
+          <h1 className="font-display text-[19px] tracking-[-0.01em]">Inbox Labeler</h1>
+          <p className="text-[12.5px] text-ink-faint">Teach your AI how to organize your inbox.</p>
         </div>
 
         <div className="flex items-baseline gap-4">
@@ -69,8 +65,8 @@ export function DashboardHeader({ email }: { email: string }) {
 
 /**
  * Every label this user has defined, in the order the store returns them —
- * alphabetically, ignoring case, which is `get_labels`' order too. A dashboard
- * and an MCP client looking at one account should not have to reconcile two
+ * alphabetically, ignoring case, which is `get_labels`' order too. This page and
+ * an MCP client looking at one account should not have to reconcile two
  * orderings of the same policy.
  */
 export function LabelList({ labels }: { labels: readonly Label[] }) {
@@ -79,7 +75,7 @@ export function LabelList({ labels }: { labels: readonly Label[] }) {
       <Notice>
         <span className="block text-ink">No labels yet</span>
         <span className="mt-1.5 block text-[12.5px] text-ink-faint">
-          Create one from your MCP client, and it appears here.
+          Ask your MCP client to set up Inbox Labeler, or to create a label, and it appears here.
         </span>
       </Notice>
     );
@@ -158,7 +154,7 @@ function References({ term, labels }: { term: string; labels: readonly string[] 
  * The one shape this page says anything in that is not a label: an empty policy,
  * or something that could not be read.
  *
- * The home page's own notice is a bare centred paragraph in open space, which
+ * The landing page's own notice is a bare centred paragraph in open space, which
  * works there because it stands in for a whole graph. Here it sits in a list of
  * bordered cards, so it takes the card's frame — otherwise a message about labels
  * reads as page furniture rather than as the answer where a label would have been.

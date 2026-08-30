@@ -156,7 +156,7 @@ export async function identifyUser(
 /**
  * The same thing, for the one caller that needs the address as well.
  *
- * The browser sign-in keeps it, and only it. A dashboard has to be able to say
+ * The browser sign-in keeps it, and only it. The site has to be able to say
  * *which* Google account it is showing — that is the whole answer to somebody
  * with several of them wondering whose labels these are — and its session
  * re-asks the access list on every request, which needs an address the browser

@@ -35,7 +35,7 @@ const PRODUCTION = deploymentAt("https://inboxlabeler.com");
 const LOOPBACK = deploymentAt("http://localhost:3000");
 
 function requestWith(cookie: string): Request {
-  return new Request("https://inboxlabeler.com/dashboard", { headers: { cookie } });
+  return new Request("https://inboxlabeler.com/", { headers: { cookie } });
 }
 
 // --- production ------------------------------------------------------------
@@ -141,7 +141,7 @@ test("an empty value, a missing cookie and a missing header all read as nothing"
   assert.equal(cookieOf(requestWith("__Host-il_session="), "il_session", PRODUCTION), null);
   assert.equal(cookieOf(requestWith("other=1"), "il_session", PRODUCTION), null);
   assert.equal(
-    cookieOf(new Request("https://inboxlabeler.com/dashboard"), "il_session", PRODUCTION),
+    cookieOf(new Request("https://inboxlabeler.com/"), "il_session", PRODUCTION),
     null,
   );
 });

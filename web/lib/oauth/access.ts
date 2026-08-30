@@ -22,7 +22,7 @@ import { ConfigurationError } from "./config.ts";
  * Nothing here reaches a token or an MCP client. The address is read from the
  * identity token, used to answer one boolean, and dropped — with one exception,
  * stated where it happens: a website sign-in keeps it on the browser-session row,
- * because the dashboard names the account it is showing and because this question
+ * because the site names the account whose labels it is showing and because this question
  * is then re-asked on every request of that session. See `lib/web/store.ts`.
  *
  * ## In production, no list means nobody

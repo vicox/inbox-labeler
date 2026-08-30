@@ -683,7 +683,7 @@ so a beta tester who renames their account keeps their labels. The address is ne
 the tenant key, never in a token we issue, and never in an MCP result.
 
 Where it *is* stored is one place, and only for the website: a **browser session row**
-keeps the verified address for as long as that session lasts, because the dashboard
+keeps the verified address for as long as that session lasts, because the site
 shows you which Google account it is displaying and because the list above is
 re-checked against it on every request the session makes. An **MCP client's**
 authorization stores no address at all — it is checked against the list and dropped.
@@ -706,7 +706,7 @@ Two consequences worth knowing before you set it:
 
 - **Removing the last address closes the deployment**, rather than opening it. That
   is the point, but it means the variable is not a place to empty out temporarily.
-- **A signed-in browser loses the dashboard on its next page load.** The list is
+- **A signed-in browser loses access on its next page load.** The list is
   re-checked on every request rather than only at sign-in, so an operator's change
   reaches people who are already signed in.
 

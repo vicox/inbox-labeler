@@ -20,8 +20,8 @@ import { webStore } from "./store.ts";
  * `user` is the canonical InboxLabeler identity, byte for byte the same value an
  * MCP access token's subject carries for the same Google account — both are
  * `identityFromClaims`' provider-qualified subject, minted from the same identity
- * token by the same code. So a dashboard and an MCP client authenticated with one
- * Google account are one owner, and the dashboard shows the labels `get_labels`
+ * token by the same code. So a browser and an MCP client authenticated with one
+ * Google account are one owner, and the site shows the labels `get_labels`
  * returns because it reads them through the same store.
  *
  * `email` is for the person looking at the page, so they can see which of their

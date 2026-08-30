@@ -29,7 +29,7 @@ import { WEB_LOGIN_TTL_MS, WEB_SESSION_TTL_MS, webStore, type WebStore } from ".
  * Signing a person in to inboxlabeler.com, and out again.
  *
  *     POST /auth/signin    park a sign-in, bind it to this browser  ─►  Google
- *     GET  /auth/callback  Google returns  ─►  session cookie       ─►  /dashboard
+ *     GET  /auth/callback  Google returns  ─►  session cookie       ─►  /
  *     POST /auth/signout   delete the session, forget the cookie    ─►  /
  *
  * This is authentication of a human in a browser, and it is deliberately a
@@ -248,7 +248,10 @@ export async function handleWebCallback(
 
   const session = await store.createSession({ user: identity.user, email: identity.email });
 
-  return redirect("/dashboard", [
+  // Home, which is the app once there is a session to read it with. There is no
+  // second address to send anyone to, and nothing here takes a destination from the
+  // request — so this flow has no redirect target for a caller to choose.
+  return redirect("/", [
     forget,
     setSessionCookie(session, config, WEB_SESSION_TTL_MS / 1000),
   ]);

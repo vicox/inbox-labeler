@@ -17,7 +17,7 @@ import type { Deployment } from "../oauth/config.ts";
  * Both are presented on a **top-level navigation arriving from Google**, which is
  * a cross-site context: with `Strict` the browser sends neither, so a sign-in
  * could never complete and a completed one would look signed-out on arrival at
- * the dashboard. `Lax` sends a cookie on exactly that navigation and withholds it
+ * the home page. `Lax` sends a cookie on exactly that navigation and withholds it
  * from cross-site form posts and subresource requests — which is the half that
  * matters, because the one state-changing request here is signing out.
  *

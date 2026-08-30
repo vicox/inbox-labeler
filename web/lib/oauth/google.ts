@@ -21,7 +21,7 @@ import type { IdentityProvider, VerifiedIdentity } from "./provider.ts";
  * The address leaves this module only as far as the seam in `provider.ts`, which
  * asks the access list about it. For an MCP client's authorization it is dropped
  * there and goes no further. For a website sign-in it travels one step more, into
- * the browser-session row that the dashboard reads to say which Google account it
+ * the browser-session row that the site reads to say which Google account it
  * is showing — and out again when that session ends. No token and no MCP result
  * ever carries it.
  */
@@ -84,7 +84,7 @@ export function google(): IdentityProvider {
         //
         // Without it, a browser holding several Google sessions has one of them
         // chosen for it, and the person at the keyboard is never told which. The
-        // symptom is not an error: they arrive at a dashboard, or connect a
+        // symptom is not an error: they arrive signed in, or connect a
         // client, as an identity they did not pick, and the only sign is that
         // their labels appear to be missing. This deployment has already seen that
         // confusion.

@@ -32,8 +32,8 @@ export default function Terms() {
           no list configured, the service admits nobody.
         </p>
         <p>
-          Removing an address stops that account from signing in again, and closes the website
-          dashboard to a browser that is already signed in as soon as it loads another page.
+          Removing an address stops that account from signing in again, and closes the signed-in
+          website to a browser that is already signed in as soon as it loads another page.
           Credentials already issued to an MCP client may remain usable until they expire or are
           revoked by hand — so for those, removal prevents future sign-in rather than ending every
           active connection at that instant.
