@@ -1,6 +1,7 @@
-import { AccountHeader, LabelList, Notice } from "@/components/labels";
+import { LabelList, Notice } from "@/components/labels";
 import { LegalLinks } from "@/components/legal";
 import { PolicyGraph } from "@/components/policy-graph";
+import { SiteHeader, SignIn, SignOut } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
 import { inboxStore } from "@/lib/inbox/store";
 import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
@@ -76,13 +77,9 @@ async function resolveVisitor(): Promise<SignedInVisitor | null> {
 function Landing() {
   return (
     <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
-      <header className="mb-10 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3 border-b border-rule pb-5 sm:mb-14">
-        <div className="flex items-baseline gap-4">
-          <h1 className="font-display text-[19px] tracking-[-0.01em]">Inbox Labeler</h1>
-          <p className="text-[12.5px] text-ink-faint">Teach your AI how to organize your inbox.</p>
-        </div>
+      <SiteHeader>
         <SignIn />
-      </header>
+      </SiteHeader>
 
       <PolicyGraph />
 
@@ -104,9 +101,28 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-10 sm:px-8 sm:py-14">
-      <AccountHeader email={visitor.email} />
+      <SiteHeader>
+        <SignOut />
+      </SiteHeader>
 
-      <h2 className="font-display mb-4 text-[15px] tracking-[-0.01em]">Labels</h2>
+      {/*
+        The address rides the heading rather than the header, which is where it
+        answers something: these labels, this account. Somebody with several Google
+        accounts is asking whose labels these are, and the heading is the sentence
+        that question is about. It costs no height — the heading row already
+        existed — and it leaves the top right to the one action.
+
+        It is the address Google verified at sign-in, held on the session row and
+        nowhere else. The user's underlying identity — the provider subject that
+        keys the labels — is never rendered, here or anywhere else on the site.
+      */}
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+        <h2 className="font-display text-[15px] tracking-[-0.01em]">Labels</h2>
+        <p className="min-w-0 max-w-full truncate text-[12.5px] text-ink-faint">
+          <span className="sr-only">Signed in as </span>
+          {visitor.email}
+        </p>
+      </div>
 
       {labels === "unavailable" ? (
         <Notice>
@@ -123,27 +139,6 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
         <LegalLinks />
       </footer>
     </main>
-  );
-}
-
-/**
- * A form rather than a link, and a POST rather than a GET.
- *
- * Starting a sign-in parks a record and sets a cookie, so it has to be something a
- * person did: a GET would be reachable by a prefetch, a link preview or another
- * site's image tag. The endpoint refuses a request that did not come from this
- * origin — see lib/web/signin.ts.
- */
-function SignIn() {
-  return (
-    <form action="/auth/signin" method="post">
-      <button
-        type="submit"
-        className="cursor-pointer rounded-md border border-rule bg-white/60 px-3.5 py-2 text-[12.5px] text-ink transition-colors hover:border-ink-faint focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-      >
-        Sign in with Google
-      </button>
-    </form>
   );
 }
 

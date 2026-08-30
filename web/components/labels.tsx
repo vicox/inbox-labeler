@@ -16,54 +16,6 @@ import type { Label } from "@/lib/inbox/labels";
  */
 
 /**
- * The header, which names the product, the account and the way out.
- *
- * The address is shown because on this page it is the answer to the question
- * somebody with several Google accounts is actually asking: whose labels are
- * these. It is the address Google verified at sign-in, held on the session row and
- * nowhere else. The user's underlying identity — the provider subject that keys
- * the labels — is never rendered, here or anywhere else on the site.
- *
- * The product name is not a link: this *is* the page it would lead to. Signing out
- * is the only navigation a signed-in visitor needs, so it is the only one offered.
- */
-export function AccountHeader({ email }: { email: string }) {
-  return (
-    <header className="mb-10 border-b border-rule pb-5 sm:mb-14">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3">
-        <div className="flex items-baseline gap-4">
-          <h1 className="font-display text-[19px] tracking-[-0.01em]">Inbox Labeler</h1>
-          <p className="text-[12.5px] text-ink-faint">Teach your AI how to organize your inbox.</p>
-        </div>
-
-        <div className="flex items-baseline gap-4">
-          {/* Marked as the account rather than left as a bare address, so it reads
-              as a statement about this session rather than as a piece of data. */}
-          <p className="text-[12.5px] text-ink-soft">
-            <span className="text-ink-faint">Signed in as </span>
-            {email}
-          </p>
-          {/*
-            A form rather than a link: signing out changes state on the server, and
-            a GET that changes state is one a prefetch, a scanner or another site's
-            image tag can perform on somebody's behalf. The POST is refused unless
-            it came from this origin — see lib/web/signin.ts.
-          */}
-          <form action="/auth/signout" method="post">
-            <button
-              type="submit"
-              className="cursor-pointer text-[12.5px] text-ink-faint underline decoration-rule underline-offset-2 hover:text-ink-soft hover:decoration-ink-faint"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-/**
  * Every label this user has defined, in the order the store returns them —
  * alphabetically, ignoring case, which is `get_labels`' order too. This page and
  * an MCP client looking at one account should not have to reconcile two
