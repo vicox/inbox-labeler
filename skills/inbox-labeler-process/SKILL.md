@@ -258,17 +258,19 @@ from this table and never choose a color by hand:
 
 | Label | `backgroundColor` | `textColor` |
 | --- | --- | --- |
-| detection, `role: "category"` | `#a4c2f4` | `#000000` |
-| detection, `role: "attribute"` | `#fce8b3` | `#000000` |
+| detection, `role: "category"` | `#fce8b3` | `#000000` |
+| detection, `role: "attribute"` | `#fef1d1` | `#000000` |
 | derived | `#efa093` | `#000000` |
 | detection with no `role` | `#cccccc` | `#000000` |
 
 These are tiles from Gmail's own label palette rather than free choices, so pass them exactly as
-written — Gmail refuses a color that is not one of its own. The four read as blue, amber, coral
-and grey, which is the same mapping the website shows a label in; the values differ because the
-palettes do, and neither side reads the other.
+written — Gmail refuses a color that is not one of its own. They are two families and a
+neutral: detection warm, with a category the deeper amber of it and an attribute the lighter,
+derived a coral beside them, and a role-less label plain grey. The website shows a label in the
+same four, one hierarchy on two palettes; the values differ because the palettes do, and neither
+side reads the other.
 
-**Attention has nothing to do with a color.** A `category` is the same blue whether it asks for
+**Attention has nothing to do with a color.** A `category` is the same amber whether it asks for
 `high`, `normal` or `none`, and so for the other three rows. `attention` is still part of every
 label's configuration and still arrives with it from `get_labels` — it is simply not what a Gmail
 color encodes. What a label asks of you is carried out on the *message* by

@@ -181,18 +181,18 @@ echo "--- Gmail label colors ---"
 # document order so a row cannot be silently swapped for another.
 colors=(
     'What a label **is** decides its business label'
-    'detection, `role: "category"` | `#a4c2f4` | `#000000`'
-    'detection, `role: "attribute"` | `#fce8b3` | `#000000`'
+    'detection, `role: "category"` | `#fce8b3` | `#000000`'
+    'detection, `role: "attribute"` | `#fef1d1` | `#000000`'
     'derived | `#efa093` | `#000000`'
     'detection with no `role` | `#cccccc` | `#000000`'
 )
-check "category is blue, attribute amber, derived coral, a role-less label grey" \
+check "category is deep amber, attribute light, derived coral, a role-less label grey" \
     "$(order_check "${colors[@]}")" "True"
 check "the values are Gmail palette tiles, passed exactly as written" \
     "$(order_check 'tiles from Gmail' 'pass them exactly as written')" "True"
 check "attention never decides a business label colour" \
     "$(order_check 'Attention has nothing to do with a color' \
-        'the same blue whether it asks for `high`, `normal` or `none`')" "True"
+        'the same amber whether it asks for `high`, `normal` or `none`')" "True"
 check "a role-less label is grey for want of a decision, not for asking nothing" \
     "$(order_check 'not because it asks for nothing' 'never fills one in')" "True"
 check "colours are written in one step, and only when they differ" \

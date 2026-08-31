@@ -161,14 +161,15 @@ marked read, because `none` is the only thing either label actually asked for. A
 labels comes out `normal`, so it is left alone. The behaviours above are fixed and not
 configurable.
 
-**Color says what a label is, and nothing else.** A Category is blue, an Attribute amber, a
-Derived Label coral, and a Detection Label whose role nobody has settled stays grey — from the
+**Color says what a label is, and nothing else.** Detection Labels are warm — a Category the
+deeper amber of them, an Attribute the lighter — a Derived Label is coral beside them, and a
+Detection Label whose role nobody has settled stays grey. Two families and a neutral, from the
 one mapping the processing skill keeps, in tiles from Gmail's own palette. Attention plays no
-part in it: a Category asking for `high` is the same blue as one asking for `none`. Attention is
+part in it: a Category asking for `high` is the same amber as one asking for `none`. Attention is
 still part of a label's own configuration, and still what decides whether a message gets starred
 or marked read — it is simply not what a Gmail label's color encodes. The website groups labels
-by the same four families and in the same four colors, though the hex values differ because the
-palettes do.
+into the same four and colors them in the same hierarchy, though the hex values differ because
+the palettes do.
 
 Color is purely presentation: it never feeds back into what a label detects, and processing never
 recolors a message — only the Gmail label itself, and only Detection and Derived Labels get one;
