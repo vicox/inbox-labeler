@@ -123,13 +123,28 @@ check 'required_labels is an AND gate that decides whether the label is evaluate
 check 'recommended_labels is context, and its absence does not block evaluation' \
     "$(says 'when they did not, the derived label is evaluated anyway')$(says 'recommended_labels` is context')" "yesyes"
 
-check 'a detection label says whether its fact is a category or an attribute' \
-    "$(says 'What kind or domain of email is this?')$(says 'What does this email contain, indicate, or require?')" \
+check 'a category says what the mail is, an attribute what is additionally true of it' \
+    "$(says 'what the message **fundamentally is, or is about**')$(says 'something **additionally true about** the message')" \
     "yesyes"
 
-check 'the role is read off the decision rule, not the part of speech' \
-    "$(says 'Ask which question the instruction is deciding, not what part of speech the name is')" \
-    "yes"
+check 'the decision is what the match contributes: a classification or a qualifier' \
+    "$(says 'This is what the mail is, or is about')$(says 'This is additionally true of the mail')$(says 'a category is a classification, an attribute is a qualifier')" \
+    "yesyesyes"
+
+check 'several categories may match, none is primary, and none is demoted for it' \
+    "$(says 'Categories are not one exclusive dimension')$(says 'must give way and become an attribute')$(says 'no primary category')$(says 'may match several, exactly one, or none at all')" \
+    "yesyesyesyes"
+
+check 'the role is read from the intended instruction, not from the label name' \
+    "$(says 'The role comes from the instruction, not the name')$(says 'have no universally correct role')$(says 'Do not work backwards from the name')" \
+    "yesyesyes"
+
+check 'a genuinely unclear role is asked about, not guessed' \
+    "$(says 'settling it is not the same as guessing it')$(says 'Do not present a coin-flip as a decision')" \
+    "yesyes"
+
+check 'exactly two roles, and no third is offered' \
+    "$(says 'The second is its **role**, and there are two — no more.')" "yes"
 
 check 'the role is neither exclusive nor part of matching' \
     "$(says 'Not exclusive.')$(says 'several categories and several attributes at once')$(says 'Not part of matching.')" \
@@ -140,6 +155,10 @@ check 'no near-duplicate label just to give each role one' \
 
 check 'derived labels have no role, and may reference either kind' \
     "$(says '**Derived labels have no role.**')$(says 'may name detection labels of either role freely')" \
+    "yesyes"
+
+check 'roles place no constraint on how a derived label is composed' \
+    "$(says 'the roles place no constraint on the composition')$(says 'never an arithmetic of roles')" \
     "yesyes"
 
 check 'a role can be changed even though a type cannot' \

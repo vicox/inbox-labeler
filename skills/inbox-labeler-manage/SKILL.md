@@ -95,44 +95,105 @@ invent a third.
 ## Category or attribute
 
 Every detection label says two things: that it found something, and what kind of something it
-found. The second is its **role**, and there are two.
+found. The second is its **role**, and there are two — no more.
 
-| Role | The question it answers |
+| Role | What it tells you about the message |
 | --- | --- |
-| `category` | *What kind or domain of email is this?* |
-| `attribute` | *What does this email contain, indicate, or require?* |
+| `category` | what the message **fundamentally is, or is about** — a kind, a subject, a classification |
+| `attribute` | something **additionally true about** the message — a property, state, characteristic, urgency, requirement or signal |
 
-`Invoice`, `Delivery`, `Newsletter`, `Travel`, `Social` are categories: each names a kind of mail
-you could sort a mailbox into. `Action required`, `Question`, `Imminent`, `Deadline`,
-`Cancellation`, `Large amount`, `Marketing` are attributes: each names something that can turn up
-*inside* mail of almost any kind.
+`Invoice`, `Newsletter`, `Delivery`, `Travel`, `Social` are categories: each one, when it matches,
+answers *what is this mail*. `Action required`, `Informational`, `Imminent`, `Large amount`,
+`Discount` are attributes: not one of them says what the mail is, and each qualifies whatever it
+turns out to be.
 
-That last observation is the test, not the grammar. **Ask which question the instruction is
-deciding, not what part of speech the name is.** `Large amount` is a noun and is an attribute,
-because an amount is something an email contains rather than a kind of email it is. `Marketing`
-is an attribute because promotion is a property a newsletter, a travel offer and a renewal notice
-can all share. If a concept would be worth detecting across several different kinds of mail, it is
-almost certainly an attribute; if it names the kind itself, it is a category.
+### The test: what does the match contribute?
 
-Three things the role is not:
+Ask what the label tells you at the moment it matches.
+
+- *This is what the mail is, or is about* → **category**
+- *This is additionally true of the mail* → **attribute**
+
+Or shorter, if it helps: **a category is a classification, an attribute is a qualifier.**
+Classification, subject, kind on one side; qualifier, property, state, characteristic on the
+other.
+
+This is a modelling distinction and not a universal ontology. It describes how one account chose
+to think about its own mail, and two accounts may reasonably differ.
+
+### Categories are not one exclusive dimension
+
+Several categories can match one message, and that is ordinary rather than a modelling error.
+`Travel` and `Invoice` both match a travel invoice. `Social` and `Newsletter` both match a
+mailing list digest from a social network. `Wohnung` and `Delivery` both match a parcel notice
+about the flat.
+
+None of those pairs means one of the two must give way and become an attribute. Both are saying
+what the mail is, and mail is allowed to be more than one thing. There is **no primary
+category**: nothing ranks them, nothing picks one, and a message may match several, exactly one,
+or none at all. Several attributes may match alongside them, or none. A message matching nothing
+is a normal outcome.
+
+### The role comes from the instruction, not the name
+
+A label name on its own does not fix its role. Concepts like `Booking confirmation`, `Birthday`,
+`Calendar event`, `Connection`, `Login`, `Marketing` and `Policy update` have no universally
+correct role, and this skill does not pretend they do — the role belongs to what the detection
+instruction is meant to establish.
+
+`Booking confirmation` shows both readings. An instruction meaning *this mail is a booking
+confirmation* is a classification of the mail: `category`. An instruction meaning *a confirmed
+booking is mentioned here, whatever else this mail is* adds a fact to mail that is about something
+else: `attribute`. Same name, two different labels, and only the instruction says which was
+intended.
+
+So when you settle the role of a label that already exists, read its instruction and ask what it
+establishes. Do not work backwards from the name.
+
+### When it is genuinely unclear, ask
+
+A new detection label cannot be created without a role, so the role has to be settled first — but
+settling it is not the same as guessing it. When the instruction the user has in mind would
+support either reading, say what the two readings are, in a line or two, and let them choose:
+
+> Do you mean `Receipts` as a classification — this mail is a receipt — or as a qualifier, a
+> receipt being present in mail that is about something else? The first is a `category`, the
+> second an `attribute`.
+
+Do not present a coin-flip as a decision, and do not model around the ambiguity by creating both.
+One label, one role, chosen by the person whose mail it is.
+
+### Three things the role is not
 
 - **Not exclusive.** One message can match several categories and several attributes at once. A
   travel invoice with a deadline matches `Travel`, `Invoice` and `Deadline`, and nothing about
-  that is a conflict. There is no primary category and no single answer to pick.
+  that is a conflict.
 - **Not part of matching.** Each detection label is still decided on its own, by its own
-  instruction. The role changes how a matched fact reads, never whether it matched or what it
-  took to match.
+  instruction. The role changes what kind of fact a match *is*, never whether it matched or what
+  it took to match.
 - **Not a reason to split a label.** Do not invent a near-duplicate so that each role has one —
   `Invoice` the category does not need an `Invoice received` attribute beside it. One label per
   aspect, and the role describes the aspect you already have.
 
+**Why getting it right matters anyway.** A wrong role breaks nothing today, precisely because it
+changes nothing about matching — it costs later. Roles are what make it possible to notice that a
+message came out of a run carrying three attributes and nothing that says what it is. That is a
+real gap, and it is visible only where the labels carrying a classification are recorded as such.
+Such a gap means no matched label meaningfully says what the mail is. It does not mean that some
+broader heading is missing above the labels you already have: `Invoice` is a complete answer to
+*what is this mail*, and nothing here asks you to find something larger to file it under.
+
 **Derived labels have no role.** A derived label is already an interpretation of detection facts,
 so asking what kind of fact it is has no answer, and Inbox Labeler refuses one. Its
-`required_labels` and `recommended_labels` may name detection labels of either role freely — a
-derived label built on one category and one attribute is the common shape.
+`required_labels` and `recommended_labels` may name detection labels of either role freely, and
+**the roles place no constraint on the composition.** Two categories, two attributes, one of each,
+a single detection label or five of them are all structurally valid; what makes one of them right
+is the conclusion you are drawing, never an arithmetic of roles. A starter set that happens to
+pair one category with one attribute is a handful of examples, not a shape to copy.
 
-**A role can be changed; a type cannot.** Deciding later that `Marketing` is an attribute rather
-than a category is a revised judgement, not a different label, so `update_label` accepts it. See
+**A role can be changed; a type cannot.** Deciding later that a label you modelled as a
+classification is really a qualifier — or the other way round — is a revised judgement rather
+than a different label, so `update_label` accepts it. See
 [Classification changes reach new mail only](#classification-changes-reach-new-mail-only) for what
 that does and does not reach.
 
@@ -144,8 +205,9 @@ missing role means **nobody has decided yet** — not that the label is broken, 
 defaults to anything.
 
 When you list labels and see one, say so and offer to settle it — "`Newsletter` has no role yet;
-that one is a kind of mail, so `category` — shall I set it?" — and set it with `update_label`.
-Never assign a role to an existing label without the user agreeing, and never work one out from
+its instruction says the mail *is* a newsletter, which is a classification, so `category` — shall
+I set it?" — and set it with `update_label`. Never assign a role to an existing label without the
+user agreeing, and never work one out from
 the label name or instruction and write it silently. An unrelated edit is not the moment either:
 changing an instruction leaves a missing role exactly as it was, which is deliberate, so editing
 one thing never becomes a modelling decision the user did not make.
@@ -263,8 +325,9 @@ that preserves reuse: as few labels as express the idea, and no fewer. Then:
    `Big amount`.
 2. **Name the observations the concept rests on.** When the user's label is an interpretation and
    the observations it needs do not exist yet, those become supporting detection labels.
-3. **Decide each detection label's role before creating it** — `category` for a kind of mail,
-   `attribute` for something found inside mail of any kind. A new detection label without one is
+3. **Decide each detection label's role before creating it** — `category` when the label says what
+   the mail fundamentally is, `attribute` when it says something additionally true about the mail.
+   See [Category or attribute](#category-or-attribute). A new detection label without one is
    refused, and rightly: it is part of what the label means rather than a field to fill in later.
 4. **Create the supporting detection labels first**, then the derived label. Its references must
    already exist, and a label's type cannot be changed afterwards — so decide the shape before
