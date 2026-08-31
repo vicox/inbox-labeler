@@ -259,10 +259,11 @@ this table and never choose a color by hand:
 | Label | `backgroundColor` | `textColor` |
 | --- | --- | --- |
 | `detection` | `#fce8b3` | `#000000` |
-| `derived` | `#c6f3de` | `#000000` |
+| `derived` | `#efa093` | `#000000` |
 
 These are tiles from Gmail's own label palette rather than free choices, so pass them exactly as
-written — Gmail refuses a color that is not one of its own. Two families, warm and mint, matching
+written — Gmail refuses a color that is not one of its own. Two families, a warm yellow and a
+coral, matching
 the two the website uses; the values differ because the palettes do, and neither side reads the
 other.
 

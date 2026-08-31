@@ -161,10 +161,11 @@ marked read, because `none` is the only thing either label actually asked for. A
 labels comes out `normal`, so it is left alone. The behaviours above are fixed and not
 configurable.
 
-**Color says what kind of label it is, and nothing else.** Detection Labels are warm and Derived
-Labels mint — two families, from the one mapping the processing skill keeps, in tiles from Gmail's
-own palette. A Detection Label's role plays no part: a Category, an Attribute and one whose role
-nobody has settled are all the same yellow, because all three are the same kind of label. Role is
+**Color says what kind of label it is, and nothing else.** Detection Labels are warm yellow and
+Derived Labels coral — two families, from the one mapping the processing skill keeps, in tiles
+from Gmail's own palette. A Detection Label's role plays no part: a Category, an Attribute and
+one whose role nobody has settled are all the same yellow, because all three are the same kind of
+label. Role is
 how a label is modelled and how the website groups it, not something a color says. Attention plays
 no part either — a label is the same color whether it asks for `high` or `none`. Attention is
 still part of a label's own configuration, and still what decides whether a message gets starred

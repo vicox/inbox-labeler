@@ -12,7 +12,7 @@
   --color-rule: #e8ded1;
 
   /* Two families, and colour says nothing else. A label's **type** picks one:
-     detection warm, derived mint. Both sit in the same key as the paper — a panel
+     detection warm, derived a soft coral. Both sit in the same key as the paper — a panel
      near 92% lightness, a rule near 83%, a card just off white — and stay low in
      saturation, because a page is mostly these surfaces.
 
@@ -30,11 +30,11 @@
   --color-detection-rule: #e9d3bd;
   --color-detection-card: #fffaf4;
 
-  --color-derived: #e6f0e8;
-  --color-derived-rule: #c9dfcf;
-  --color-derived-card: #f9fdfa;
+  --color-derived: #f7ddd9;
+  --color-derived-rule: #e9bdb5;
+  --color-derived-card: #fffaf8;
 
-  /* Warm, so the peach and mint keep their colour under the detail overlay
+  /* Warm, so the peach and coral keep their colour under the detail overlay
      instead of turning grey. */
   --color-scrim: rgba(120, 88, 52, 0.16);
 

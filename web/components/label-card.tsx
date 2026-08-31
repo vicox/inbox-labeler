@@ -50,7 +50,7 @@ export function LabelCard({
   onOpen,
 }: Props) {
   // Type, and only type. A detection label is warm whether it is a category, an
-  // attribute or neither yet; a derived label is mint.
+  // attribute or neither yet; a derived label is coral.
   const surface =
     label.type === "detection"
       ? "border-detection-rule bg-detection-card"

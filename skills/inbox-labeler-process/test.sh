@@ -183,9 +183,9 @@ colors=(
     'A label'
     'type** decides its business label'
     '`detection` | `#fce8b3` | `#000000`'
-    '`derived` | `#c6f3de` | `#000000`'
+    '`derived` | `#efa093` | `#000000`'
 )
-check "detection is warm, derived is mint, and there are only those two" \
+check "detection is warm, derived is coral, and there are only those two" \
     "$(order_check "${colors[@]}")" "True"
 check "the values are Gmail palette tiles, passed exactly as written" \
     "$(order_check 'tiles from Gmail' 'pass them exactly as written')" "True"
