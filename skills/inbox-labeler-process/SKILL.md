@@ -36,7 +36,7 @@ Each label names an aspect of a message and carries the fields `get_labels` retu
 | `label` | the label's text, which is its whole identity |
 | `type` | `detection` or `derived` |
 | `role` | *detection only* — `category` or `attribute`. May be absent on an older label |
-| `attention` | `none`, `normal` or `high` — used here only to colour the Gmail label |
+| `attention` | `none`, `normal` or `high` — carried for `inbox-labeler-attention`, unused here |
 | `instruction` | how to decide whether it applies, in natural language |
 | `required_labels` | *derived only* — detection labels that must **all** have matched |
 | `recommended_labels` | *derived only* — detection labels offered as context |
@@ -123,12 +123,12 @@ it.
 2. Run `list_labels` and note the ids of `IL/processed`, `IL/no-match` and every resolved
    business label, together with each business label's current Gmail color where it already
    exists. Create any that are missing with `create_label`, passing the resolved name and the
-   color for that label's Attention from the table in
+   color for what that label is from the table in
    [Gmail label colors](#gmail-label-colors) (the `IL` parent is created automatically); create
    `IL/processed` and `IL/no-match` with no color, since they are not business labels. For a
    business label that already exists, compare its current color to that table's value and call
-   `update_label` only when they differ — this is also where a color catches up after its
-   label's Attention changed.
+   `update_label` only when they differ — this is also where an existing label's color catches up
+   after its role was settled or changed.
 3. Find candidate threads with `search_threads`, query
    `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display name.
    If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use `pageSize: 50`.
@@ -253,18 +253,35 @@ carry, like the due date. Read those details as they stood when the email was wr
 
 ## Gmail label colors
 
-Attention decides each business label's **Gmail color** — presentation only. Take it from this
-table and never choose a color by hand:
+What a label **is** decides its business label's **Gmail color** — presentation only. Take it
+from this table and never choose a color by hand:
 
-| Attention | `backgroundColor` | `textColor` |
+| Label | `backgroundColor` | `textColor` |
 | --- | --- | --- |
-| `none` | `#cccccc` | `#000000` |
-| `normal` | `#fce8b3` | `#000000` |
-| `high` | `#efa093` | `#000000` |
+| detection, `role: "category"` | `#a4c2f4` | `#000000` |
+| detection, `role: "attribute"` | `#fce8b3` | `#000000` |
+| derived | `#efa093` | `#000000` |
+| detection with no `role` | `#cccccc` | `#000000` |
+
+These are tiles from Gmail's own label palette rather than free choices, so pass them exactly as
+written — Gmail refuses a color that is not one of its own. The four read as blue, amber, coral
+and grey, which is the same mapping the website shows a label in; the values differ because the
+palettes do, and neither side reads the other.
+
+**Attention has nothing to do with a color.** A `category` is the same blue whether it asks for
+`high`, `normal` or `none`, and so for the other three rows. `attention` is still part of every
+label's configuration and still arrives with it from `get_labels` — it is simply not what a Gmail
+color encodes. What a label asks of you is carried out on the *message* by
+`inbox-labeler-attention`.
+
+A label with no `role` is grey because nobody has settled what it is, not because it asks for
+nothing. Settling the role is a modelling decision for `inbox-labeler-manage`; this run reads the
+role it finds and never fills one in.
 
 Colors are written in step 2 and nowhere else. Compare before writing: **matching already → do
-nothing**. `IL/processed` and `IL/no-match` get no color. If a color update fails, say which
-Gmail label could not be recolored and continue with the rest.
+nothing**. `IL/processed` and `IL/no-match` get no color, because they are not business labels and
+have no role or type of their own. If a color update fails, say which Gmail label could not be
+recolored and continue with the rest.
 
 ## Rules while processing
 

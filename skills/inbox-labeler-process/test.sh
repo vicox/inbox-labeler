@@ -174,6 +174,36 @@ check "the state markers are never recorded, and a no-match message has no call"
     "$(order_check 'are never recorded' 'so it has no call')" "True"
 
 echo
+echo "--- Gmail label colors ---"
+
+# The contract is the mapping and the reason for it: colour follows what a label
+# is, and the four families are exact Gmail palette values. The table is read in
+# document order so a row cannot be silently swapped for another.
+colors=(
+    'What a label **is** decides its business label'
+    'detection, `role: "category"` | `#a4c2f4` | `#000000`'
+    'detection, `role: "attribute"` | `#fce8b3` | `#000000`'
+    'derived | `#efa093` | `#000000`'
+    'detection with no `role` | `#cccccc` | `#000000`'
+)
+check "category is blue, attribute amber, derived coral, a role-less label grey" \
+    "$(order_check "${colors[@]}")" "True"
+check "the values are Gmail palette tiles, passed exactly as written" \
+    "$(order_check 'tiles from Gmail' 'pass them exactly as written')" "True"
+check "attention never decides a business label colour" \
+    "$(order_check 'Attention has nothing to do with a color' \
+        'the same blue whether it asks for `high`, `normal` or `none`')" "True"
+check "a role-less label is grey for want of a decision, not for asking nothing" \
+    "$(order_check 'not because it asks for nothing' 'never fills one in')" "True"
+check "colours are written in one step, and only when they differ" \
+    "$(order_check 'Colors are written in step 2 and nowhere else' \
+        'matching already → do nothing')" "True"
+check "the reserved labels stay uncoloured" \
+    "$(order_check '`IL/processed` and `IL/no-match` get no color')" "True"
+check "attention is carried through the run without being used by it" \
+    "$(order_check 'carried for `inbox-labeler-attention`, unused here')" "True"
+
+echo
 echo "--- what this skill leaves out ---"
 
 check "no label CRUD guidance was carried over" \

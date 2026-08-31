@@ -11,33 +11,34 @@
   --color-ink-faint: #a89e91;
   --color-rule: #e8ded1;
 
-  --color-detection: #f9ebdd;
-  --color-detection-rule: #e9d3bd;
-  --color-detection-card: #fffaf4;
+  /* One family per kind of label, and colour says nothing else. Category is cool
+     and structural, attribute warm, derived a soft coral — all three in the same
+     key as the paper: a panel near 93% lightness, a rule near 84%, a card just off
+     white. Kept low in saturation because a page is mostly these three surfaces.
 
-  --color-derived: #e6f0e8;
-  --color-derived-rule: #c9dfcf;
-  --color-derived-card: #f9fdfa;
+     A detection label whose role nobody has settled borrows none of them. It takes
+     the page's own rule and a plain lift instead, because it is not a fourth kind
+     of label — it is one nobody has sorted, and giving it a colour of its own
+     would say otherwise.
 
-  /* What a label asks of you, where it shows on the card at all.
-     Only `none` does. Receding is a property of the whole card rather than a mark
-     on it, so each `-quiet` value is its column's own, halfway to the panel
-     behind it — surface and border alike, so the card settles toward its
-     background as a whole instead of one part of it drifting. Staying inside the
-     column's palette is the point: an earlier attempt used a neutral grey, which
-     left the palette and read as switched off rather than as not urgent. Nothing
-     here fades the text or the icons.
-     `high` and `normal` share the plain card. A tinted surface for `high` scaled
-     badly — six of them read as a page in another colour — and a gold accent bar
-     that replaced it competed with the star for the same job. The star says it
-     already, and one signal is enough. */
-  --color-detection-card-quiet: #fcf2e8;
-  --color-detection-rule-quiet: #f1dfcd;
-  --color-derived-card-quiet: #f0f6f1;
-  --color-derived-rule-quiet: #d8e8dc;
+     What a label asks of you is deliberately not in here. Attention is a mark on
+     the card and a line in its detail panel. An earlier version also dimmed the
+     surface of a label asking for none, which spent the one colour channel on two
+     different questions and left the surface unable to answer either on its own. */
+  --color-category: #e8eff7;
+  --color-category-rule: #c7d9ea;
+  --color-category-card: #f8fbfe;
 
-  /* Warm, so the peach and mint keep their colour under the detail overlay
-     instead of turning grey. */
+  --color-attribute: #f9ebdd;
+  --color-attribute-rule: #e9d3bd;
+  --color-attribute-card: #fffaf4;
+
+  --color-derived: #f7ddd9;
+  --color-derived-rule: #e9bdb5;
+  --color-derived-card: #fffaf8;
+
+  /* Warm, so the three panels keep their colour under the detail overlay instead
+     of turning grey. */
   --color-scrim: rgba(120, 88, 52, 0.16);
 
   --color-thread: #c2ae98;

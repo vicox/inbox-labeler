@@ -161,14 +161,20 @@ marked read, because `none` is the only thing either label actually asked for. A
 labels comes out `normal`, so it is left alone. The behaviours above are fixed and not
 configurable.
 
-A label's own Attention also sets its Gmail label's **color**, using Gmail's muted palette so
-it stays out of the way — `none` light gray, `normal` muted yellow, `high` muted red, from the
-one mapping the processing skill keeps for it. Color is purely
-presentation: it never feeds back into what a label detects or how attention is computed, and
-message processing never recolors a message — only the Gmail label itself, and only Detection
-and Derived Labels get one; the reserved system labels never do. It's set the moment a Gmail
-label is created and kept in sync whenever a label's Attention changes, so no color is ever
-chosen or edited by hand.
+**Color says what a label is, and nothing else.** A Category is blue, an Attribute amber, a
+Derived Label coral, and a Detection Label whose role nobody has settled stays grey — from the
+one mapping the processing skill keeps, in tiles from Gmail's own palette. Attention plays no
+part in it: a Category asking for `high` is the same blue as one asking for `none`. Attention is
+still part of a label's own configuration, and still what decides whether a message gets starred
+or marked read — it is simply not what a Gmail label's color encodes. The website groups labels
+by the same four families and in the same four colors, though the hex values differ because the
+palettes do.
+
+Color is purely presentation: it never feeds back into what a label detects, and processing never
+recolors a message — only the Gmail label itself, and only Detection and Derived Labels get one;
+the reserved system labels never do. It's set the moment a Gmail label is created and brought up
+to date the next time processing runs after a label's role changes, so no color is ever chosen or
+edited by hand.
 
 Inbox Labeler resolves each label to a Gmail label inside its own `IL/` namespace whenever it
 talks to Gmail — `IL/` itself is never part of a label's identity and is never stored anywhere.

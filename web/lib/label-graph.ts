@@ -114,40 +114,26 @@ export type LabelGroup = {
   title: string;
   /** One short line saying what question the group answers. */
   note: string;
-  /** Which palette the group borrows. `no-role` borrows none. */
-  tone: "detection" | "derived" | "neutral";
   labels: Label[];
 };
 
 const GROUPS: readonly Omit<LabelGroup, "labels">[] = [
-  {
-    key: "category",
-    title: "Categories",
-    note: "What is this email about?",
-    tone: "detection",
-  },
-  {
-    key: "attribute",
-    title: "Attributes",
-    note: "What else is true about it?",
-    tone: "detection",
-  },
-  {
-    key: "derived",
-    title: "Derived",
-    note: "What follows from those facts?",
-    tone: "derived",
-  },
-  {
-    key: "no-role",
-    title: "No role",
-    note: "Not yet a category or an attribute.",
-    tone: "neutral",
-  },
+  { key: "category", title: "Categories", note: "What is this email about?" },
+  { key: "attribute", title: "Attributes", note: "What else is true about it?" },
+  { key: "derived", title: "Derived", note: "What follows from those facts?" },
+  { key: "no-role", title: "No role", note: "Not yet a category or an attribute." },
 ];
 
-/** Which group a label belongs to. Total: every label lands in exactly one. */
-function groupOf(label: Label): LabelGroupKey {
+/**
+ * Which group a label belongs to. Total: every label lands in exactly one.
+ *
+ * Exported because the panels are not the only thing that follows from it: a
+ * card's own colour comes from here too, which is what makes it impossible for a
+ * card to be tinted as one kind of label while sitting in the panel of another.
+ * A label's `attention` is not a parameter and must never become one — what a
+ * label asks of you is a different question from what kind of label it is.
+ */
+export function groupOf(label: Label): LabelGroupKey {
   if (label.type === "derived") return "derived";
   return label.role ?? "no-role";
 }

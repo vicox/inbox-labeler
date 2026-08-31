@@ -5,6 +5,7 @@ import {
   byRelevance,
   connectionsOf,
   groupLabels,
+  groupOf,
   type Attention,
   type Label,
 } from "./label-graph.ts";
@@ -222,4 +223,33 @@ test("a derived label keeps the references the card and the detail read", () => 
 
 test("no labels means no groups, so the page falls to its own empty state", () => {
   assert.deepEqual(groupLabels([], () => 0), []);
+});
+
+/**
+ * `groupOf` is what the panel, the card surface and the reference chip all colour
+ * from, so these are the colour tests: the four structural families, and the one
+ * thing that must never reach them.
+ *
+ * The CSS values themselves are not asserted. They live in one exhaustive
+ * `Record<LabelGroupKey, string>` per surface, which the compiler already checks
+ * for a missing family — pinning the hex codes here would only make a designer
+ * pick a shade the tests agree with.
+ */
+test("a structural family per kind of label, and no fifth", () => {
+  assert.equal(groupOf(detection("Travel", "category")), "category");
+  assert.equal(groupOf(detection("Imminent", "attribute")), "attribute");
+  assert.equal(groupOf(derivedLabel("Large invoice")), "derived");
+  // Modelled before roles existed: it keeps the page default rather than picking
+  // up a colour of its own, and nothing here guesses one from the name.
+  assert.equal(groupOf(detection("Newsletter")), "no-role");
+});
+
+test("attention never decides the structural family", () => {
+  for (const attention of ["high", "normal", "none"] as const) {
+    for (const role of ["category", "attribute"] as const) {
+      assert.equal(groupOf({ ...detection("X", role), attention }), role);
+    }
+    assert.equal(groupOf({ ...derivedLabel("D"), attention }), "derived");
+    assert.equal(groupOf({ ...detection("L"), attention }), "no-role");
+  }
 });

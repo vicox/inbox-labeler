@@ -427,17 +427,27 @@ is meant if the reference is ambiguous. Reserved system labels cannot be deleted
 
 **Labelling only ever moves forward.** A message that has been processed is never revisited, so
 changing what a label detects changes what Inbox Labeler will apply **next** and leaves the
-mailbox as it is. An edited instruction does not re-judge a message it was applied to. A changed role does not
-re-read facts already recorded, does not touch a Gmail label and does not adjust a derived label
-that references it. A deleted
-label does not come off the mail carrying its Gmail label. A changed reference list does not undo
-an interpretation it fed. A rename is the same: references to it are rewritten, and the Gmail
-label already sitting on a message is not. There is no backfill and no cleanup step, and the
-business labels already on a message stay as they are.
+mailbox as it is. An edited instruction does not re-judge a message it was applied to. A changed
+role does not re-read facts already recorded and does not adjust a derived label that references
+it. A deleted label does not come off the mail carrying its Gmail label. A changed reference list
+does not undo an interpretation it fed. A rename is the same: references to it are rewritten, and
+the Gmail label already sitting on a message is not. There is no backfill and no cleanup step, and
+the business labels already on a message stay as they are.
+
+Nothing in this skill reaches Gmail at all. It writes label definitions through the Inbox Labeler
+tools and calls no Gmail tool: it never searches mail, never reads a thread, and never puts a
+Gmail label on a message or takes one off.
 
 So when a user expects a change of this kind to reach mail they have already had labelled — "now
 fix the old ones" — **say plainly that it will not**, and that it applies from the next processing
 run onwards.
+
+**A Gmail label's colour is not classification.** It is metadata on the label itself rather than a
+judgement about any message, and `inbox-labeler-process` brings it in line with the label's
+current role or type whenever it next runs. So settling or changing a role does eventually change
+that Gmail label's colour — on a later processing run, never from here. Nothing about a message
+moves with it: no mail is re-read, no business label is added to or taken off anything already
+processed, and nothing is backfilled or cleaned up.
 
 **Attention metadata is the exception.** `attention` is not part of what a label detects: it is
 what the label *asks for*, and `inbox-labeler-attention` reads it fresh from `get_labels` every
