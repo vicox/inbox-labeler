@@ -15,6 +15,15 @@ export type Attention = (typeof ATTENTION_ORDER)[number];
 export type Label = {
   label: string;
   type: "detection" | "derived";
+  /**
+   * Detection labels only: whether the fact is a category — what kind of email
+   * this is — or an attribute — what it contains, indicates or requires.
+   *
+   * Optional, because a detection label created before the distinction existed has
+   * none until somebody decides with the user which it is. Anything rendering it
+   * has to cope with its absence rather than assume a default.
+   */
+  role?: "category" | "attribute";
   attention: Attention;
   instruction: string;
   /** Derived labels only: the detection labels that must all have matched. */

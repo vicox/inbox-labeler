@@ -94,10 +94,36 @@ A detection label reads the email directly and decides. Here is what one looks l
 {
   "label": "Delivery",
   "type": "detection",
+  "role": "category",
   "attention": "normal",
   "instruction": "The message is a shipping or delivery status update for an order (e.g. 'out for delivery', 'delivered', 'shipped', tracking updates from a carrier or retailer like Amazon, DHL, UPS)."
 }
 ```
+
+**`role` says what kind of fact the label found**, and every newly created detection label must
+state one:
+
+| Role | The question it answers | Examples |
+| --- | --- | --- |
+| `category` | *What kind or domain of email is this?* | `Delivery`, `Invoice`, `Newsletter`, `Travel` |
+| `attribute` | *What does this email contain, indicate, or require?* | `Action required`, `Deadline`, `Large amount`, `Marketing` |
+
+The test is which question the instruction is deciding, not what part of speech the name is:
+`Large amount` is an attribute because an amount is something an email *contains* rather than a
+kind of email it *is*. Neither role is exclusive — one message may match several categories and
+several attributes — and **the role does not affect matching**: each detection label is still
+decided on its own, by its own instruction. It changes how a matched fact reads, not whether it
+matched.
+
+A detection label modelled before roles existed has **no `role` field**, and that is a supported
+state rather than a broken one: it is read, matched and referenced exactly as any other. The
+missing field means nobody has decided yet — nothing is guessed from the label's name or
+instruction, nothing is backfilled, and editing something else about such a label leaves the gap
+alone. Settling it is one explicit change, made with the user; see
+[`inbox-labeler-manage`](skills/inbox-labeler-manage/SKILL.md).
+
+Derived labels have no role at all, and are refused one — a derived label is already an
+interpretation of detection facts, so there is no kind-of-fact for it to be.
 
 Each label also carries an **attention** level — what it asks of you; see
 [Attention](#attention) below.
@@ -680,11 +706,19 @@ provider-qualified subject the OAuth boundary produces — is the ownership boun
 and it leads every key:
 
 ```text
-inbox_labels                  (user_id, label)  policy: type, attention, instruction
+inbox_labels                  (user_id, label)  type, role, attention, instruction
 inbox_label_references        which detection labels a derived label builds on
 inbox_label_daily_matches     (user_id, label, day) → count
 inbox_label_match_state       (user_id, label) → last_matched_at
 ```
+
+`role` is `category` or `attribute`, and is the one **nullable** column here. New detection
+labels must state it — the code enforces that on create, because a column cannot express
+"required from now on" — while a label written before the distinction existed keeps a null, which
+means unmodelled rather than defaulted. A derived label may never have one: two CHECK constraints
+carry both halves, `role IS NULL OR role IN ('category', 'attribute')` and
+`type = 'detection' OR role IS NULL`. Nothing backfills the nulls and nothing infers a value from
+a label's name or instruction; the role also takes no part in matching.
 
 The store is opened *for* a user and takes no user argument afterwards, so no tool
 schema has a `user_id` field and there is nowhere for a client to name someone else.

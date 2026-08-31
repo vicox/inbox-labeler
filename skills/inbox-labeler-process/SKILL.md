@@ -35,6 +35,7 @@ Each label names an aspect of a message and carries the fields `get_labels` retu
 | --- | --- |
 | `label` | the label's text, which is its whole identity |
 | `type` | `detection` or `derived` |
+| `role` | *detection only* — `category` or `attribute`. May be absent on an older label |
 | `attention` | `none`, `normal` or `high` — used here only to colour the Gmail label |
 | `instruction` | how to decide whether it applies, in natural language |
 | `required_labels` | *derived only* — detection labels that must **all** have matched |
@@ -44,6 +45,22 @@ Each label names an aspect of a message and carries the fields `get_labels` retu
 reads the email and decides. A derived label does not rediscover the email: it reads the email
 *together with the detection labels that already matched* and decides what that combination
 means.
+
+**A detection label's `role` says what kind of fact it is, and changes nothing about how it is
+decided.** A `category` names a kind of mail — `Invoice`, `Delivery`, `Travel`. An `attribute`
+names something the mail contains, indicates or requires — `Deadline`, `Large amount`,
+`Action required`. Read it as context when a derived label needs to know what a matched fact
+*was*; do not read it as an instruction to this run. Specifically:
+
+- Neither role is exclusive. A message may match several categories and several attributes, and
+  every one of them contributes its Gmail label.
+- There is no primary category and no primary attribute. Nothing here picks one.
+- A message is not required to match a category, or an attribute, or one of each. Matching
+  nothing at all is a normal outcome.
+- `IL/no-match` still means no *detection* label matched, whatever their roles.
+- A label with no role is a label modelled before the distinction existed. Evaluate it exactly as
+  any other detection label; never infer a role for it, and never treat its absence as a reason to
+  skip it or to label it differently.
 
 `label` holds the label only. `IL/` is Inbox Labeler's Gmail namespace, added only when talking
 to Gmail: **`Delivery arriving soon` resolves to the Gmail label `IL/Delivery arriving soon`,
@@ -131,7 +148,8 @@ it.
    label's `instruction` is the rule** — it is read as a prompt, not matched as a pattern, and
    it is the whole of what decides. Never classify from a label's name, never add criteria of
    your own, and never pick a single best label: every label gets its own MATCH or NO MATCH, and
-   any number of them may match. Subject, sender and snippet are usually enough; use the full
+   any number of them may match. A label's `role` takes no part in that decision — a category and
+   an attribute are judged the same way, by their own instructions. Subject, sender and snippet are usually enough; use the full
    body from `get_thread` when they are not. The result is the complete set of triggered
    detection labels — empty, one, several, or all. Note one short reason per match: that is the
    **evidence**, and the derived stage needs it.

@@ -3,6 +3,7 @@ import type { AuthenticatedUser } from "../../identity.ts";
 import {
   byLabel,
   checkAttention,
+  checkRole,
   checkInstruction,
   checkLabelText,
   checkReferencesAllowed,
@@ -74,9 +75,9 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
 
         try {
           await tx.query(
-            `INSERT INTO inbox_labels (user_id, label, type, attention, instruction)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [owner, entry.label, entry.type, entry.attention, entry.instruction],
+            `INSERT INTO inbox_labels (user_id, label, type, role, attention, instruction)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [owner, entry.label, entry.type, entry.role ?? null, entry.attention, entry.instruction],
           );
         } catch (error) {
           // The unique index is the real arbiter of identity, so a collision that
@@ -103,6 +104,10 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
           label: changes.label ?? current.label,
           instruction: changes.instruction ?? current.instruction,
           type: changes.type ?? current.type,
+          // Not defaulted to `current.role`: `checkRole` needs to see that the
+          // caller said nothing, so it can leave an unmodelled label unmodelled
+          // instead of treating silence as a decision.
+          role: changes.role,
           attention: changes.attention ?? current.attention,
           required_labels: changes.required_labels ?? current.required_labels,
           recommended_labels: changes.recommended_labels ?? current.recommended_labels,
@@ -117,9 +122,16 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
         try {
           await tx.query(
             `UPDATE inbox_labels
-                SET label = $3, attention = $4, instruction = $5, updated_at = now()
+                SET label = $3, role = $4, attention = $5, instruction = $6, updated_at = now()
               WHERE user_id = $1 AND label = $2`,
-            [owner, current.label, entry.label, entry.attention, entry.instruction],
+            [
+              owner,
+              current.label,
+              entry.label,
+              entry.role ?? null,
+              entry.attention,
+              entry.instruction,
+            ],
           );
         } catch (error) {
           if (isSqlState(error, UNIQUE_VIOLATION)) throw labelExists(entry.label);
@@ -242,7 +254,13 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
 
 // --- reading ---------------------------------------------------------------
 
-type LabelRow = { label: string; type: LabelType; attention: string; instruction: string };
+type LabelRow = {
+  label: string;
+  type: LabelType;
+  role: string | null;
+  attention: string;
+  instruction: string;
+};
 type ReferenceRow = { label: string; kind: "required" | "recommended"; target: string };
 
 /**
@@ -254,7 +272,7 @@ type ReferenceRow = { label: string; kind: "required" | "recommended"; target: s
  */
 async function readLabels(sql: Transaction, owner: string): Promise<Label[]> {
   const rows = await sql.query<LabelRow>(
-    `SELECT label, type, attention, instruction FROM inbox_labels WHERE user_id = $1`,
+    `SELECT label, type, role, attention, instruction FROM inbox_labels WHERE user_id = $1`,
     [owner],
   );
   const references = await sql.query<ReferenceRow>(
@@ -267,6 +285,9 @@ async function readLabels(sql: Transaction, owner: string): Promise<Label[]> {
     const entry: Label = {
       label: row.label,
       type: row.type,
+      // A null role is a detection label nobody has modelled yet, which reads back
+      // as an absent field rather than as an error or a default.
+      ...(row.role ? { role: checkRole(row.role, row.type, undefined) } : {}),
       attention: checkAttention(row.attention),
       instruction: row.instruction,
     };
@@ -342,12 +363,20 @@ async function validate(
   const instruction = checkInstruction(draft.instruction, type);
   checkReferencesAllowed(type, draft);
 
+  // Last of the value checks, so a caller who got something more fundamental wrong
+  // hears about that instead: an empty instruction is a plainer problem than an
+  // unstated role, and being told the plainer one first is more use. `own` is
+  // undefined on a create, which is what makes the role required there and optional
+  // on an update.
+  const role = checkRole(draft.role, type, own);
+
   const clash = existing.find(
     (other) => (!own || other.label !== own.label) && sameLabel(other.label, label),
   );
   if (clash) throw labelExists(clash.label);
 
   const entry: Label = { label, type, attention, instruction };
+  if (role) entry.role = role;
   if (type === "derived") {
     entry.required_labels = resolveReferences(existing, own, draft.required_labels, "required_labels");
     entry.recommended_labels = resolveReferences(

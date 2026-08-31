@@ -8,6 +8,11 @@ import type { SchemaModule } from "../../db/migrate.ts";
  * belongs in a label definition, and a label with no history should have no
  * history rather than a row full of nulls.
  *
+ * One column is deliberately nullable: `inbox_labels.role`, which says whether a
+ * detection label's fact is a category or an attribute. It arrived after accounts
+ * had labels in them, and a null there means "nobody has decided yet" rather than
+ * a default — see migration 2.
+ *
  * ## Why the label text is the key
  *
  * A label's text is its only identifier, in the files and here. There is no
@@ -135,6 +140,34 @@ export const INBOX_SCHEMA: SchemaModule = {
             FOREIGN KEY (user_id, label) REFERENCES inbox_labels (user_id, label)
             ON UPDATE CASCADE ON DELETE CASCADE
         );
+      `,
+    },
+    {
+      // Category or attribute, for detection labels.
+      //
+      // Nullable, and that is the migration: an account that predates the
+      // distinction keeps working, its labels read and match exactly as before, and
+      // nothing here guesses which role each of them plays. Only new detection
+      // labels are required to say, which is a rule the code enforces on create —
+      // the column cannot express "required from now on".
+      //
+      // What the database does carry is that the value is one of two, and that a
+      // derived label never has one at all. Backfilling is a modelling
+      // conversation with the user, not a statement.
+      version: 2,
+      sql: `
+        ALTER TABLE inbox_labels ADD COLUMN role text;
+
+        ALTER TABLE inbox_labels
+          ADD CONSTRAINT inbox_labels_role
+          CHECK (role IS NULL OR role IN ('category', 'attribute'));
+
+        -- A derived label is already an interpretation of detection facts, so there
+        -- is no kind-of-fact for it to be. Enforced here as well as in the code,
+        -- because it is an invariant about the row rather than about a request.
+        ALTER TABLE inbox_labels
+          ADD CONSTRAINT inbox_labels_role_detection_only
+          CHECK (type = 'detection' OR role IS NULL);
       `,
     },
   ],

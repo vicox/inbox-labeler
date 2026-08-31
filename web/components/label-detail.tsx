@@ -48,8 +48,15 @@ export function LabelDetail({ label, feeds, onClose }: Props) {
             <h2 className="font-display text-[27px] leading-tight tracking-[-0.01em]">
               {label.label}
             </h2>
+            {/* The role rides the kind, because it refines it: "Detection · category"
+                reads as one statement about what this label is. A detection label
+                from before roles existed simply says "Detection", which is the truth
+                about it — nothing is guessed to fill the gap. */}
             <p className="mt-1.5 text-[13px] text-ink-soft">
               {label.type === "detection" ? "Detection" : "Derived"}
+              {label.type === "detection" && label.role && (
+                <span className="text-ink-faint"> · {label.role}</span>
+              )}
               <span className="text-ink-faint"> · attention {label.attention}</span>
             </p>
           </div>

@@ -490,14 +490,10 @@ test("signed out, the home page is the landing page and reads nobody's labels", 
 test("the home page shows the signed-in account's labels and no others", async () => {
   // Created the way an MCP client creates them, which is the point: this is not a
   // second store with its own idea of who owns what.
-  await mcp("google:alpha", "create_label", {
-    label: "Alpha only",
-    instruction: "Alpha's own label.",
-  });
-  await mcp("google:beta", "create_label", {
-    label: "Beta only",
-    instruction: "Beta's own label.",
-  });
+  await mcp("google:alpha", "create_label", { label: "Alpha only",
+    instruction: "Alpha's own label.", role: "category" });
+  await mcp("google:beta", "create_label", { label: "Beta only",
+    instruction: "Beta's own label.", role: "category" });
 
   const alpha = await signIn(account("alpha", "alpha@example.com"));
   assert.deepEqual(
@@ -517,8 +513,8 @@ test("the home page shows the signed-in account's labels and no others", async (
 });
 
 test("nothing a request carries can name whose labels are read", async () => {
-  await mcp("google:gamma", "create_label", { label: "Gamma only", instruction: "Gamma's." });
-  await mcp("google:delta", "create_label", { label: "Delta only", instruction: "Delta's." });
+  await mcp("google:gamma", "create_label", { label: "Gamma only", instruction: "Gamma's.", role: "category" });
+  await mcp("google:delta", "create_label", { label: "Delta only", instruction: "Delta's.", role: "category" });
 
   // Every field somebody might hope is load-bearing, in the callback that mints
   // the session: an address, an owner, a user id, a subject.
@@ -540,8 +536,8 @@ test("nothing a request carries can name whose labels are read", async () => {
 });
 
 test("signing in as another account in one browser replaces the session", async () => {
-  await mcp("google:epsilon", "create_label", { label: "Epsilon only", instruction: "Epsilon's." });
-  await mcp("google:zeta", "create_label", { label: "Zeta only", instruction: "Zeta's." });
+  await mcp("google:epsilon", "create_label", { label: "Epsilon only", instruction: "Epsilon's.", role: "category" });
+  await mcp("google:zeta", "create_label", { label: "Zeta only", instruction: "Zeta's.", role: "category" });
 
   const epsilon = await signIn(account("epsilon", "epsilon@example.com"));
   // The browser still holds epsilon's cookie while it signs in as zeta, which is
@@ -555,8 +551,18 @@ test("signing in as another account in one browser replaces the session", async 
 test("one Google account is one owner, whether it arrives by MCP or by browser", async () => {
   const SUB = "parity";
   const labels = [
-    { label: "Invoice", instruction: "The message is an invoice.", attention: "high" },
-    { label: "Newsletter", instruction: "The message is a newsletter.", attention: "none" },
+    {
+      label: "Invoice",
+      instruction: "The message is an invoice.",
+      attention: "high",
+      role: "category",
+    },
+    {
+      label: "Newsletter",
+      instruction: "The message is a newsletter.",
+      attention: "none",
+      role: "category",
+    },
   ];
   for (const label of labels) await mcp(`google:${SUB}`, "create_label", label);
   await mcp(`google:${SUB}`, "create_label", {
@@ -798,8 +804,8 @@ test("signing out fails visibly when the session cannot be deleted", async () =>
 // --- two tenants, side by side ---------------------------------------------
 
 test("two tenants resolve independently in one process, in either order", async () => {
-  await mcp("google:tenant-one", "create_label", { label: "One", instruction: "One's." });
-  await mcp("google:tenant-two", "create_label", { label: "Two", instruction: "Two's." });
+  await mcp("google:tenant-one", "create_label", { label: "One", instruction: "One's.", role: "category" });
+  await mcp("google:tenant-two", "create_label", { label: "Two", instruction: "Two's.", role: "category" });
 
   const one = await signIn(account("tenant-one", "one@example.com"));
   const two = await signIn(account("tenant-two", "two@example.com"));
@@ -863,7 +869,7 @@ test("the signed-in page reads the owner's matches, and only theirs", async () =
   ] as const) {
     const visitor = await signedInVisitor(session);
     const store = await inboxStore(visitor!.user);
-    await store.createLabel({ label: "Shared", instruction: "Both accounts have one." });
+    await store.createLabel({ label: "Shared", instruction: "Both accounts have one.", role: "category" });
     for (const day of days) await store.recordMatches(["Shared"], `${day}T10:00:00Z`);
   }
 

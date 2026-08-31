@@ -134,34 +134,45 @@ check "the table holds exactly fifteen labels" \
 check "eleven of them are detection" "$(grep -cF '| `detection` |' "$SKILL")" "11"
 check "four of them are derived"     "$(grep -cF '| `derived` |' "$SKILL")" "4"
 check "every detection label is at normal attention" \
-    "$(grep -cF '| `detection` | `normal` |' "$SKILL")" "11"
+    "$(grep -cE '^\| [0-9]+ \| `[^`]+` \| `detection` \| `(category|attribute)` \| `normal` \| — \|$' "$SKILL")" \
+    "11"
+
+# The roles, as counts and then as rows. Four kinds of mail and seven facts that can
+# turn up inside any of them — a set that drifted to eleven categories would still
+# pass every other check here.
+check "four of the detection labels are categories" \
+    "$(grep -cF '| `detection` | `category` |' "$SKILL")" "4"
+check "seven of them are attributes" \
+    "$(grep -cF '| `detection` | `attribute` |' "$SKILL")" "7"
+check "no derived label carries a role" \
+    "$(grep -cE '^\| [0-9]+ \| `[^`]+` \| `derived` \| — \|' "$SKILL")" "4"
 
 detection=(
-    '| 1 | `Action required` | `detection` | `normal` | — |'
-    '| 2 | `Question` | `detection` | `normal` | — |'
-    '| 3 | `Imminent` | `detection` | `normal` | — |'
-    '| 4 | `Deadline` | `detection` | `normal` | — |'
-    '| 5 | `Cancellation` | `detection` | `normal` | — |'
-    '| 6 | `Invoice` | `detection` | `normal` | — |'
-    '| 7 | `Large amount` | `detection` | `normal` | — |'
-    '| 8 | `Delivery` | `detection` | `normal` | — |'
-    '| 9 | `Marketing` | `detection` | `normal` | — |'
-    '| 10 | `Newsletter` | `detection` | `normal` | — |'
-    '| 11 | `Travel` | `detection` | `normal` | — |'
+    '| 1 | `Action required` | `detection` | `attribute` | `normal` | — |'
+    '| 2 | `Question` | `detection` | `attribute` | `normal` | — |'
+    '| 3 | `Imminent` | `detection` | `attribute` | `normal` | — |'
+    '| 4 | `Deadline` | `detection` | `attribute` | `normal` | — |'
+    '| 5 | `Cancellation` | `detection` | `attribute` | `normal` | — |'
+    '| 6 | `Invoice` | `detection` | `category` | `normal` | — |'
+    '| 7 | `Large amount` | `detection` | `attribute` | `normal` | — |'
+    '| 8 | `Delivery` | `detection` | `category` | `normal` | — |'
+    '| 9 | `Marketing` | `detection` | `attribute` | `normal` | — |'
+    '| 10 | `Newsletter` | `detection` | `category` | `normal` | — |'
+    '| 11 | `Travel` | `detection` | `category` | `normal` | — |'
 )
 check "the eleven detection labels are the agreed ones, in the agreed order" \
     "$(order_check "${detection[@]}")" "True"
 
 check "Large invoice requires Invoice and Large amount, at high" \
-    "$(order_check '| 12 | `Large invoice` | `derived` | `high` | `Invoice`, `Large amount` |')" "True"
+    "$(order_check '| 12 | `Large invoice` | `derived` | — | `high` | `Invoice`, `Large amount` |')" "True"
 check "Delivery arriving soon requires Delivery and Imminent, at high" \
-    "$(order_check '| 13 | `Delivery arriving soon` | `derived` | `high` | `Delivery`, `Imminent` |')" \
+    "$(order_check '| 13 | `Delivery arriving soon` | `derived` | — | `high` | `Delivery`, `Imminent` |')" \
     "True"
 check "Promotional newsletter requires Marketing and Newsletter, at none" \
-    "$(order_check '| 14 | `Promotional newsletter` | `derived` | `none` | `Marketing`, `Newsletter` |')" \
+    "$(order_check '| 14 | `Promotional newsletter` | `derived` | — | `none` | `Marketing`, `Newsletter` |')" \
     "True"
 check "Travel disruption requires Travel and Cancellation, at high" \
-    "$(order_check '| 15 | `Travel disruption` | `derived` | `high` | `Travel`, `Cancellation` |')" \
+    "$(order_check '| 15 | `Travel disruption` | `derived` | — | `high` | `Travel`, `Cancellation` |')" \
     "True"
 check "no derived label takes recommended_labels" \
     "$(order_check 'None of the four derived labels takes `recommended_labels`; pass an empty list')" \
@@ -178,7 +189,8 @@ check "detection labels are created before derived ones, so every reference exis
         'detection labels 1–11 before derived labels 12–15' \
         'a reference to a label that does not exist yet is rejected')" "True"
 check "the create_label contract carries type, attention and both reference lists" \
-    "$(order_check 'create_label   label:       "Invoice"' 'attention:   "normal"' \
+    "$(order_check 'create_label   label:       "Invoice"' 'role:        "category"' \
+        'attention:   "normal"' \
         'create_label   label:               "Large invoice"' 'type:                "derived"' \
         'attention:           "high"' 'required_labels:     ["Invoice", "Large amount"]' \
         'recommended_labels:  []')" "True"

@@ -2,7 +2,7 @@ import { database } from "../db.ts";
 import type { SqlDriver } from "../db/driver.ts";
 import { prepareSchema } from "../db/migrate.ts";
 import type { AuthenticatedUser } from "../identity.ts";
-import type { Attention, Label, LabelType, ReferenceField } from "./labels.ts";
+import type { Attention, DetectionRole, Label, LabelType, ReferenceField } from "./labels.ts";
 import type { Matches } from "./matches.ts";
 
 /**
@@ -27,6 +27,8 @@ export type LabelDraft = {
   label: unknown;
   instruction: unknown;
   type?: unknown;
+  /** Detection labels only, and required for a new one: `category` or `attribute`. */
+  role?: unknown;
   attention?: unknown;
   required_labels?: unknown;
   recommended_labels?: unknown;
@@ -43,6 +45,13 @@ export type LabelChanges = {
   label?: unknown;
   instruction?: unknown;
   type?: unknown;
+  /**
+   * Detection labels only. Unlike `type`, a role may be changed — `category` and
+   * `attribute` are a modelling judgement the user is allowed to revise. Absent
+   * leaves it alone, which is what lets a label from before the distinction be
+   * edited without being forced to declare one.
+   */
+  role?: unknown;
   attention?: unknown;
   required_labels?: unknown;
   recommended_labels?: unknown;
@@ -83,7 +92,7 @@ export type ProductStore = {
 };
 
 /** Re-exported so a caller needs one import to work with what these return. */
-export type { Attention, Label, LabelType, ReferenceField, Matches };
+export type { Attention, DetectionRole, Label, LabelType, ReferenceField, Matches };
 
 /**
  * Opens the store for one authenticated user.

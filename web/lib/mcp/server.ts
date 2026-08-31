@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AuthenticatedUser } from "../identity.ts";
-import { ATTENTION_LEVELS, LABEL_TYPES, LabelError } from "../inbox/labels.ts";
+import { ATTENTION_LEVELS, DETECTION_ROLES, LABEL_TYPES, LabelError } from "../inbox/labels.ts";
 import type { ProductStore } from "../inbox/store.ts";
 
 /**
@@ -77,6 +77,17 @@ const labelType = z
       "required_labels and recommended_labels. A label's type cannot be changed later.",
   );
 
+const detectionRole = z
+  .enum(DETECTION_ROLES)
+  .describe(
+    "Detection labels only, and required when creating one. What kind of fact the label " +
+      "detects: 'category' is what kind or domain of email this is (Invoice, Delivery, " +
+      "Newsletter, Travel); 'attribute' is what the email contains, indicates or requires " +
+      "(Action required, Question, Deadline, Large amount). Neither is exclusive — one email " +
+      "may match several categories and several attributes — and the role does not affect " +
+      "whether a label matches, only how the fact reads. May be changed later, unlike type.",
+  );
+
 const attention = z
   .enum(ATTENTION_LEVELS)
   .describe(
@@ -136,9 +147,11 @@ export function inboxLabelerMcpServer(session: McpSession): McpServer {
     {
       title: "List labels",
       description:
-        "Every label this user has defined: its text, type, attention level, instruction and — " +
-        "for derived labels — the detection labels it builds on. A user who has defined none gets " +
-        "an empty list, which is the normal state for a new account.",
+        "Every label this user has defined: its text, type, attention level, instruction, the " +
+        "role for a detection label, and — for derived labels — the detection labels it builds " +
+        "on. A user who has defined none gets an empty list, which is the normal state for a new " +
+        "account. A detection label created before roles existed has no role field; that means " +
+        "nobody has decided whether it is a category or an attribute, not that it is broken.",
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => attempt(async () => ({ labels: await store.labels() })),
@@ -152,11 +165,14 @@ export function inboxLabelerMcpServer(session: McpSession): McpServer {
         "Define a new label. The label text must be unique for this user, ignoring case. " +
         "Detection labels are the default and read an email directly; a derived label needs " +
         "type 'derived' and names existing detection labels in required_labels. Reference lists " +
-        "may only name detection labels — there is no chaining from one derived label to another.",
+        "may only name detection labels — there is no chaining from one derived label to another. " +
+        "A detection label must also say whether its fact is a category or an attribute; a " +
+        "derived label must not, because it is already an interpretation of detection facts.",
       inputSchema: z.object({
         label: labelText,
         instruction,
         type: labelType.optional(),
+        role: detectionRole.optional(),
         attention: attention.optional(),
         required_labels: requiredLabels.optional(),
         recommended_labels: recommendedLabels.optional(),
@@ -173,7 +189,10 @@ export function inboxLabelerMcpServer(session: McpSession): McpServer {
       description:
         "Change a label. Pass new_label to rename it — every reference to it from other labels, " +
         "and its whole match history, follow the new name in one step. A label's type is " +
-        "immutable. Passing required_labels or recommended_labels replaces the stored list rather " +
+        "immutable, but a detection label's role is not: pass role to give one to a label that " +
+        "has none, or to change a category into an attribute or back. Leaving role out changes " +
+        "nothing about it, so a label from before roles existed can be edited without being " +
+        "given one. Passing required_labels or recommended_labels replaces the stored list rather " +
         "than adding to it, so an empty array clears it.",
       inputSchema: z.object({
         label: labelText.describe(
@@ -184,6 +203,7 @@ export function inboxLabelerMcpServer(session: McpSession): McpServer {
           .optional(),
         instruction: instruction.optional(),
         type: labelType.optional(),
+        role: detectionRole.optional(),
         attention: attention.optional(),
         required_labels: requiredLabels.optional(),
         recommended_labels: recommendedLabels.optional(),

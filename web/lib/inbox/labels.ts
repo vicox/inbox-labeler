@@ -33,6 +33,26 @@ export type LabelType = (typeof LABEL_TYPES)[number];
 export const DEFAULT_TYPE: LabelType = "detection";
 
 /**
+ * What a detection label's fact *is*, which is a different question from how it
+ * was found.
+ *
+ * A category answers "what kind of email is this" — `Invoice`, `Delivery`,
+ * `Newsletter`, `Travel`. An attribute answers "what does this email contain,
+ * indicate or require" — `Action required`, `Deadline`, `Large amount`. The
+ * difference is which question the label's own instruction is deciding, not which
+ * words its name is made of.
+ *
+ * Neither is exclusive and neither is a bucket: one email can match several
+ * categories and several attributes, and matching remains one independent decision
+ * per label. Role changes how a matched fact is *read*, never whether it matched.
+ *
+ * Only detection labels have one. A derived label is already an interpretation of
+ * detection facts, so asking what kind of fact it is has no answer.
+ */
+export const DETECTION_ROLES = ["category", "attribute"] as const;
+export type DetectionRole = (typeof DETECTION_ROLES)[number];
+
+/**
  * InboxLabeler's own two labels.
  *
  * Internal state rather than anything a user models, spelled lowercase — the
@@ -52,6 +72,16 @@ export type ReferenceField = (typeof REFERENCE_FIELDS)[number];
 export type Label = {
   label: string;
   type: LabelType;
+  /**
+   * Detection labels only: whether the fact is a category or an attribute.
+   *
+   * Optional, and deliberately so. Every detection label created from now on has
+   * one — `checkRole` refuses a new one without it — but accounts predate the
+   * distinction, and their labels are read and used exactly as before until
+   * somebody decides with the user which role each plays. Absent means unmodelled,
+   * never a default.
+   */
+  role?: DetectionRole;
   attention: Attention;
   instruction: string;
   /** Derived labels only: the detection labels that must all have matched. */
@@ -155,6 +185,57 @@ export function checkType(value: unknown): LabelType {
   return type as LabelType;
 }
 
+/**
+ * Checks a detection label's role.
+ *
+ * `existing` is the label being changed, or `undefined` when one is being created,
+ * and that parameter is the whole of the legacy story:
+ *
+ *   - creating a detection label without a role is refused, so the distinction
+ *     holds for everything new;
+ *   - changing one that has none, without mentioning role, keeps none — editing an
+ *     instruction must not turn into a modelling decision the caller was never
+ *     asked to make;
+ *   - passing a role, on create or update, stores it. Unlike `type`, it may be
+ *     changed as often as the user changes their mind.
+ *
+ * A role on a derived label is refused rather than dropped, the same way a
+ * reference list on a detection label is: it is a request the caller expects to
+ * have an effect.
+ */
+export function checkRole(
+  value: unknown,
+  type: LabelType,
+  existing: Label | undefined,
+): DetectionRole | undefined {
+  const given = normalise(value).toLowerCase();
+
+  if (type !== "detection") {
+    if (given) throw new LabelError(`role applies to detection labels, not to a ${type} label`);
+    return undefined;
+  }
+
+  if (!given) {
+    if (!existing) {
+      throw new LabelError(
+        "a detection label must say which role its fact plays: " +
+          `${[...DETECTION_ROLES].sort().join(" or ")} — a category is what kind of email this ` +
+          "is (Invoice, Delivery), an attribute is what the email contains, indicates or " +
+          "requires (Action required, Deadline)",
+      );
+    }
+    // Unmodelled stays unmodelled. Nothing here guesses.
+    return existing.role;
+  }
+
+  if (!(DETECTION_ROLES as readonly string[]).includes(given)) {
+    throw new LabelError(
+      `unknown role "${given}" — roles: ${[...DETECTION_ROLES].sort().join(", ")}`,
+    );
+  }
+  return given as DetectionRole;
+}
+
 /** Checks an instruction, which no type may leave empty. */
 export function checkInstruction(value: unknown, type: LabelType): string {
   const instruction = String(value ?? "").trim();
@@ -197,14 +278,21 @@ export function checkTypeUnchanged(existing: Label, wanted: LabelType): void {
  * A label with its fields in canonical order, and reference lists only where
  * they belong.
  *
- * The order is the one the product documents: label, type, attention, instruction,
- * then the references. It is what the MCP endpoint returns and what the skills
- * describe — a client and a reader should not see two orders for one label.
+ * The order is the one the product documents: label, type, role, attention,
+ * instruction, then the references. It is what the MCP endpoint returns and what
+ * the skills describe — a client and a reader should not see two orders for one
+ * label.
+ *
+ * `role` sits beside `type` because it refines it, and is left out entirely rather
+ * than sent as null when there is none: a derived label has no role to have, and a
+ * detection label from before the distinction has not been given one yet. An absent
+ * key says that; `null` would look like a decision.
  */
 export function orderLabel(entry: Label): Label {
   const ordered: Label = {
     label: entry.label,
     type: entry.type,
+    ...(entry.type === "detection" && entry.role ? { role: entry.role } : {}),
     attention: entry.attention,
     instruction: entry.instruction,
   };
@@ -269,6 +357,6 @@ export function deleteReserved(label: string): LabelError {
 
 export function nothingToUpdate(): LabelError {
   return new LabelError(
-    "nothing to update: pass a new label, type, attention, instruction, required_labels or recommended_labels",
+    "nothing to update: pass a new label, type, role, attention, instruction, required_labels or recommended_labels",
   );
 }

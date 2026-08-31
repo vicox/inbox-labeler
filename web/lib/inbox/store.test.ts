@@ -71,9 +71,19 @@ for (const driver of drivers) {
       for (const sql of opened) await sql.close().catch(() => {});
     });
 
-    /** A detection label, which most tests need one of. */
-    const detection = (store: ProductStore, label: string, attention = "normal") =>
-      store.createLabel({ label, instruction: `whether ${label} applies`, attention });
+    /**
+     * A detection label, which most tests need one of.
+     *
+     * The role defaults to `category` because these labels stand in for "some
+     * detection label" and any valid role will do; the tests that are *about* the
+     * role pass their own.
+     */
+    const detection = (
+      store: ProductStore,
+      label: string,
+      attention = "normal",
+      role = "category",
+    ) => store.createLabel({ label, instruction: `whether ${label} applies`, attention, role });
 
     // --- new users --------------------------------------------------------
 
@@ -89,8 +99,8 @@ for (const driver of drivers) {
     test("two users can use the same label name independently", async () => {
       const { alice, bob } = await fresh();
 
-      await alice.createLabel({ label: "Invoices", instruction: "Alice's invoices" });
-      await bob.createLabel({ label: "Invoices", instruction: "Bob's invoices" });
+      await alice.createLabel({ label: "Invoices", instruction: "Alice's invoices", role: "category" });
+      await bob.createLabel({ label: "Invoices", instruction: "Bob's invoices", role: "category" });
 
       assert.equal((await alice.label("Invoices")).instruction, "Alice's invoices");
       assert.equal((await bob.label("Invoices")).instruction, "Bob's invoices");
@@ -146,11 +156,18 @@ for (const driver of drivers) {
 
     test("a created label carries the documented defaults", async () => {
       const { alice } = await fresh();
-      const entry = await alice.createLabel({ label: "Invoices", instruction: "an invoice" });
+      const entry = await alice.createLabel({
+        label: "Invoices",
+        instruction: "an invoice",
+        role: "category",
+      });
 
+      // The canonical order the product documents, role included and sitting
+      // beside the type it refines.
       assert.deepEqual(entry, {
         label: "Invoices",
         type: "detection",
+        role: "category",
         attention: "normal",
         instruction: "an invoice",
       });
@@ -158,7 +175,7 @@ for (const driver of drivers) {
 
     test("a label's text is trimmed and its inner whitespace collapsed", async () => {
       const { alice } = await fresh();
-      const entry = await alice.createLabel({ label: "  Large   amount ", instruction: "big" });
+      const entry = await alice.createLabel({ label: "  Large   amount ", instruction: "big", role: "category" });
 
       assert.equal(entry.label, "Large amount");
       assert.equal((await alice.label("large amount")).label, "Large amount", "found ignoring case");
@@ -169,14 +186,14 @@ for (const driver of drivers) {
       await detection(alice, "Invoices");
 
       assert.match(
-        await refusal(alice.createLabel({ label: "invoices", instruction: "again" })),
+        await refusal(alice.createLabel({ label: "invoices", instruction: "again", role: "category" })),
         /already exists — labels are unique, ignoring case/,
       );
     });
 
     test("the label rules are the documented ones", async () => {
       const { alice } = await fresh();
-      const create = (label: string) => alice.createLabel({ label, instruction: "x" });
+      const create = (label: string) => alice.createLabel({ label, instruction: "x", role: "category" });
 
       assert.match(await refusal(create("")), /label must not be empty/);
       assert.match(await refusal(create("IL/Invoices")), /stored without the IL\/ prefix/);
@@ -187,15 +204,15 @@ for (const driver of drivers) {
       assert.match(await refusal(create("processed")), /reserved system label/);
       assert.match(await refusal(create("NO-MATCH")), /reserved system label/);
       assert.match(
-        await refusal(alice.createLabel({ label: "Empty", instruction: "  " })),
+        await refusal(alice.createLabel({ label: "Empty", instruction: "  ", role: "category" })),
         /instruction must not be empty/,
       );
       assert.match(
-        await refusal(alice.createLabel({ label: "Odd", instruction: "x", attention: "urgent" })),
+        await refusal(alice.createLabel({ label: "Odd", instruction: "x", attention: "urgent", role: "category" })),
         /unknown attention "urgent"/,
       );
       assert.match(
-        await refusal(alice.createLabel({ label: "Odd", instruction: "x", type: "guessed" })),
+        await refusal(alice.createLabel({ label: "Odd", instruction: "x", type: "guessed", role: "category" })),
         /unknown label type "guessed"/,
       );
     });
@@ -206,7 +223,7 @@ for (const driver of drivers) {
 
       assert.match(
         await refusal(
-          alice.createLabel({ label: "Odd", instruction: "x", required_labels: ["Invoices"] }),
+          alice.createLabel({ label: "Odd", instruction: "x", required_labels: ["Invoices"], role: "category" }),
         ),
         /required_labels applies to derived labels, not to a detection label/,
       );
@@ -290,6 +307,129 @@ for (const driver of drivers) {
       });
 
       assert.deepEqual(derived.required_labels, ["Invoices"]);
+    });
+
+    // --- category and attribute -------------------------------------------
+    //
+    // A detection label says what kind of fact it found as well as that it found
+    // one. The rule is asymmetric on purpose: required for anything new, optional
+    // for a label that predates the distinction, and changeable for both — unlike
+    // `type`, which is a different label rather than a revised opinion.
+
+    test("a new detection label may be a category or an attribute", async () => {
+      const { alice } = await fresh();
+
+      const category = await alice.createLabel({
+        label: "Invoice",
+        instruction: "The message is an invoice.",
+        role: "category",
+      });
+      const attribute = await alice.createLabel({
+        label: "Large amount",
+        instruction: "The message mentions a large sum.",
+        role: "attribute",
+      });
+
+      assert.equal(category.role, "category");
+      assert.equal(attribute.role, "attribute");
+    });
+
+    test("a new detection label without a role is refused, and the refusal says why", async () => {
+      const { alice } = await fresh();
+
+      const refused = await refusal(
+        alice.createLabel({ label: "Invoice", instruction: "The message is an invoice." }),
+      );
+      assert.match(refused, /must say which role its fact plays/);
+      assert.match(refused, /attribute or category/);
+      // The message has to be usable by whoever hit it, so it says what each is.
+      assert.match(refused, /what kind of email this is/);
+      assert.match(refused, /contains, indicates or requires/);
+    });
+
+    test("a derived label has no role, and is refused one", async () => {
+      const { alice } = await fresh();
+      await detection(alice, "Invoice");
+      await detection(alice, "Large amount", "normal", "attribute");
+
+      const derived = await alice.createLabel({
+        label: "Large invoice",
+        type: "derived",
+        instruction: "An invoice worth looking at.",
+        required_labels: ["Invoice", "Large amount"],
+      });
+      assert.equal("role" in derived, false, "no role key at all, rather than an empty one");
+
+      assert.match(
+        await refusal(
+          alice.createLabel({
+            label: "Refused",
+            type: "derived",
+            instruction: "x",
+            role: "category",
+            required_labels: ["Invoice"],
+          }),
+        ),
+        /role applies to detection labels, not to a derived label/,
+      );
+    });
+
+    test("a role survives being written and read back", async () => {
+      const { alice } = await fresh();
+      await alice.createLabel({
+        label: "Deadline",
+        instruction: "The message states a cutoff.",
+        role: "attribute",
+      });
+
+      // Read through a fresh query rather than from the create's return value:
+      // the question is whether the column holds it, not whether the function
+      // returned what it was given.
+      assert.equal((await alice.label("deadline")).role, "attribute");
+      assert.equal((await alice.labels())[0].role, "attribute");
+    });
+
+    test("a role can be changed from category to attribute and back", async () => {
+      const { alice } = await fresh();
+      await alice.createLabel({ label: "Marketing", instruction: "Promotion.", role: "category" });
+
+      assert.equal((await alice.updateLabel("Marketing", { role: "attribute" })).role, "attribute");
+      assert.equal((await alice.updateLabel("Marketing", { role: "category" })).role, "category");
+    });
+
+    test("a label from before roles existed is read, used and edited without one", async () => {
+      const { alice, sql } = await fresh();
+
+      // Exactly the row a pre-migration account holds: no role, because the column
+      // did not exist when it was written. Inserted directly, because the API this
+      // test exists to protect refuses to create one.
+      await sql.query(
+        `INSERT INTO inbox_labels (user_id, label, type, attention, instruction)
+         VALUES ($1, $2, 'detection', 'normal', $3)`,
+        [ALICE.id, "Legacy", "modelled before roles existed"],
+      );
+
+      const [legacy] = await alice.labels();
+      assert.equal(legacy.label, "Legacy");
+      assert.equal("role" in legacy, false, "absent, not null and not defaulted");
+
+      // The thing this whole asymmetry exists for: editing something unrelated must
+      // not turn into a modelling decision the caller was never asked to make.
+      const edited = await alice.updateLabel("Legacy", { instruction: "still unmodelled" });
+      assert.equal(edited.instruction, "still unmodelled");
+      assert.equal("role" in edited, false, "the edit did not invent a role");
+
+      // And it can still be referenced, so a derived label built on it keeps working.
+      const derived = await alice.createLabel({
+        label: "On top",
+        type: "derived",
+        instruction: "Interprets the legacy fact.",
+        required_labels: ["Legacy"],
+      });
+      assert.deepEqual(derived.required_labels, ["Legacy"]);
+
+      // Modelling it later is one explicit update.
+      assert.equal((await alice.updateLabel("Legacy", { role: "category" })).role, "category");
     });
 
     // --- updating ---------------------------------------------------------

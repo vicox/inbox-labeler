@@ -118,10 +118,12 @@ test("a label can be created and read back", async () => {
   const created = await ok(token, "create_label", {
     label: "Invoices",
     instruction: "The message is an invoice or bill.",
+    role: "category",
   });
   assert.deepEqual(created.label, {
     label: "Invoices",
     type: "detection",
+    role: "category",
     attention: "normal",
     instruction: "The message is an invoice or bill.",
   });
@@ -132,8 +134,8 @@ test("a label can be created and read back", async () => {
 
 test("a derived label is created on top of detection labels", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
-  await ok(token, "create_label", { label: "Large amount", instruction: "a big number" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+  await ok(token, "create_label", { label: "Large amount", instruction: "a big number", role: "attribute" });
 
   const created = await ok(token, "create_label", {
     label: "Large invoice",
@@ -153,16 +155,65 @@ test("a derived label is created on top of detection labels", async () => {
   });
 });
 
+test("a detection label's role is part of the tool contract, not free text", async () => {
+  const token = await tokenFor(someone());
+
+  // Both roles reach the store and come back on the label.
+  const category = await ok(token, "create_label", {
+    label: "Invoice",
+    instruction: "The message is an invoice.",
+    role: "category",
+  });
+  const attribute = await ok(token, "create_label", {
+    label: "Large amount",
+    instruction: "The message mentions a large sum.",
+    role: "attribute",
+  });
+  assert.equal(category.label.role, "category");
+  assert.equal(attribute.label.role, "attribute");
+
+  // Anything else is stopped by the schema before a store is reached, so the two
+  // values cannot drift apart from the ones the domain knows.
+  const invalid = await callTool(token, "create_label", {
+    label: "Nonsense",
+    instruction: "x",
+    role: "kind",
+  });
+  assert.notEqual(invalid.error ?? invalid.result?.isError, undefined);
+
+  // A new detection label has to say which it is.
+  assert.match(
+    await refused(token, "create_label", { label: "Unstated", instruction: "x" }),
+    /must say which role its fact plays/,
+  );
+
+  // A derived label has none to give.
+  assert.match(
+    await refused(token, "create_label", {
+      label: "Refused",
+      type: "derived",
+      instruction: "x",
+      role: "category",
+      required_labels: ["Invoice"],
+    }),
+    /role applies to detection labels, not to a derived label/,
+  );
+
+  // And a role can be revised through the same partial update everything else uses.
+  const changed = await ok(token, "update_label", { label: "Invoice", role: "attribute" });
+  assert.equal(changed.label.role, "attribute");
+});
+
 test("a rejected label comes back as a readable refusal, not a protocol error", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
 
   assert.match(
-    await refused(token, "create_label", { label: "invoices", instruction: "again" }),
+    await refused(token, "create_label", { label: "invoices", instruction: "again", role: "category" }),
     /already exists — labels are unique, ignoring case/,
   );
   assert.match(
-    await refused(token, "create_label", { label: "IL/Invoices", instruction: "x" }),
+    await refused(token, "create_label", { label: "IL/Invoices", instruction: "x", role: "category" }),
     /stored without the IL\/ prefix/,
   );
   assert.match(
@@ -175,14 +226,14 @@ test("a malformed call is refused by the schema before any tool runs", async () 
   const token = await tokenFor(someone());
 
   // No instruction, which the schema requires.
-  const { result, error } = await callTool(token, "create_label", { label: "Invoices" });
+  const { result, error } = await callTool(token, "create_label", { label: "Invoices", role: "category" });
   assert.ok(result?.isError === true || error, "the call did not succeed");
   assert.deepEqual(await ok(token, "get_labels"), { labels: [] }, "and nothing was created");
 });
 
 test("update renames a label and carries its references", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Large amount", instruction: "a big number" });
+  await ok(token, "create_label", { label: "Large amount", instruction: "a big number", role: "attribute" });
   await ok(token, "create_label", {
     label: "Large invoice",
     type: "derived",
@@ -203,7 +254,7 @@ test("update renames a label and carries its references", async () => {
 
 test("delete is refused while another label references it", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
   await ok(token, "create_label", {
     label: "Large invoice",
     type: "derived",
@@ -225,7 +276,7 @@ test("delete is refused while another label references it", async () => {
 
 test("matches are recorded against the email's own day and read back", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
 
   const recorded = await ok(token, "record_matches", {
     labels: ["Invoices"],
@@ -242,8 +293,8 @@ test("matches are recorded against the email's own day and read back", async () 
 
 test("one email against several labels is one call", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
-  await ok(token, "create_label", { label: "Large amount", instruction: "a big number" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+  await ok(token, "create_label", { label: "Large amount", instruction: "a big number", role: "attribute" });
 
   const recorded = await ok(token, "record_matches", {
     labels: ["Invoices", "Large amount"],
@@ -255,7 +306,7 @@ test("one email against several labels is one call", async () => {
 
 test("a timestamp without an offset is refused", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
 
   assert.match(
     await refused(token, "record_matches", {
@@ -269,7 +320,7 @@ test("a timestamp without an offset is refused", async () => {
 
 test("one bad label in a batch records none of them", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
 
   await refused(token, "record_matches", {
     labels: ["Invoices", "Nothing"],
@@ -281,7 +332,7 @@ test("one bad label in a batch records none of them", async () => {
 
 test("a label that has never matched reads as an empty history", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
 
   const read = await ok(token, "get_matches", { label: "Invoices" });
   assert.deepEqual(read.matches, {
@@ -291,7 +342,7 @@ test("a label that has never matched reads as an empty history", async () => {
 
 test("renaming a label carries its history, end to end", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
   await ok(token, "record_matches", {
     labels: ["Invoices"],
     email_timestamp: "2026-08-20T10:12:00Z",
@@ -307,7 +358,7 @@ test("renaming a label carries its history, end to end", async () => {
 
 test("deleting a label takes its history with it", async () => {
   const token = await tokenFor(someone());
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
   await ok(token, "record_matches", {
     labels: ["Invoices"],
     email_timestamp: "2026-08-20T10:12:00Z",
@@ -324,8 +375,8 @@ test("two users hold the same label name independently", async () => {
   const alice = await tokenFor(someone());
   const bob = await tokenFor(someone());
 
-  await ok(alice, "create_label", { label: "Invoices", instruction: "Alice's rule" });
-  await ok(bob, "create_label", { label: "Invoices", instruction: "Bob's rule" });
+  await ok(alice, "create_label", { label: "Invoices", instruction: "Alice's rule", role: "category" });
+  await ok(bob, "create_label", { label: "Invoices", instruction: "Bob's rule", role: "category" });
 
   assert.equal((await ok(alice, "get_labels")).labels[0].instruction, "Alice's rule");
   assert.equal((await ok(bob, "get_labels")).labels[0].instruction, "Bob's rule");
@@ -334,7 +385,7 @@ test("two users hold the same label name independently", async () => {
 test("one user's labels are invisible to another", async () => {
   const alice = await tokenFor(someone());
   const bob = await tokenFor(someone());
-  await ok(alice, "create_label", { label: "Alice only", instruction: "hers" });
+  await ok(alice, "create_label", { label: "Alice only", instruction: "hers", role: "category" });
 
   assert.deepEqual(await ok(bob, "get_labels"), { labels: [] });
   assert.match(await refused(bob, "delete_label", { label: "Alice only" }), /^no label/);
@@ -347,7 +398,7 @@ test("one user's labels are invisible to another", async () => {
 test("one user's matches are invisible to another", async () => {
   const alice = await tokenFor(someone());
   const bob = await tokenFor(someone());
-  await ok(alice, "create_label", { label: "Invoices", instruction: "hers" });
+  await ok(alice, "create_label", { label: "Invoices", instruction: "hers", role: "category" });
   await ok(alice, "record_matches", {
     labels: ["Invoices"],
     email_timestamp: "2026-08-20T10:12:00Z",
@@ -356,7 +407,7 @@ test("one user's matches are invisible to another", async () => {
   assert.deepEqual((await ok(bob, "get_matches")).matches, {});
 
   // Even holding a label of the same name, Bob reads his own empty history.
-  await ok(bob, "create_label", { label: "Invoices", instruction: "his" });
+  await ok(bob, "create_label", { label: "Invoices", instruction: "his", role: "category" });
   assert.deepEqual((await ok(bob, "get_matches", { label: "Invoices" })).matches, {
     Invoices: { last_matched_at: null, daily_matches: {} },
   });
@@ -365,7 +416,7 @@ test("one user's matches are invisible to another", async () => {
 test("a client naming another user in its arguments is ignored, not obeyed", async () => {
   const alice = await tokenFor("google:alice-fixed");
   const bob = await tokenFor("google:bob-fixed");
-  await ok(alice, "create_label", { label: "Alice secret", instruction: "hers" });
+  await ok(alice, "create_label", { label: "Alice secret", instruction: "hers", role: "category" });
 
   // Every shape a hostile client might try. The schemas have no such field, so
   // these are either rejected outright or ignored — never honoured.
@@ -388,7 +439,7 @@ test("a client naming another user in its arguments is ignored, not obeyed", asy
 
 test("the tool result never carries the user's id or token", async () => {
   const token = await tokenFor("google:112233445566778899");
-  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice" });
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
 
   const { body } = await callTool(token, "get_labels");
   const text = JSON.stringify(body);

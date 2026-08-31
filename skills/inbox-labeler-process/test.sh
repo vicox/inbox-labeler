@@ -131,6 +131,18 @@ check "detection runs first, derived only after it has finished" \
 check "IL/no-match comes from the detection stage alone" \
     "$(order_check '`IL/no-match` reflects the detection stage' 'never both' \
         'Derived labels do not affect it')" "True"
+check "a role says what kind of fact a label found, and nothing about deciding it" \
+    "$(order_check "**A detection label's \`role\` says what kind of fact it is, and changes nothing about how it is" \
+        'Neither role is exclusive' \
+        'There is no primary category and no primary attribute' \
+        'not required to match a category, or an attribute, or one of each')" "True"
+check "no-match stays role-agnostic, and a role-less label is judged like any other" \
+    "$(order_check 'still means no *detection* label matched, whatever their roles' \
+        'modelled before the distinction existed' \
+        'never infer a role for it')" "True"
+check "the role takes no part in the detection decision" \
+    "$(order_check "A label's \`role\` takes no part in that decision")" "True"
+
 check "required_labels is an AND gate" \
     "$(order_check 'detection labels that must **all** have matched' \
         'Skip a derived label whose `required_labels` did not all match')" "True"

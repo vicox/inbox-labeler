@@ -123,6 +123,38 @@ check 'required_labels is an AND gate that decides whether the label is evaluate
 check 'recommended_labels is context, and its absence does not block evaluation' \
     "$(says 'when they did not, the derived label is evaluated anyway')$(says 'recommended_labels` is context')" "yesyes"
 
+check 'a detection label says whether its fact is a category or an attribute' \
+    "$(says 'What kind or domain of email is this?')$(says 'What does this email contain, indicate, or require?')" \
+    "yesyes"
+
+check 'the role is read off the decision rule, not the part of speech' \
+    "$(says 'Ask which question the instruction is deciding, not what part of speech the name is')" \
+    "yes"
+
+check 'the role is neither exclusive nor part of matching' \
+    "$(says 'Not exclusive.')$(says 'several categories and several attributes at once')$(says 'Not part of matching.')" \
+    "yesyesyes"
+
+check 'no near-duplicate label just to give each role one' \
+    "$(says 'Not a reason to split a label.')" "yes"
+
+check 'derived labels have no role, and may reference either kind' \
+    "$(says '**Derived labels have no role.**')$(says 'may name detection labels of either role freely')" \
+    "yesyes"
+
+check 'a role can be changed even though a type cannot' \
+    "$(says 'A role can be changed; a type cannot.')" "yes"
+
+check 'a new detection label is refused without a role' \
+    "$(says 'A new detection label without one is refused')" "yes"
+
+check 'a missing role means undecided, and is never guessed' \
+    "$(says 'nobody has decided yet')$(says 'never work one out from')$(says 'without the user agreeing')" \
+    "yesyesyes"
+
+check 'an unrelated edit leaves a missing role missing' \
+    "$(says 'changing an instruction leaves a missing role exactly as it was')" "yes"
+
 check 'derived labels never reference other derived labels' \
     "$(says 'Derived labels never reference other derived labels')" "yes"
 

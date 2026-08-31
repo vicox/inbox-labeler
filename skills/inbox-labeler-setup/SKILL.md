@@ -39,6 +39,7 @@ takes:
 | --- | --- |
 | `label` | the label itself — its identity and its display text |
 | `type` | `detection` or `derived` |
+| `role` | *detection only, required* — `category` (what kind of email this is) or `attribute` (what it contains, indicates or requires) |
 | `attention` | what the label asks of the user: `none`, `normal` or `high`. Defaults to `normal` |
 | `instruction` | how to decide whether the aspect is present in a message, in natural language |
 | `required_labels` | *derived only* — detection labels that must **all** have matched |
@@ -81,36 +82,46 @@ on create, and never business labels. They never count towards a configured set.
 Fifteen labels, fixed. The model is already decided: never ask the user to choose between
 detection and derived, and do not add, drop or substitute a label.
 
-| # | Label | Type | Attention | Required labels |
-| --- | --- | --- | --- | --- |
-| 1 | `Action required` | `detection` | `normal` | — |
-| 2 | `Question` | `detection` | `normal` | — |
-| 3 | `Imminent` | `detection` | `normal` | — |
-| 4 | `Deadline` | `detection` | `normal` | — |
-| 5 | `Cancellation` | `detection` | `normal` | — |
-| 6 | `Invoice` | `detection` | `normal` | — |
-| 7 | `Large amount` | `detection` | `normal` | — |
-| 8 | `Delivery` | `detection` | `normal` | — |
-| 9 | `Marketing` | `detection` | `normal` | — |
-| 10 | `Newsletter` | `detection` | `normal` | — |
-| 11 | `Travel` | `detection` | `normal` | — |
-| 12 | `Large invoice` | `derived` | `high` | `Invoice`, `Large amount` |
-| 13 | `Delivery arriving soon` | `derived` | `high` | `Delivery`, `Imminent` |
-| 14 | `Promotional newsletter` | `derived` | `none` | `Marketing`, `Newsletter` |
-| 15 | `Travel disruption` | `derived` | `high` | `Travel`, `Cancellation` |
+| # | Label | Type | Role | Attention | Required labels |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `Action required` | `detection` | `attribute` | `normal` | — |
+| 2 | `Question` | `detection` | `attribute` | `normal` | — |
+| 3 | `Imminent` | `detection` | `attribute` | `normal` | — |
+| 4 | `Deadline` | `detection` | `attribute` | `normal` | — |
+| 5 | `Cancellation` | `detection` | `attribute` | `normal` | — |
+| 6 | `Invoice` | `detection` | `category` | `normal` | — |
+| 7 | `Large amount` | `detection` | `attribute` | `normal` | — |
+| 8 | `Delivery` | `detection` | `category` | `normal` | — |
+| 9 | `Marketing` | `detection` | `attribute` | `normal` | — |
+| 10 | `Newsletter` | `detection` | `category` | `normal` | — |
+| 11 | `Travel` | `detection` | `category` | `normal` | — |
+| 12 | `Large invoice` | `derived` | — | `high` | `Invoice`, `Large amount` |
+| 13 | `Delivery arriving soon` | `derived` | — | `high` | `Delivery`, `Imminent` |
+| 14 | `Promotional newsletter` | `derived` | — | `none` | `Marketing`, `Newsletter` |
+| 15 | `Travel disruption` | `derived` | — | `high` | `Travel`, `Cancellation` |
 
-None of the four derived labels takes `recommended_labels`; pass an empty list.
+Four of the eleven detection labels are categories — the kinds of mail this starter set
+recognises — and seven are attributes, which is the shape a useful set tends to have: a handful
+of kinds, and rather more facts that can turn up inside any of them. `Large amount` is an
+attribute rather than a category because an amount is something an email *contains*, not a kind
+of email; `Marketing` is an attribute because promotion is a property a newsletter, an invoice
+reminder or a travel offer can all have. The derived labels have no role — they are already
+interpretations of detection facts, so there is no kind-of-fact for them to be.
+
+None of the four derived labels takes `recommended_labels`; pass an empty list, and pass no
+`role` — a derived label is refused one.
 
 **Create them in the order of that table**, detection labels 1–11 before derived labels 12–15,
 because a reference to a label that does not exist yet is rejected.
 
 ```text
-# a detection label — type defaults to detection
+# a detection label — type defaults to detection; role is required
 create_label   label:       "Invoice"
+               role:        "category"
                attention:   "normal"
                instruction: "<the instruction below, verbatim>"
 
-# a derived label — the reference lists take several labels
+# a derived label — the reference lists take several labels, and it takes no role
 create_label   label:               "Large invoice"
                type:                "derived"
                attention:           "high"
@@ -124,7 +135,7 @@ create_label   label:               "Large invoice"
 Each label below is created with exactly this instruction. Do not paraphrase them, shorten them
 or adapt them to the user — they are the tested wording.
 
-**1. `Action required`** — detection, `normal`
+**1. `Action required`** — detection, `attribute`, `normal`
 
 > The message asks the recipient to do something specific: pay, reply, confirm or correct data,
 > fill in a form, send a document, book, reschedule or cancel an appointment, renew or cancel a
@@ -137,7 +148,7 @@ or adapt them to the user — they are the tested wording.
 > relationship with the sender are not part of this label: 'Buy now', 'Update your preferences'
 > and 'Payment due' match equally.
 
-**2. `Question`** — detection, `normal`
+**2. `Question`** — detection, `attribute`, `normal`
 
 > The sender is asking the recipient for information, a response, a confirmation, or a decision,
 > and expects an answer to come back. What matters is whether an answer is genuinely expected,
@@ -149,14 +160,14 @@ or adapt them to the user — they are the tested wording.
 > irrelevant: a colleague, a customer, a support requester, a recruiter and a salesperson asking
 > all match the same way.
 
-**3. `Imminent`** — detection, `normal`
+**3. `Imminent`** — detection, `attribute`, `normal`
 
 > The message states that an event, deadline, expiration, or appointment is happening today or
 > within the next few days (roughly 3 days) as of when the message was written — e.g. 'arriving
 > today', 'expires in 2 days', 'meeting starts in one hour', 'payment due tomorrow'. Judge this
 > against the email's own date, not the current date.
 
-**4. `Deadline`** — detection, `normal`
+**4. `Deadline`** — detection, `attribute`, `normal`
 
 > The message states a concrete deadline, due date, expiration, cutoff, or latest time by which
 > something must or may be done — 'submit by 30 October', 'payment due Friday', 'respond before
@@ -169,7 +180,7 @@ or adapt them to the user — they are the tested wording.
 > deadline is near — that is Imminent — so a deadline months away matches just as fully as one
 > tomorrow.
 
-**5. `Cancellation`** — detection, `normal`
+**5. `Cancellation`** — detection, `attribute`, `normal`
 
 > The message states that something planned, booked, scheduled, ordered, subscribed or reserved
 > has been cancelled, or is being cancelled by the sender: a cancelled flight, a cancelled
@@ -181,24 +192,24 @@ or adapt them to the user — they are the tested wording.
 > cancellation. It is not restricted to travel: a cancelled dentist appointment and a cancelled
 > software subscription match the same way.
 
-**6. `Invoice`** — detection, `normal`
+**6. `Invoice`** — detection, `category`, `normal`
 
 > Emails containing an invoice, bill, or receipt for a purchase/service (e.g. subject or content
 > mentions invoice, Rechnung, receipt, payment confirmation with an amount due or paid). Does
 > not include payment reminders, order confirmations without an invoice, or general
 > marketing/promotional emails.
 
-**7. `Large amount`** — detection, `normal`
+**7. `Large amount`** — detection, `attribute`, `normal`
 
 > The message mentions a monetary amount over 100 (in any currency, e.g. EUR, USD, GBP) — for
 > example an invoice total, price, payment, or charge exceeding 100 units of that currency.
 
-**8. `Delivery`** — detection, `normal`
+**8. `Delivery`** — detection, `category`, `normal`
 
 > The message is a shipping or delivery status update for an order (e.g. 'out for delivery',
 > 'delivered', 'shipped', tracking updates from a carrier or retailer like Amazon, DHL, UPS).
 
-**9. `Marketing`** — detection, `normal`
+**9. `Marketing`** — detection, `attribute`, `normal`
 
 > The message's primary purpose is promotion, advertising, engagement, or campaign
 > communication: trying to get the user to buy, try, sign up for, or pay attention to a product,
@@ -209,14 +220,14 @@ or adapt them to the user — they are the tested wording.
 > codes, booking confirmations) or personal/direct correspondence, even from a company the user
 > has a relationship with.
 
-**10. `Newsletter`** — detection, `normal`
+**10. `Newsletter`** — detection, `category`, `normal`
 
 > Detect whether the email is a newsletter or other recurring email sent to subscribers of a
 > mailing list. This includes recurring updates, digests, and other subscription-based
 > communications. This label describes the delivery format, not the purpose of the email. A
 > newsletter may also be Marketing.
 
-**11. `Travel`** — detection, `normal`
+**11. `Travel`** — detection, `category`, `normal`
 
 > The message relates to travel or a trip in any way: hotel, hostel or holiday-home bookings;
 > train, flight, bus or ferry tickets and reservations; rental car and camper bookings;

@@ -15,6 +15,7 @@ Each label names the aspect of a message it detects:
 | --- | --- |
 | `label` | the label itself — its identity and its display text, e.g. `Delivery arriving soon` |
 | `type` | how the label decides whether it applies: `detection` or `derived` |
+| `role` | *detection only* — what kind of fact it is: `category` or `attribute` |
 | `attention` | what the label asks of the user: `none`, `normal` or `high`. Defaults to `normal` |
 | `instruction` | how you decide whether that aspect is present in a message, in natural language |
 | `required_labels` | *derived only* — detection labels that must all have matched before this label is evaluated |
@@ -91,6 +92,64 @@ message. Derived labels never reference other derived labels — there is no cha
 Labeler rejects it. Inbox Labeler rejects any type other than `detection` and `derived`; do not
 invent a third.
 
+## Category or attribute
+
+Every detection label says two things: that it found something, and what kind of something it
+found. The second is its **role**, and there are two.
+
+| Role | The question it answers |
+| --- | --- |
+| `category` | *What kind or domain of email is this?* |
+| `attribute` | *What does this email contain, indicate, or require?* |
+
+`Invoice`, `Delivery`, `Newsletter`, `Travel`, `Social` are categories: each names a kind of mail
+you could sort a mailbox into. `Action required`, `Question`, `Imminent`, `Deadline`,
+`Cancellation`, `Large amount`, `Marketing` are attributes: each names something that can turn up
+*inside* mail of almost any kind.
+
+That last observation is the test, not the grammar. **Ask which question the instruction is
+deciding, not what part of speech the name is.** `Large amount` is a noun and is an attribute,
+because an amount is something an email contains rather than a kind of email it is. `Marketing`
+is an attribute because promotion is a property a newsletter, a travel offer and a renewal notice
+can all share. If a concept would be worth detecting across several different kinds of mail, it is
+almost certainly an attribute; if it names the kind itself, it is a category.
+
+Three things the role is not:
+
+- **Not exclusive.** One message can match several categories and several attributes at once. A
+  travel invoice with a deadline matches `Travel`, `Invoice` and `Deadline`, and nothing about
+  that is a conflict. There is no primary category and no single answer to pick.
+- **Not part of matching.** Each detection label is still decided on its own, by its own
+  instruction. The role changes how a matched fact reads, never whether it matched or what it
+  took to match.
+- **Not a reason to split a label.** Do not invent a near-duplicate so that each role has one —
+  `Invoice` the category does not need an `Invoice received` attribute beside it. One label per
+  aspect, and the role describes the aspect you already have.
+
+**Derived labels have no role.** A derived label is already an interpretation of detection facts,
+so asking what kind of fact it is has no answer, and Inbox Labeler refuses one. Its
+`required_labels` and `recommended_labels` may name detection labels of either role freely — a
+derived label built on one category and one attribute is the common shape.
+
+**A role can be changed; a type cannot.** Deciding later that `Marketing` is an attribute rather
+than a category is a revised judgement, not a different label, so `update_label` accepts it. See
+[Classification changes reach new mail only](#classification-changes-reach-new-mail-only) for what
+that does and does not reach.
+
+### Labels from before the distinction
+
+An account may hold detection labels with no role at all. Those were modelled before the
+distinction existed; they are read, matched and referenced exactly as they always were, and a
+missing role means **nobody has decided yet** — not that the label is broken, and not that it
+defaults to anything.
+
+When you list labels and see one, say so and offer to settle it — "`Newsletter` has no role yet;
+that one is a kind of mail, so `category` — shall I set it?" — and set it with `update_label`.
+Never assign a role to an existing label without the user agreeing, and never work one out from
+the label name or instruction and write it silently. An unrelated edit is not the moment either:
+changing an instruction leaves a missing role exactly as it was, which is deliberate, so editing
+one thing never becomes a modelling decision the user did not make.
+
 ## The instruction is the rule
 
 `instruction` is not a description of the label — it is the natural-language rule a processing
@@ -131,8 +190,9 @@ stars a message, changes a read state, or looks at mail at all.
 # list every label
 get_labels
 
-# create a detection label — type defaults to detection
+# create a detection label — type defaults to detection; role is required
 create_label   label:       "Invoice"
+               role:        "category"
                instruction: "The message is an invoice or bill for a purchase or service."
 
 # create a derived label — the reference lists take several labels
@@ -145,6 +205,10 @@ create_label   label:               "Large payment needs attention"
 # update a label — pass only the fields that change
 update_label   label:       "Invoice"
                instruction: "Invoices and receipts, but not payment reminders."
+
+# settle or revise a detection label role
+update_label   label: "Marketing"
+               role:  "attribute"
 
 # rename a label — every reference to it is rewritten in the same write
 update_label   label:     "Invoice"
@@ -199,7 +263,10 @@ that preserves reuse: as few labels as express the idea, and no fewer. Then:
    `Big amount`.
 2. **Name the observations the concept rests on.** When the user's label is an interpretation and
    the observations it needs do not exist yet, those become supporting detection labels.
-3. **Create the supporting detection labels first**, then the derived label. Its references must
+3. **Decide each detection label's role before creating it** — `category` for a kind of mail,
+   `attribute` for something found inside mail of any kind. A new detection label without one is
+   refused, and rightly: it is part of what the label means rather than a field to fill in later.
+4. **Create the supporting detection labels first**, then the derived label. Its references must
    already exist, and a label's type cannot be changed afterwards — so decide the shape before
    creating anything.
 
@@ -268,13 +335,16 @@ Login    detection   ("The message carries a login code, a sign-in link or a pas
 
 ## Creating, updating, deleting
 
-**Create.** Supporting detection labels are created first, because a reference to a label that
-does not exist is rejected and a label's type cannot be changed afterwards. `type` follows from
+**Create.** Every detection label needs its role — `category` or `attribute` — and a derived
+label must not be given one. Supporting detection labels are created first, because a reference to
+a label that does not exist is rejected and a label's type cannot be changed afterwards. `type` follows from
 the model you chose, not from anything the user has to say; it defaults to `detection`. Store the
 label, never the Gmail label: if the user says `IL/Invoices`, store `Invoices` — Inbox Labeler
 rejects anything starting with `IL/`, because it adds the namespace itself.
 
-**Update.** Pass only the fields that change. `required_labels` and `recommended_labels` replace
+**Update.** Pass only the fields that change. A detection label's `role` is among them: pass it
+to settle one that has none, or to move a label between `category` and `attribute`. Leaving it out
+changes nothing about it. `required_labels` and `recommended_labels` replace
 the stored list rather than adding to it, and passing an empty list clears it. **A label's type is
 immutable** — `update_label` refuses to turn a detection label into a derived one or the other way
 round. If the user wants the other kind, create a new label, and say that the old label's Gmail
@@ -294,7 +364,9 @@ is meant if the reference is ambiguous. Reserved system labels cannot be deleted
 
 **Labelling only ever moves forward.** A message that has been processed is never revisited, so
 changing what a label detects changes what Inbox Labeler will apply **next** and leaves the
-mailbox as it is. An edited instruction does not re-judge a message it was applied to. A deleted
+mailbox as it is. An edited instruction does not re-judge a message it was applied to. A changed role does not
+re-read facts already recorded, does not touch a Gmail label and does not adjust a derived label
+that references it. A deleted
 label does not come off the mail carrying its Gmail label. A changed reference list does not undo
 an interpretation it fed. A rename is the same: references to it are rewritten, and the Gmail
 label already sitting on a message is not. There is no backfill and no cleanup step, and the
