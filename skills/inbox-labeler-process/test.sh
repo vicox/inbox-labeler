@@ -182,8 +182,8 @@ echo "--- Gmail label colors ---"
 colors=(
     'A label'
     'type** decides its business label'
-    '`detection` | `#fce8b3` | `#000000`'
-    '`derived` | `#efa093` | `#000000`'
+    '`detection` | `#fdedc1` | `#684e07`'
+    '`derived` | `#f2b2a8` | `#8a1c0a`'
 )
 check "detection is warm, derived is coral, and there are only those two" \
     "$(order_check "${colors[@]}")" "True"

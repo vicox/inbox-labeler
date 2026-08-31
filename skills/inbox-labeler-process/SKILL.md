@@ -258,14 +258,14 @@ this table and never choose a color by hand:
 
 | Label | `backgroundColor` | `textColor` |
 | --- | --- | --- |
-| `detection` | `#fce8b3` | `#000000` |
-| `derived` | `#efa093` | `#000000` |
+| `detection` | `#fdedc1` | `#684e07` |
+| `derived` | `#f2b2a8` | `#8a1c0a` |
 
 These are tiles from Gmail's own label palette rather than free choices, so pass them exactly as
-written — Gmail refuses a color that is not one of its own. Two families, a warm yellow and a
-coral, matching
-the two the website uses; the values differ because the palettes do, and neither side reads the
-other.
+written — Gmail refuses a color that is not one of its own. Each pair is one Gmail uses itself: a
+pale background with the dark tone of its own hue, which is how a label coloured from Gmail's own
+picker looks. Two families, a warm yellow and a coral, matching the two the website uses; the
+values differ because the palettes do, and neither side reads the other.
 
 **A detection label's `role` has nothing to do with its color.** A category, an attribute and a
 detection label whose role nobody has settled are all the same yellow, because colour says what
