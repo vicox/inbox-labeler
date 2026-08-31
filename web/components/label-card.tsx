@@ -1,6 +1,6 @@
 "use client";
 
-import type { Label } from "@/lib/policy";
+import type { Label } from "@/lib/label-graph";
 import { AttentionMark } from "./attention-mark";
 
 type Props = {

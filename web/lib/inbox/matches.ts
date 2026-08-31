@@ -5,7 +5,7 @@ import { LabelError } from "./labels.ts";
  *
  * The timestamp handling, and what is stored — nothing else:
  *
- *     the label          the text, exactly as the policy spells it
+ *     the label          the text, exactly as the label itself spells it
  *     a calendar day     derived from the email's own timestamp, in UTC
  *     a count per day    how many matches that label had that day
  *     last_matched_at    the newest email timestamp the label has matched

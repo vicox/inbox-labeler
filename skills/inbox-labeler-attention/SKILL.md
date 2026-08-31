@@ -55,13 +55,13 @@ Apply the ranking exactly as written and never rank the levels by eye: `Invoice`
 `none`. A label that `get_labels` does not have takes no part in the calculation — leave it out
 entirely and never guess its Attention.
 
-The policies are fixed, not configurable:
+The behaviours are fixed, not configurable:
 
-| Attention | Policy | Effect |
+| Attention | Behaviour | Effect |
 | --- | --- | --- |
-| `none` | `mark_read_after: 24h` | mark read once the message is 24h old, otherwise nothing |
+| `none` | `mark_read` | mark read once the message is 24h old, otherwise nothing |
 | `normal` | — | nothing |
-| `high` | `star: true` | star it, and keep it starred |
+| `high` | `star` | star it, and keep it starred |
 
 Ages count from **when the message was received**, which is the only timestamp available. The
 24h threshold is inclusive — exactly 24h qualifies.
@@ -96,7 +96,7 @@ Without labels there is no attention to apply.
 6. Work out the effective level over those labels with the ranking in
    [Attention](#attention). A label that `get_labels` no longer has takes no part in the
    calculation — leave it out, and name any you found in the report.
-7. Read the policy for that level from the table in [Attention](#attention), against the age of
+7. Read the behaviour for that level from the table in [Attention](#attention), against the age of
    the message, and carry out what it says:
    - `star` → `label_message` with `STARRED`
    - `mark_read` → `unlabel_message` with `UNREAD`

@@ -117,8 +117,8 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
         // One statement, and the schema carries the rest: the foreign keys are
         // ON UPDATE CASCADE, so the daily counts, the last-matched timestamp and
         // every reference pointing at this label follow the new text inside this
-        // same statement. Nothing observes the policy under one name and its
-        // history under another, because there is no moment between.
+        // same statement. Nothing observes a label under one name and its history
+        // under another, because there is no moment between.
         try {
           await tx.query(
             `UPDATE inbox_labels
@@ -199,8 +199,8 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
 
       return driver.transaction(async (tx) => {
         // Resolving first does two things: it refuses a label this user does not
-        // have, and it gives the spelling the policy uses, so the counts are keyed
-        // the way the policy is even when the caller wrote a different case.
+        // have, and it gives the spelling the label is stored under, so the counts
+        // are keyed the way the labels are even when the caller wrote a different case.
         // Doing it inside the transaction is what makes one bad label mean
         // nothing is recorded — the rollback takes the earlier increments with it.
         const existing = await readLabels(tx, owner);

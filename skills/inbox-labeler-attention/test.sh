@@ -115,18 +115,18 @@ check "only configured labels participate, and none is ever guessed" \
     "$(order_check 'takes no part in the calculation' 'never guess its Attention')" "True"
 
 echo
-echo "--- the ranking and the fixed policies ---"
+echo "--- the ranking and the fixed behaviours ---"
 
 ranking=(
     'ranked `high` > `none` >'
     'one label at `high` → `high`'
     'otherwise, one label at `none` → `none`'
     'otherwise → `normal`'
-    'The policies are fixed, not configurable'
+    'The behaviours are fixed, not configurable'
     'mark read once the message is 24h old, otherwise nothing'
     'star it, and keep it starred'
 )
-check "high outranks none outranks normal, and the policies are fixed" \
+check "high outranks none outranks normal, and the behaviours are fixed" \
     "$(order_check "${ranking[@]}")" "True"
 
 check "high stars, none clears UNREAD, normal does nothing" \

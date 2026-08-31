@@ -158,7 +158,8 @@ Attention is **not** a label. It is computed per message from the labels that ar
 `normal` comes last because it is the absence of a request, not a request to be left alone: a
 `Newsletter` label at `none` on the same message as an `Invoices` at `normal` still gets the mail
 marked read, because `none` is the only thing either label actually asked for. A message with no
-labels comes out `normal`, so it is left alone. The policies above are fixed and not configurable.
+labels comes out `normal`, so it is left alone. The behaviours above are fixed and not
+configurable.
 
 A label's own Attention also sets its Gmail label's **color**, using Gmail's muted palette so
 it stays out of the way — `none` light gray, `normal` muted yellow, `high` muted red, from the
@@ -729,7 +730,7 @@ The label text is the key here as it is in the files, and the foreign keys are
 rather than careful sequences:
 
 - **Renaming** a label carries its match history and every reference to it, with no
-  moment in between where the policy is under one name and its counts under another.
+  moment in between where a label is under one name and its counts under another.
 - **Deleting** one takes its history with it, and is refused while another label
   references it.
 
@@ -1098,7 +1099,7 @@ holds a Google credential of the user's, and no skill reaches the network on its
 The classifying itself is Claude reading the email against your instructions — there is no model
 called from the code, no prompt file, and nothing to configure. Which is also why two runs over
 the same mail can differ in judgement, while everything deterministic — validation, label
-identity, attention levels, the policy for each level — lives in `web/lib/` and is tested.
+identity, attention levels, the behaviour each level implies — lives in `web/lib/` and is tested.
 
 ## License
 

@@ -49,7 +49,7 @@ export type Connection = { from: string; to: string; kind: "required" | "recomme
  * rather than in file order nobody can see.
  *
  * `perDay` is passed in rather than read here: how often a label matches is not
- * something the policy knows.
+ * something a label carries.
  */
 export function byRelevance(labels: Label[], perDay: (label: Label) => number): Label[] {
   return [...labels].sort(
@@ -71,8 +71,8 @@ export function byRelevance(labels: Label[], perDay: (label: Label) => number): 
  * reading this — which side is emphasised on hover, and which relationships a
  * card can name.
  *
- * A reference that names nothing in the policy is dropped. The UI is not the
- * place to report a broken policy.
+ * A reference naming a label this user does not have is dropped. The UI is not
+ * the place to report a reference that points at nothing.
  */
 export function connectionsOf(labels: Label[]): Connection[] {
   const detection = new Set(

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import type { Label } from "@/lib/policy";
+import type { Label } from "@/lib/label-graph";
 
 type Props = {
   label: Label;
@@ -12,8 +12,8 @@ type Props = {
 };
 
 /**
- * Everything the policy already says about one label, and nothing else. Reading
- * only — labels are still written through the CLI and the agents.
+ * Everything already known about one label, and nothing else. Reading only —
+ * labels are written through the MCP tools, never from here.
  */
 export function LabelDetail({ label, feeds, onClose }: Props) {
   const panel = useRef<HTMLDivElement>(null);

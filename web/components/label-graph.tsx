@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
-import { byRelevance, connectionsOf, emphasis, type Label } from "@/lib/policy";
+import { byRelevance, connectionsOf, emphasis, type Label } from "@/lib/label-graph";
 import { LabelCard } from "./label-card";
 import { LabelDetail } from "./label-detail";
 
@@ -17,7 +17,7 @@ import { LabelDetail } from "./label-detail";
  * component only because pointing at a label lights up what it draws on, and
  * opening one shows its instruction; the data arrives already decided.
  */
-export function PolicyGraph({ labels, matches }: { labels: Label[]; matches: Matches }) {
+export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matches }) {
   const [focused, setFocused] = useState<string | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
 
@@ -69,8 +69,8 @@ export function PolicyGraph({ labels, matches }: { labels: Label[]; matches: Mat
   // as a second argument to anything that takes one.
   /**
    * The detection labels a derived label is built from. Read off the edge list
-   * rather than the label, so a reference to something that is not in the policy
-   * is filtered out here the same way it is everywhere else.
+   * rather than the label, so a reference to a label this user does not have is
+   * filtered out here the same way it is everywhere else.
    *
    * Only derived labels carry these. A detection label's own relationships — the
    * derived labels it feeds — are reachable by pointing at it, which lights them

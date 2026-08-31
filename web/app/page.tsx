@@ -1,5 +1,5 @@
 import { LegalLinks } from "@/components/legal";
-import { PolicyGraph } from "@/components/policy-graph";
+import { LabelGraph } from "@/components/label-graph";
 import { Account, SiteHeader, SignIn } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
 import type { Matches } from "@/lib/inbox/matches";
@@ -127,7 +127,7 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
           </span>
         </p>
       ) : (
-        <PolicyGraph labels={account.labels} matches={account.matches} />
+        <LabelGraph labels={account.labels} matches={account.matches} />
       )}
 
       <footer className="mt-14 border-t border-rule pt-5 sm:mt-20">

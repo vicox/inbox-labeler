@@ -576,7 +576,7 @@ test("one Google account is one owner, whether it arrives by MCP or by browser",
   const fromMcp = (await mcp(`google:${SUB}`, "get_labels")) as { labels: Label[] };
   const fromWeb = await home(await signIn(account(SUB, "parity@example.com")));
 
-  // Byte for byte the same policy, in the same order, with the same fields. Both
+  // Byte for byte the same labels, in the same order, with the same fields. Both
   // read the same rows through the same store, because the browser session
   // resolves to the same provider-qualified subject the access token carries.
   assert.deepEqual(fromWeb?.labels, fromMcp.labels);
@@ -883,7 +883,7 @@ test("the signed-in page reads the owner's matches, and only theirs", async () =
 });
 
 test("loading the signed-in page creates nothing", async () => {
-  // It renders what is there. A page that set a starter policy up on first view, or
+  // It renders what is there. A page that set a starter set of labels up on first view, or
   // counted its own render as a match, would be writing a mailbox's rules because
   // somebody looked at them.
   const session = await signIn(account("read-only", "read-only@example.com"));

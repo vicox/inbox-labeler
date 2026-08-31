@@ -1,7 +1,7 @@
 import type { SchemaModule } from "../../db/migrate.ts";
 
 /**
- * InboxLabeler's own state in Postgres: the policy, and what happened to it.
+ * InboxLabeler's own state in Postgres: the labels, and what happened to them.
  *
  * Four tables, and two halves: the labels the user defines, and what happened to
  * them. They stay apart for a reason — nothing about a count
@@ -17,7 +17,7 @@ import type { SchemaModule } from "../../db/migrate.ts";
  *
  * A label's text is its only identifier, in the files and here. There is no
  * surrogate id, because introducing one would invent an identity the product does
- * not have and would let the policy and its history disagree about which label is
+ * not have and would let a label and its history disagree about which label is
  * which. Instead every child table names `(user_id, label)` and carries a foreign
  * key with `ON UPDATE CASCADE`, which is what makes the two hard operations fall
  * out of the schema rather than out of application code:
@@ -30,7 +30,7 @@ import type { SchemaModule } from "../../db/migrate.ts";
  *                → cascades to the history, so none is orphaned;
  *                  and is REFUSED while another label references it
  *
- * There is no window in which the policy is under one name and its counts under
+ * There is no window in which a label is under one name and its counts under
  * another, because there is no second statement to be interrupted between.
  *
  * ## Privacy is a schema property here
