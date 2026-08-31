@@ -3,15 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
-import {
-  connectionsOf,
-  emphasis,
-  groupLabels,
-  groupOf,
-  type Label,
-  type LabelGroup,
-  type LabelGroupKey,
-} from "@/lib/label-graph";
+import { connectionsOf, emphasis, groupLabels, type Label, type LabelGroup } from "@/lib/label-graph";
 import { LabelCard } from "./label-card";
 import { LabelDetail } from "./label-detail";
 
@@ -38,11 +30,6 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
    */
   const connections = useMemo(() => connectionsOf(labels), [labels]);
   const lit = useMemo(() => emphasis(focused, connections), [focused, connections]);
-
-  // A reference names a label; a chip has to colour it, which takes the label
-  // itself. `connectionsOf` has already dropped every name this user does not
-  // have, so a miss here is not a case to report.
-  const byName = useMemo(() => new Map(labels.map((l) => [l.label, l])), [labels]);
 
   // Nothing configured yet. Two panels reading zero would look like a verdict on
   // this account's mail rather than on its setup, so the space says what is
@@ -88,14 +75,7 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
     label.type === "derived"
       ? connections
           .filter((c) => c.to === label.label)
-          .map((c) => {
-            const referenced = byName.get(c.from);
-            return {
-              name: c.from,
-              suggested: c.kind === "recommended",
-              group: referenced ? groupOf(referenced) : ("no-role" as const),
-            };
-          })
+          .map((c) => ({ name: c.from, suggested: c.kind === "recommended" }))
       : [];
 
   const card = (label: Label) => (
@@ -156,20 +136,14 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
 /**
  * One group, in its own surface.
  *
- * A panel is tinted by the kind of label it holds, and the cards inside it carry
- * the same family one step lighter — see `SURFACES` in `label-card.tsx`. `No role`
- * borrows no palette at all: it is not a fourth kind of label, and giving it a
- * colour of its own would suggest it were.
- *
- * Keyed by `LabelGroupKey`, so a new group is a type error here until it has a
- * surface, rather than a group that renders untinted.
+ * A panel is tinted by the type of label it holds, and the cards inside it carry
+ * the same family one step lighter. `Categories`, `Attributes` and `No role` all
+ * hold detection labels, so all three are the one warm colour — the headings and
+ * their notes are what tell them apart, and a colour per role would have said the
+ * same thing twice.
  */
-const TONES: Record<LabelGroupKey, string> = {
-  category: "border-category-rule bg-category",
-  attribute: "border-attribute-rule bg-attribute",
-  derived: "border-derived-rule bg-derived",
-  "no-role": "border-rule bg-transparent",
-};
+const DETECTION_TONE = "border-detection-rule bg-detection";
+const DERIVED_TONE = "border-derived-rule bg-derived";
 
 function Panel({
   group,
@@ -181,7 +155,11 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className={`rounded-2xl border p-5 sm:p-7 ${TONES[group.key]} ${className}`}>
+    <section
+      className={`rounded-2xl border p-5 sm:p-7 ${
+        group.key === "derived" ? DERIVED_TONE : DETECTION_TONE
+      } ${className}`}
+    >
       <header className="mb-6 flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
         <h2 className="font-display text-[22px] leading-none tracking-[-0.01em]">{group.title}</h2>
         <span className="text-[12px] text-ink-faint tabular-nums">{group.labels.length}</span>

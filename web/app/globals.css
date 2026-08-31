@@ -11,37 +11,31 @@
   --color-ink-faint: #a89e91;
   --color-rule: #e8ded1;
 
-  /* Two families, and colour says nothing else. Detection is a warm yellow — a
-     category the stronger of it, an attribute the lighter cream — and derived is
-     a soft coral beside them. Category carries a little more weight than
-     attribute because it answers the larger question, so the two differ in depth
-     rather than in hue: one degree apart, six points of lightness in the panel
-     and nine in the rule. All of it stays in the same key as the paper, and low
-     in saturation, because a page is mostly these surfaces.
+  /* Two families, and colour says nothing else. A label's **type** picks one:
+     detection warm, derived mint. Both sit in the same key as the paper — a panel
+     near 92% lightness, a rule near 83%, a card just off white — and stay low in
+     saturation, because a page is mostly these surfaces.
 
-     A detection label whose role nobody has settled borrows none of them. It takes
-     the page's own rule and a plain lift instead, because it is not a fourth kind
-     of label — it is one nobody has sorted, and giving it a colour of its own
-     would say otherwise.
+     Role is not an input here. A category, an attribute and a detection label
+     whose role nobody has settled are all the same yellow, because they are all
+     the same kind of thing: a fact read off the mail. Which fact it is, the page
+     says in words — the groups it sorts them into and the headings above them —
+     and a colour per role only spent the palette on a distinction the layout was
+     already making.
 
-     What a label asks of you is deliberately not in here. Attention is a mark on
-     the card and a line in its detail panel. An earlier version also dimmed the
-     surface of a label asking for none, which spent the one colour channel on two
-     different questions and left the surface unable to answer either on its own. */
-  --color-category: #f8e9bf;
-  --color-category-rule: #e7d093;
-  --color-category-card: #fffcf0;
+     What a label asks of you is not in here either. Attention is a mark on the
+     card and a line in its detail panel; it has never been a colour and is not
+     one now. */
+  --color-detection: #f9ebdd;
+  --color-detection-rule: #e9d3bd;
+  --color-detection-card: #fffaf4;
 
-  --color-attribute: #fcf2d9;
-  --color-attribute-rule: #efe0ba;
-  --color-attribute-card: #fffef9;
+  --color-derived: #e6f0e8;
+  --color-derived-rule: #c9dfcf;
+  --color-derived-card: #f9fdfa;
 
-  --color-derived: #f7ddd9;
-  --color-derived-rule: #e9bdb5;
-  --color-derived-card: #fffaf8;
-
-  /* Warm, so the three panels keep their colour under the detail overlay instead
-     of turning grey. */
+  /* Warm, so the peach and mint keep their colour under the detail overlay
+     instead of turning grey. */
   --color-scrim: rgba(120, 88, 52, 0.16);
 
   --color-thread: #c2ae98;

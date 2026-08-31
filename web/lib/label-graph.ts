@@ -127,11 +127,10 @@ const GROUPS: readonly Omit<LabelGroup, "labels">[] = [
 /**
  * Which group a label belongs to. Total: every label lands in exactly one.
  *
- * Exported because the panels are not the only thing that follows from it: a
- * card's own colour comes from here too, which is what makes it impossible for a
- * card to be tinted as one kind of label while sitting in the panel of another.
- * A label's `attention` is not a parameter and must never become one — what a
- * label asks of you is a different question from what kind of label it is.
+ * Grouping only. Colour comes from a label's `type`, not from here — a category,
+ * an attribute and a role-less detection label share one surface and are told
+ * apart by the group they are sorted into. `attention` is not a parameter to
+ * either, and must never become one.
  */
 export function groupOf(label: Label): LabelGroupKey {
   if (label.type === "derived") return "derived";

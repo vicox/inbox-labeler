@@ -127,8 +127,8 @@ it.
    [Gmail label colors](#gmail-label-colors) (the `IL` parent is created automatically); create
    `IL/processed` and `IL/no-match` with no color, since they are not business labels. For a
    business label that already exists, compare its current color to that table's value and call
-   `update_label` only when they differ — this is also where an existing label's color catches up
-   after its role was settled or changed.
+   `update_label` only when they differ — a label's type never changes, so this is only ever
+   catching up a label coloured under an older mapping.
 3. Find candidate threads with `search_threads`, query
    `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display name.
    If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use `pageSize: 50`.
@@ -253,32 +253,28 @@ carry, like the due date. Read those details as they stood when the email was wr
 
 ## Gmail label colors
 
-What a label **is** decides its business label's **Gmail color** — presentation only. Take it
-from this table and never choose a color by hand:
+A label's **type** decides its business label's **Gmail color** — presentation only. Take it from
+this table and never choose a color by hand:
 
 | Label | `backgroundColor` | `textColor` |
 | --- | --- | --- |
-| detection, `role: "category"` | `#fce8b3` | `#000000` |
-| detection, `role: "attribute"` | `#fef1d1` | `#000000` |
-| derived | `#efa093` | `#000000` |
-| detection with no `role` | `#cccccc` | `#000000` |
+| `detection` | `#fce8b3` | `#000000` |
+| `derived` | `#c6f3de` | `#000000` |
 
 These are tiles from Gmail's own label palette rather than free choices, so pass them exactly as
-written — Gmail refuses a color that is not one of its own. They are two families and a
-neutral: detection warm, with a category the deeper amber of it and an attribute the lighter,
-derived a coral beside them, and a role-less label plain grey. The website shows a label in the
-same four, one hierarchy on two palettes; the values differ because the palettes do, and neither
-side reads the other.
+written — Gmail refuses a color that is not one of its own. Two families, warm and mint, matching
+the two the website uses; the values differ because the palettes do, and neither side reads the
+other.
 
-**Attention has nothing to do with a color.** A `category` is the same amber whether it asks for
-`high`, `normal` or `none`, and so for the other three rows. `attention` is still part of every
-label's configuration and still arrives with it from `get_labels` — it is simply not what a Gmail
-color encodes. What a label asks of you is carried out on the *message* by
-`inbox-labeler-attention`.
+**A detection label's `role` has nothing to do with its color.** A category, an attribute and a
+detection label whose role nobody has settled are all the same yellow, because colour says what
+kind of label this is and all three are the same kind. The role still matters — it is how a label
+is modelled and how the website groups it — it is simply not something a Gmail label can show.
 
-A label with no `role` is grey because nobody has settled what it is, not because it asks for
-nothing. Settling the role is a modelling decision for `inbox-labeler-manage`; this run reads the
-role it finds and never fills one in.
+**Attention has nothing to do with it either.** A label is the same color whether it asks for
+`high`, `normal` or `none`. `attention` is still part of every label's configuration and still
+arrives with it from `get_labels` — it is simply not what a Gmail color encodes. What a label asks
+of you is carried out on the *message* by `inbox-labeler-attention`.
 
 Colors are written in step 2 and nowhere else. Compare before writing: **matching already → do
 nothing**. `IL/processed` and `IL/no-match` get no color, because they are not business labels and

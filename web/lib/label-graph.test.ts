@@ -226,25 +226,22 @@ test("no labels means no groups, so the page falls to its own empty state", () =
 });
 
 /**
- * `groupOf` is what the panel, the card surface and the reference chip all colour
- * from, so these are the colour tests: the four structural families, and the one
- * thing that must never reach them.
- *
- * The CSS values themselves are not asserted. They live in one exhaustive
- * `Record<LabelGroupKey, string>` per surface, which the compiler already checks
- * for a missing family — pinning the hex codes here would only make a designer
- * pick a shade the tests agree with.
+ * `groupOf` decides which section of the page a label is shown in — four of them,
+ * and no colour among them: a category, an attribute and a role-less detection
+ * label all render on the one detection surface, and only their type would change
+ * that. What these protect is the sorting, and the one input that must never
+ * reach it.
  */
-test("a structural family per kind of label, and no fifth", () => {
+test("a group per kind of label, and no fifth", () => {
   assert.equal(groupOf(detection("Travel", "category")), "category");
   assert.equal(groupOf(detection("Imminent", "attribute")), "attribute");
   assert.equal(groupOf(derivedLabel("Large invoice")), "derived");
-  // Modelled before roles existed: it keeps the page default rather than picking
-  // up a colour of its own, and nothing here guesses one from the name.
+  // Modelled before roles existed: it gets its own section rather than being
+  // hidden or guessed at, and it is a detection label like any other.
   assert.equal(groupOf(detection("Newsletter")), "no-role");
 });
 
-test("attention never decides the structural family", () => {
+test("attention never decides the group", () => {
   for (const attention of ["high", "normal", "none"] as const) {
     for (const role of ["category", "attribute"] as const) {
       assert.equal(groupOf({ ...detection("X", role), attention }), role);

@@ -176,25 +176,27 @@ check "the state markers are never recorded, and a no-match message has no call"
 echo
 echo "--- Gmail label colors ---"
 
-# The contract is the mapping and the reason for it: colour follows what a label
-# is, and the four families are exact Gmail palette values. The table is read in
+# The contract is the mapping and the reason for it: colour follows a label type,
+# and the two families are exact Gmail palette values. The table is read in
 # document order so a row cannot be silently swapped for another.
 colors=(
-    'What a label **is** decides its business label'
-    'detection, `role: "category"` | `#fce8b3` | `#000000`'
-    'detection, `role: "attribute"` | `#fef1d1` | `#000000`'
-    'derived | `#efa093` | `#000000`'
-    'detection with no `role` | `#cccccc` | `#000000`'
+    'A label'
+    'type** decides its business label'
+    '`detection` | `#fce8b3` | `#000000`'
+    '`derived` | `#c6f3de` | `#000000`'
 )
-check "category is deep amber, attribute light, derived coral, a role-less label grey" \
+check "detection is warm, derived is mint, and there are only those two" \
     "$(order_check "${colors[@]}")" "True"
 check "the values are Gmail palette tiles, passed exactly as written" \
     "$(order_check 'tiles from Gmail' 'pass them exactly as written')" "True"
+check "a detection label is the same colour whatever its role" \
+    "$(order_check 'role` has nothing to do with its color' \
+        'a detection label whose role nobody has settled are all the same yellow')" "True"
+check "the role still matters, just not for colour" \
+    "$(order_check 'The role still matters')" "True"
 check "attention never decides a business label colour" \
-    "$(order_check 'Attention has nothing to do with a color' \
-        'the same amber whether it asks for `high`, `normal` or `none`')" "True"
-check "a role-less label is grey for want of a decision, not for asking nothing" \
-    "$(order_check 'not because it asks for nothing' 'never fills one in')" "True"
+    "$(order_check 'Attention has nothing to do with it either' \
+        'the same color whether it asks for `high`, `normal` or `none`')" "True"
 check "colours are written in one step, and only when they differ" \
     "$(order_check 'Colors are written in step 2 and nowhere else' \
         'matching already → do nothing')" "True"
