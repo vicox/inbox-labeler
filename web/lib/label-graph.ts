@@ -16,8 +16,8 @@ export type Label = {
   label: string;
   type: "detection" | "derived";
   /**
-   * Detection labels only: whether the fact is a category — what kind of email
-   * this is — or an attribute — what it contains, indicates or requires.
+   * Detection labels only: whether the fact is a category — what the email is or
+   * is about — or an attribute — something additionally true about it.
    *
    * Optional, because a detection label created before the distinction existed has
    * none until somebody decides with the user which it is. Anything rendering it
@@ -123,19 +123,19 @@ const GROUPS: readonly Omit<LabelGroup, "labels">[] = [
   {
     key: "category",
     title: "Categories",
-    note: "What kind of email is this?",
+    note: "What is this email about?",
     tone: "detection",
   },
   {
     key: "attribute",
     title: "Attributes",
-    note: "What does it contain, indicate or require?",
+    note: "What else is true about it?",
     tone: "detection",
   },
   {
     key: "derived",
     title: "Derived",
-    note: "Conclusions drawn from those facts.",
+    note: "What follows from those facts?",
     tone: "derived",
   },
   {

@@ -161,7 +161,7 @@ function Panel({
       <header className="mb-6 flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
         <h2 className="font-display text-[22px] leading-none tracking-[-0.01em]">{group.title}</h2>
         <span className="text-[12px] text-ink-faint tabular-nums">{group.labels.length}</span>
-        <p className="w-full text-[12.5px] text-ink-soft lg:ml-auto lg:w-auto">{group.note}</p>
+        <p className="w-full text-[12.5px] text-ink-soft">{group.note}</p>
       </header>
       <div className="flex flex-col gap-3">{children}</div>
     </section>
