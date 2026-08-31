@@ -26,8 +26,8 @@ Nothing runs on its own. You ask, and something happens — see
 
 ## A concrete example
 
-Take three labels from [`labels.example.json`](data/labels.example.json),
-the reference set introduced in [Getting started](#getting-started). Each one starts from two
+Take three labels from the starter set
+[`inbox-labeler-setup`](skills/inbox-labeler-setup/SKILL.md) creates. Each one starts from two
 directly observed facts, combines them into something more useful, and then shows Attention as
 the separate, final step:
 
@@ -136,7 +136,7 @@ labels comes out `normal`, so it is left alone. The policies above are fixed and
 
 A label's own Attention also sets its Gmail label's **color**, using Gmail's muted palette so
 it stays out of the way — `none` light gray, `normal` muted yellow, `high` muted red, from the
-one mapping `labels.py` keeps for it. Color is purely
+one mapping the processing skill keeps for it. Color is purely
 presentation: it never feeds back into what a label detects or how attention is computed, and
 message processing never recolors a message — only the Gmail label itself, and only Detection
 and Derived Labels get one; the reserved system labels never do. It's set the moment a Gmail
@@ -150,13 +150,14 @@ reserved system labels.
 
 ## Getting started
 
-**New to Inbox Labeler? Start from
-[`labels.example.json`](data/labels.example.json).** It's a small,
-coherent set of detection labels, derived labels built on top of them, and attention levels —
-production-quality and usable as-is, but meant as a demonstration of the core modeling
-concepts, not a one-size-fits-all configuration. Copy the labels you want into your own
-`data/labels.json` (or paste them one at a time through the CLI) and adjust the instructions to your
-own mail. It is not imported automatically; nothing in Inbox Labeler ever reads it on its own.
+**New to Inbox Labeler? Say "set up Inbox Labeler".** The
+[`inbox-labeler-setup`](skills/inbox-labeler-setup/SKILL.md) skill creates a small, coherent
+starter set — eleven detection labels, four derived labels built on top of them, and the
+attention each asks for. It is production-quality and usable as-is, but meant as a demonstration
+of the core modelling concepts rather than a one-size-fits-all configuration: adjust the
+instructions to your own mail afterwards, through
+[`inbox-labeler-manage`](skills/inbox-labeler-manage/SKILL.md). Setup only ever runs into an
+empty account, and it creates nothing if labels are already there.
 
 Then say things like "add a label for invoices" or "list my labels" to manage them, and one of
 these two to label mail — there is no third thing to remember, because recording what matched
@@ -276,55 +277,6 @@ Two more rules keep the references honest:
   label is in the way. Nothing is rewritten for you: drop the reference or delete the derived
   label first.
 
-### CLI examples
-
-From `skills/inbox-labeler/`:
-
-```bash
-python3 labels.py list
-python3 labels.py get "Large amount"
-
-# a detection label
-python3 labels.py create --label "Invoices" \
-  --instruction "The message is an invoice or bill for a purchase or service."
-
-# a derived label — the reference flags are repeatable
-python3 labels.py create --label "Large invoice" --type derived \
-  --instruction "An invoice whose amount is large enough to need a closer look." \
-  --required-label "Invoices" --required-label "Large amount"
-
-python3 labels.py update "Invoices" --instruction "The message is an invoice, bill or receipt."
-
-# rename, rewriting every reference to it
-python3 labels.py update "Large amount" --label "Big amount"
-
-python3 labels.py delete "Invoices"
-
-# set what a label asks of you
-python3 labels.py update "Newsletter" --attention none
-python3 labels.py update "Imminent" --attention high
-
-# the two helpers the attention command uses — these touch nothing
-python3 labels.py attention "Invoices" "Imminent"   # which level do these labels add up to?
-python3 labels.py policy none --age 30h             # and what follows for a 30h old message?
-python3 labels.py color high                        # which Gmail color does this level get?
-```
-
-`--label` takes the label itself — `Invoices`, not `IL/Invoices`. Anything starting with `IL/`
-is rejected, as are the reserved system labels `processed` and `no-match`. Spaces are expected; quote the
-argument.
-
-`--type` defaults to `detection` and `--attention` to `normal`; every command prints both, so
-the kind of label and what it asks for are always visible. Unknown values are rejected.
-
-`--required-label` and `--recommended-label` apply to derived labels only and name existing
-detection labels by their exact text. On update they replace the stored list rather than adding
-to it; passing an empty value clears it.
-
-`get`, `update` and `delete` address a label by its text, matched case-insensitively. Passing
-`--label` to `update` renames the label. Every command prints JSON; on a validation failure it
-prints `{"error": "..."}` and exits with status 1.
-
 ## How processing works
 
 `process` labels; `attention` acts on those labels. Two commands, two jobs.
@@ -399,7 +351,7 @@ never coexist on a message — the outcome is one or the other. Derived labels d
 `IL/no-match`, since it is decided before they are evaluated.
 
 `processed` and `no-match` are **reserved system labels** — internal implementation detail, not
-something a user models. `labels.py` rejects them on create, on rename and on delete, in any
+something a user models. Inbox Labeler rejects them on create, on rename and on delete, in any
 casing, so `Processed` and `NO-MATCH` are refused too.
 
 `IL/no-match` is what makes an empty result visible. Without it, a message that matched
@@ -447,56 +399,29 @@ matters — `process` first, so the mail it just labelled falls into `attention`
 same run rather than waiting an hour.
 
 Everything the task needs must already be in place: the Gmail connector connected, and label
-definitions either in the local copy or in Drive for step zero to load. A run with no
-definitions stops and reports instead of doing anything.
+labels already in the account for step zero to load. A run with no labels stops and reports
+instead of doing anything.
 
 ## Persistence
 
-Inbox Labeler's **state** is two files:
+Inbox Labeler's state lives in the **Inbox Labeler MCP server**, one set of labels and one match
+history per authenticated Google account. There is nothing local to read and nothing to load
+first: an empty list is a normal starting state for a new account, not an error, and the labels
+are reached only through the MCP tools, which validate before writing.
 
-| | | |
-| --- | --- | --- |
-| `labels.json` | **required** | the **policy** — every label, its type, its instruction, its attention |
-| `matches.json` | **optional** | the **match history** — aggregated counts, absent until a run records something |
+Because the account is established by the access token rather than named in a call, there is no
+argument anywhere that says whose labels to read — see [Per-user state](#per-user-state) for how
+that is enforced, and [Where hosted state lives](#where-hosted-state-lives) for the tables.
 
-The `gdrive-store` skill synchronises that state with Google Drive. Two places, with one of them
-in charge:
-
-| | |
-| --- | --- |
-| **Google Drive**, `Inbox Labeler/` | **canonical** — the state of record |
-| `data/` | the local working copy the agent reads while running |
-
-Neither local copy is committed — both are in `.gitignore`, so the repository holds only source,
-documentation and the example file.
-
-**Loading is automatic, saving is not.** Before processing anything, Inbox Labeler checks the
-local copy; if it is empty it loads the definitions from Drive through the
-`gdrive-store` skill. If Drive has none either, it stops and says so rather than
-processing with an empty rulebook. Changes you make with the CLI or by asking Claude land in
-the local copy only — say **"save the labels"** to write them back to Drive.
-
-**"save the labels" saves the match history too**, when there is one; if `data/matches.json`
-does not exist yet, that is not an error and nothing is invented to fill the gap.
-
-Saving always creates a *new* file in the Drive folder and the newest one of each name is
-canonical; older versions stay put. The Drive connector cannot update or delete a file in place,
-so pruning old versions is a manual job in the Drive UI.
-
-Loading works the other way and is blunt about it: a file that comes down from Drive **replaces**
-the local one, because Drive is what is canonical. For counts that is worth knowing — matches
-recorded since the last save are lost when a newer history is loaded, so save first if a run has
-happened in between. A missing `matches.json` in Drive changes nothing locally; it means no
-history stored yet, not a failure.
-
-Nothing needs to be set up to start: the first `list` or `create` writes an empty
-`data/labels.json`. Deleting `labels.example.json` changes nothing at runtime — see
-[Getting started](#getting-started) for what it's there for.
+Nothing needs to be set up to start. A new account has no labels and none are invented for it —
+`get_labels` answers with an empty list, and the starter set arrives only when somebody asks for
+it, from [`inbox-labeler-setup`](skills/inbox-labeler-setup/SKILL.md).
 
 ## What matched, and how often
 
-`data/matches.json` counts how often each label has matched, and is the one thing Inbox Labeler
-keeps after a run. It is written only by `matches.py`; label definitions never hold a count.
+The match history counts how often each label has matched, and is the one thing Inbox Labeler
+keeps after a run. It is written only by `record_matches` and read only by `get_matches`; label
+definitions never hold a count.
 
 **It records that a label matched, not what it matched.** Per label it holds the newest email
 timestamp it has seen and a count per calendar day — nothing more. No subject, no sender, no
@@ -505,7 +430,7 @@ to a message:
 
 ```json
 {
-  "Invoices": {
+  "Invoice": {
     "last_matched_at": "2026-08-20T10:12:00Z",
     "daily_matches": {
       "2026-08-18": 2,
@@ -518,29 +443,12 @@ to a message:
 
 The timestamp is **the email's own**, never the moment of the run, so labelling a year-old
 message raises that year-old day's count. `last_matched_at` only ever moves forward: the newest
-email a label has matched, not the last time the store was written. Days with no matches are
-not stored. The file is optional: it does not exist until a run records something, and it is
-local and gitignored, like `labels.json`.
+email a label has matched, not the last time anything was written. Days with no matches are not
+stored, and a label that has never matched is simply absent rather than present and zero.
 
-Recording is part of `process` — see [How processing works](#how-processing-works). By hand:
-
-```bash
-cd skills/inbox-labeler
-python3 matches.py record --at 2026-08-20T10:12:00Z "Invoices" "Large amount"
-python3 matches.py list                  # every label that has ever matched
-python3 matches.py get "Invoices"        # one label
-```
-
-A rename carries the counts across and a delete removes them, both driven from `labels.py`, so
-the two files never disagree about which labels exist.
-
-The `gdrive-store` skill has its own two commands, for checking either file by hand:
-
-```bash
-cd skills/gdrive-store
-python3 store.py validate FILE            # every problem at once, not just the first
-python3 store.py format   FILE [--write]  # stable, human-readable JSON
-```
+Recording is part of processing — see [How processing works](#how-processing-works). A rename
+carries the counts across and a delete removes them, in the same write, so the labels and their
+counts never disagree about which labels exist.
 
 ## Remote MCP (development)
 
@@ -555,8 +463,8 @@ inboxlabeler.com
 ```
 
 A connected client can manage the labels and read the match history of whichever
-Inbox Labeler user authenticated — the same model the CLI works on, for a hosted
-account rather than a local file:
+Inbox Labeler user authenticated — one owner per Google account, established by the
+access token rather than named in any call:
 
 | Tool | |
 | --- | --- |
@@ -801,16 +709,10 @@ is no column for a subject, sender, recipient, body, message id, thread id or
 attachment, and no table with a row per email — the store can answer "how often does
 this label fire" and is structurally unable to answer anything about a message.
 
-A new user starts empty. [`labels.example.json`](data/labels.example.json) is
-documentation, and nothing in Inbox Labeler has ever read it on its own — locally or
-here — so a first `get_labels` returns an empty list rather than labels somebody else
-chose.
-
-The local [`labels.py`](skills/inbox-labeler/labels.py) and
-[`matches.py`](skills/inbox-labeler/matches.py) remain the semantic reference and
-remain supported: the file-based workflow is unchanged, and
-`web/lib/inbox/parity.test.ts` reads the Python source to check the two have not
-drifted apart on what a label is.
+A new user starts empty: a first `get_labels` returns an empty list rather than
+labels somebody else chose. Nothing seeds an account, and the starter set is
+created only on request — see
+[`inbox-labeler-setup`](skills/inbox-labeler-setup/SKILL.md).
 
 ### Running it
 
@@ -1039,9 +941,7 @@ public landing page and its closed-beta notice, and signed in it is the visitor'
 labels. The signed-in half reads them server-side through `inboxStore(visitor.user)` —
 the same store `get_labels` and `get_matches` answer from, scoped to the account the
 session cookie resolves to — so the page and an MCP client on one Google account
-always agree. Nothing in the web app reads `data/labels.json` or `data/matches.json`;
-those are the local workflow's files and stay where they are, for the local skill and
-`gdrive-store` to use.
+always agree. There is no local label file any more: the store is the only place labels live.
 
 ### What is not finished
 
@@ -1065,34 +965,21 @@ those are the local workflow's files and stay where they are, for the local skil
 
 ## Repository layout
 
-Six Agent Skills implement Inbox Labeler, in two arrangements:
+Four Agent Skills implement Inbox Labeler, one per job:
 
 | Skill | Owns |
 | --- | --- |
-| **`inbox-labeler`** | **local:** the labels, and the Gmail work — `process` and `attention` |
-| **`gdrive-store`** | **local:** the canonical state in Google Drive — `labels.json` and `matches.json`, loading and saving both |
-| **`inbox-labeler-setup`** | **hosted:** initialize an empty Inbox Labeler with a starter label set |
-| **`inbox-labeler-manage`** | **hosted:** create, model, rename and delete labels |
-| **`inbox-labeler-process`** | **hosted:** classify new unread inbox mail, and record what matched |
-| **`inbox-labeler-attention`** | **hosted:** star or mark read the mail that has already been processed |
+| **`inbox-labeler-setup`** | initialize an empty Inbox Labeler with a starter label set |
+| **`inbox-labeler-manage`** | create, model, rename and delete labels |
+| **`inbox-labeler-process`** | classify new unread inbox mail, and record what matched |
+| **`inbox-labeler-attention`** | star or mark read the mail that has already been processed |
 
-The first two are one arrangement and the last four are the other; nothing is shared between them
-at runtime. The local skill does every job in one document; the hosted side is one skill per job,
-so an agent asked to rename a label does not also load the ten-message bound and the Gmail query.
-Both arrangements process the **same mail**, under the same rule — a message is eligible when it
-is in the inbox, unread and not yet carrying `IL/processed` — and both stop after **ten
-messages**.
+One skill per job, so an agent asked to rename a label does not also load the ten-message bound
+and the Gmail query. All four reach labels and match history through the same remote MCP server,
+and the two that touch mail use Gmail as well. A message is eligible for processing when it is in
+the inbox, unread and not yet carrying `IL/processed`, and a run stops after **ten messages**.
 
 ```
-skills/inbox-labeler/
-├── SKILL.md              the instructions the agent follows
-├── labels.py             the CRUD implementation (Python 3 stdlib, no dependencies)
-├── matches.py            how often each label matches — counts only, never mail
-└── test.sh               the test suite — runs in a temp dir, touches nothing real
-skills/gdrive-store/
-├── SKILL.md              how to load and save the canonical state in Drive
-├── store.py              validation and stable serialisation
-└── test.sh               its own test suite
 skills/inbox-labeler-setup/
 ├── SKILL.md              the starter label set, created into an empty configuration
 └── test.sh               its own test suite
@@ -1105,104 +992,79 @@ skills/inbox-labeler-process/
 skills/inbox-labeler-attention/
 ├── SKILL.md              the Gmail state that follows from the labels already on a message
 └── test.sh               its own test suite
-data/
-├── labels.example.json   documentation only, never read at runtime
-├── labels.json           the working copy — local, gitignored, created on first use
-└── matches.json          match counts — local, gitignored, created on first use
 web/
 ├── app/                  the web UI, and the MCP and OAuth routes
 └── lib/
     ├── identity.ts       who an authenticated request belongs to — one stable id
     ├── db.ts, db/        one Postgres connection, and the migrations for all three schemas
     ├── mcp/              the MCP server, its tools, and the auth boundary
-    ├── inbox/            per-user labels and match history — labels.py's semantics
+    ├── inbox/            per-user labels and match history
     └── oauth/            the authorization server: discovery, grants, tokens
 README.md
 ```
 
-`skills/` is the one copy of each skill, and it names no agent. The agents reach it through
-symlinks, described below. The labels live outside both skills in `data/`, because they are
-the user's, not the skill's — a second reader such as the web UI needs them just as much.
+`skills/` is the one copy of each skill, and it names no agent.
 
 ### How the skills are found
 
-Agents discover skills by directory, not by filename — a `SKILL.md` sitting at a repository
-root is *not* picked up. It must be at `<skills-dir>/<skill-name>/SKILL.md`, and each agent
-looks under a different `<skills-dir>`: Claude Code under `.claude/skills/`, Codex under
-`.agents/skills/`. Both are committed here as symlinks back to `skills/`:
+Agents discover skills by directory, not by filename — a `SKILL.md` sitting at a repository root
+is *not* picked up. It must be at `<skills-dir>/<skill-name>/SKILL.md`, and each agent looks
+under a different `<skills-dir>`: Claude Code under `.claude/skills/`, Codex under
+`.agents/skills/`.
 
-```
-.claude/skills/inbox-labeler  -> ../../skills/inbox-labeler
-.agents/skills/inbox-labeler  -> ../../skills/inbox-labeler
-```
-
-So there is no installation step and no copy to keep in sync. Start either agent in this
-project and both skills are there:
-
-```bash
-cd /path/to/inbox-labeler
-claude        # or: codex
-```
-
-Confirm with `/skills` in Claude Code or `/skills` in Codex — they appear as `inbox-labeler`
-and `gdrive-store` — or just ask "list my labels".
-
-**To use the skills in every project**, link them into your personal skills directory, which
-is `~/.claude/skills/` for Claude Code and `~/.agents/skills/` for Codex:
+Nothing is committed under either. These four skills reach your labels through the remote MCP
+server rather than through anything in this checkout, so they are useful from any project — link
+the ones you want into your personal skills directory instead:
 
 ```bash
 mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/inbox-labeler" ~/.claude/skills/inbox-labeler
+for skill in setup manage process attention; do
+  ln -s "$PWD/skills/inbox-labeler-$skill" ~/.claude/skills/inbox-labeler-$skill
+done
 ```
 
-Link rather than copy: `labels.py` resolves the store relative to its own location, so a copy
-outside this repository would read a `data/labels.json` somewhere else. Restart the agent
-after adding it.
+Restart the agent afterwards and confirm with `/skills`. Then connect the MCP server — see
+[Remote MCP (development)](#remote-mcp-development) — and ask for what you want: "set up Inbox
+Labeler", "add a label for invoices", "process my inbox".
 
 ## Testing
 
-No test framework, just a shell script per skill. Each copies its module into a temporary
-directory, so your own labels are never touched:
+No test framework: a shell script per skill, and `node --test` for the web application.
 
 ```bash
-skills/inbox-labeler/test.sh            # the labels, attention, and the documented flows
-skills/gdrive-store/test.sh             # validation and serialisation, for both files
 skills/inbox-labeler-setup/test.sh      # the starter set, checked as data
 skills/inbox-labeler-manage/test.sh     # the label model and the boundaries around it
 skills/inbox-labeler-process/test.sh    # eligibility, the ten-message bound, the two stages
 skills/inbox-labeler-attention/test.sh  # the scope, the ranking, and its two writes
+cd web && npm test                      # the store, the MCP boundary, OAuth, and sign-in
 ```
 
-Each prints one line per check and exits non-zero if any fails. Between them they cover the CRUD
-surface, label identity and renaming, the two label types and their references including cycle
-detection, the reserved system labels, attention levels and the policy each one implies, and
-migration from older stores.
+Each skill script prints one line per check and exits non-zero if any fails. The four are
+**Markdown contract regression tests**: they ask one question — did someone remove or alter an
+explicit contract rule? — using canonical phrases, exact table data, counts and document order,
+because those flows live in prose rather than code and would otherwise drift. They deliberately
+do not try to prove that no sentence anywhere in a `SKILL.md` could contradict the contract; that
+is a reviewer's job, and each file says so.
 
-The four hosted suites are **Markdown contract regression tests**. They ask one question — did
-someone remove or alter an explicit contract rule? — using canonical phrases, exact table data,
-counts and document order, because those flows live in prose rather than code and would otherwise
-drift. They deliberately do not try to prove that no sentence anywhere in a `SKILL.md` could
-contradict the contract; that is a reviewer's job, and each file says so.
-
-Migration is worth knowing about, and there is no command to run for it. A store written by an
-earlier version may carry a technical `id`, a separate `name`, an `IL/` prefix on the label, or
-no `type` at all. Loading it drops the `id` and `name`, falls back to the old `name` if the
-label is missing, strips one leading `IL/`, trims and collapses whitespace, and fills in
-`type: detection` — all in memory, so `list` already shows the current shape and the next write
-persists it. Turning a `CamelCase` label into a readable phrase is a rename you make
-deliberately: `update "LargeAmount" --label "Large amount"`, which carries the references
-along.
+The setup suite is the one that reads a table as data: it checks that the fifteen starter labels
+are still the agreed fifteen, with the agreed types, attention levels and references, in the
+agreed creation order, and that the fifteen instructions below that table are those same fifteen
+labels in that same order. The instruction *text* is pinned nowhere — `SKILL.md` is the only
+definition of what Setup creates, and a second copy of it would only be a second thing to keep
+true.
 
 ## Scope
 
-Deliberately small: a JSON file per store, no database, no server, no auth of its own, no
-scheduler, no UI. Gmail and Drive work happens through Claude's connectors as described in each
-`SKILL.md`; the Python modules never touch the network.
+Deliberately small. One store per account, in Postgres, reached only through the hosted
+application: the MCP endpoint for a client, the signed-in page for a browser. No scheduler, and
+nothing runs in the background — a run happens when somebody asks for one. Mailbox work happens
+through Claude's Gmail connector as described in each `SKILL.md`; nothing in this repository
+holds a Google credential of the user's, and no skill reaches the network on its own.
 
 The classifying itself is Claude reading the email against your instructions — there is no model
 called from the code, no prompt file, and nothing to configure. Which is also why two runs over
 the same mail can differ in judgement, while everything deterministic — validation, label
-identity, attention levels, the policy for each level — lives in the modules and is tested.
+identity, attention levels, the policy for each level — lives in `web/lib/` and is tested.
 
 ## License
 

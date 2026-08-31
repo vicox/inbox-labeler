@@ -3,9 +3,8 @@ import type { SchemaModule } from "../../db/migrate.ts";
 /**
  * InboxLabeler's own state in Postgres: the policy, and what happened to it.
  *
- * Four tables, and the shape follows the two files it replaces. `labels.json` is
- * the policy the user writes; `matches.json` is what happened to it. They stay
- * apart here for the same reason they are two files — nothing about a count
+ * Four tables, and two halves: the labels the user defines, and what happened to
+ * them. They stay apart for a reason — nothing about a count
  * belongs in a label definition, and a label with no history should have no
  * history rather than a row full of nulls.
  *
@@ -91,8 +90,8 @@ export const INBOX_SCHEMA: SchemaModule = {
             ON UPDATE CASCADE ON DELETE CASCADE,
 
           -- Renaming the referenced label rewrites every reference to it, and
-          -- deleting one is refused while a reference remains. Both are rules the
-          -- local implementation states in prose; here they are the schema.
+          -- deleting one is refused while a reference remains. The skills state both
+          -- rules in prose; here they are the schema, so neither can be forgotten.
           CONSTRAINT inbox_label_references_target
             FOREIGN KEY (user_id, target) REFERENCES inbox_labels (user_id, label)
             ON UPDATE CASCADE ON DELETE RESTRICT,

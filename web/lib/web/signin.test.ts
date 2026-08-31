@@ -913,11 +913,11 @@ test("the signed-in page opens one store, for the session owner, and writes noth
   }
 });
 
-test("an authenticated page never falls back to the local fixture files", async () => {
+test("the web app reads labels from the store, never from a file", async () => {
   // The columns were first written against data/labels.json and data/matches.json,
-  // fetched through a public /api/labels. Both are gone: a signed-in reader sees
-  // their own rows or nothing, never files that belong to the local CLI and to no
-  // account at all.
+  // fetched through a public /api/labels. The endpoint is gone, so is the store that
+  // wrote those files, and no label file remains in the repository at all. A
+  // signed-in reader sees their own rows or nothing, and this keeps it that way.
   assert.equal(
     existsSync(new URL("../../app/api/labels", import.meta.url)),
     false,

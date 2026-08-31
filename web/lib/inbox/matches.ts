@@ -3,8 +3,7 @@ import { LabelError } from "./labels.ts";
 /**
  * How often a label matches, and when it last did — the rules, not the storage.
  *
- * This is `skills/inbox-labeler/matches.py`'s timestamp handling in TypeScript.
- * What is stored, and nothing else:
+ * The timestamp handling, and what is stored — nothing else:
  *
  *     the label          the text, exactly as the policy spells it
  *     a calendar day     derived from the email's own timestamp, in UTC
@@ -23,7 +22,7 @@ import { LabelError } from "./labels.ts";
  * at the boundary that knows about emails — not in the counter.
  */
 
-/** One label's history, exactly as `matches.json` holds it. */
+/** One label's history, exactly as the store holds it and `get_matches` returns it. */
 export type MatchHistory = {
   /** The newest email timestamp this label has matched, or null if it never has. */
   last_matched_at: string | null;
@@ -31,7 +30,7 @@ export type MatchHistory = {
   daily_matches: Record<string, number>;
 };
 
-/** `matches.json`: label text to its history. A label may simply be absent. */
+/** Label text to its history. A label that has never matched is simply absent. */
 export type Matches = Record<string, MatchHistory>;
 
 /** A label with no history yet, which is a normal state rather than a gap. */

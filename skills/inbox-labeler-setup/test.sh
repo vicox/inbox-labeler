@@ -16,8 +16,13 @@
 # contract, which is what regressions actually look like.
 #
 # Most of the value is in the starter set, which is pure data: fifteen rows with
-# a type, an Attention level and a reference list, plus fifteen instructions,
-# twelve of which must still be the tested wording from data/labels.example.json.
+# a type, an Attention level and a reference list, and fifteen instructions that
+# have to be the fifteen labels of that table, in its order.
+#
+# The instruction *text* is not pinned anywhere. SKILL.md is the only definition
+# of what Setup creates, and a second copy of those instructions — in a fixture or
+# in this file — would only be a second thing to keep true. Rewording one is a
+# review question, not something this suite can answer.
 #
 # Markers avoid apostrophes: they are passed inside single-quoted shell words.
 #
@@ -26,9 +31,7 @@
 set -u
 
 SCRIPT_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
-REPO_ROOT="$(cd -P "$SCRIPT_DIR/../.." && pwd -P)"
 SKILL="$SCRIPT_DIR/SKILL.md"
-EXAMPLES="$REPO_ROOT/data/labels.example.json"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -59,93 +62,26 @@ print(True)
 PYEOF
 
 # Reads the instruction blocks — "**N. `Label`** — type, `attention`" followed by
-# a blockquote — and answers one question about them. Everything it does is
-# literal: both comparisons are string equality after whitespace collapsing,
-# never a reading of what an instruction means. The twelve reused instructions
-# are compared against data/labels.example.json; the three written for this
-# skill have no such source, so their reviewed text is pinned here instead.
-# Between them every one of the fifteen is fixed data.
+# a blockquote — and answers one question about them, all of it literal.
 cat > "$WORK/instructions.py" <<'PYEOF'
-import json, os, re, sys
-
-AUTHORED = {                     # the three written for this skill,
-                                 # canonical text from the reviewed SKILL.md
-    "Deadline": """
-        The message states a concrete deadline, due date, expiration,
-        cutoff, or latest time by which something must or may be done —
-        'submit by 30 October', 'payment due Friday', 'respond before 5 PM',
-        'registration closes 10 September', 'offer expires tomorrow',
-        'documents must arrive by the 15th'. What matters is that a specific
-        point in time is named by which something has to happen; the
-        recipient does not have to be the one who acts, as long as the
-        message communicates a concrete deadline that concerns them. Judge a
-        relative date against the email's own date, not the current date.
-        Does not match vague urgency with no stated cutoff ('as soon as
-        possible', 'don't miss out', 'limited time'). This label says
-        nothing about whether the deadline is near — that is Imminent — so a
-        deadline months away matches just as fully as one tomorrow.
-    """,
-    "Cancellation": """
-        The message states that something planned, booked, scheduled,
-        ordered, subscribed or reserved has been cancelled, or is being
-        cancelled by the sender: a cancelled flight, a cancelled
-        appointment, a cancelled reservation, a cancelled order, a cancelled
-        event, a subscription cancellation confirmation. The cancellation
-        has to be an accomplished fact the message reports — 'Your booking
-        has been cancelled' matches; 'Please cancel my booking' does not,
-        because nothing has been cancelled yet. Does not match cancellation
-        policies, instructions explaining how to cancel, marketing that
-        mentions 'cancel anytime', or a hypothetical cancellation. It is not
-        restricted to travel: a cancelled dentist appointment and a
-        cancelled software subscription match the same way.
-    """,
-    "Travel disruption": """
-        A booked or planned part of the trip has been cancelled, so the trip
-        itself is now disrupted and has to be rearranged — a cancelled
-        flight, train, ferry, hotel reservation, rental car or other travel
-        booking. Read the two detection matches as established facts and
-        decide only whether together they amount to a disruption of a trip
-        of the recipient's own. Does not apply when the cancellation is not
-        part of such a trip: a general travel cancellation policy, travel
-        marketing, or a cancellation mentioned by a travel provider that
-        affects no booking of theirs.
-    """,
-}
-
-REUSED = [                       # starter label, label it was taken from
-    ("Action required", "Action required"), ("Question", "Question"),
-    ("Imminent", "Imminent"), ("Invoice", "Invoices"),
-    ("Large amount", "Large amount"), ("Delivery", "Delivery"),
-    ("Marketing", "Marketing"), ("Newsletter", "Newsletter"),
-    ("Travel", "Travel"), ("Large invoice", "Large invoice"),
-    ("Delivery arriving soon", "Delivery arriving soon"),
-    ("Promotional newsletter", "Promotional newsletter"),
-]
-
-flat = lambda s: re.sub(r"\s+", " ", s).strip()
+import os, re, sys
+# The instruction blocks, checked against the table above them — both read out of
+# the same file. Nothing here holds a copy of an instruction: the question it
+# answers is whether the two halves of SKILL.md still describe the same fifteen
+# labels in the same order, which is what silently breaks when one is edited.
 md = open(os.environ["SKILL"], encoding="utf-8").read()
-blocks = re.findall(r"\*\*(\d+)\. `([^`]+)`\*\* — [^\n]*\n\n((?:> [^\n]*\n)+)", md)
-order = [name for _, name, _ in blocks]
-text = {name: flat("".join(line[2:] for line in quote.splitlines(True)))
-        for _, name, quote in blocks}
+
+table = re.findall(r"^\| \d+ \| `([^`]+)` \|", md, re.M)
+blocks = re.findall(r"^\*\*(\d+)\. `([^`]+)`\*\* — [^\n]*\n\n(?:> [^\n]*\n)+", md, re.M)
+order = [name for _, name in blocks]
 
 what = sys.argv[1]
 if what == "count":
     print(len(blocks))
-elif what == "order":
-    print(",".join(order))
-elif what == "new":
-    print(",".join(n for n in order if n not in dict(REUSED)))
-elif what == "reused":
-    source = {l["label"]: l["instruction"]
-              for l in json.load(open(sys.argv[2], encoding="utf-8"))}
-    missed = [new for new, old in REUSED if text.get(new) != flat(source[old])]
-    print("%d/%d%s" % (len(REUSED) - len(missed), len(REUSED),
-                       "" if not missed else " " + ",".join(missed)))
-elif what == "authored":
-    missed = [name for name, want in AUTHORED.items() if text.get(name) != flat(want)]
-    print("%d/%d%s" % (len(AUTHORED) - len(missed), len(AUTHORED),
-                       "" if not missed else " " + ",".join(missed)))
+elif what == "numbering":
+    print(",".join(n for n, _ in blocks))
+elif what == "agree":
+    print("yes" if order == table else f"table={table} blocks={order}")
 PYEOF
 
 order_check() { SKILL="$SKILL" python3 "$WORK/order.py" "$@"; }
@@ -257,15 +193,9 @@ echo
 echo "--- the instructions ---"
 
 check "there are fifteen instruction blocks, one per starter label" "$(blocks count)" "15"
-check "  …in the same order as the table" \
-    "$(blocks order)" \
-    "Action required,Question,Imminent,Deadline,Cancellation,Invoice,Large amount,Delivery,Marketing,Newsletter,Travel,Large invoice,Delivery arriving soon,Promotional newsletter,Travel disruption"
-check "exactly three instructions are newly written" \
-    "$(blocks new)" "Deadline,Cancellation,Travel disruption"
-check "the twelve reused instructions are identical to labels.example.json" \
-    "$(blocks reused "$EXAMPLES")" "12/12"
-check "the three newly written instructions are identical to their canonical text" \
-    "$(blocks authored)" "3/3"
+check "  …the table labels, in the table order" "$(blocks agree)" "yes"
+check "  …numbered 1 to 15, so the list and the table can be read together" \
+    "$(blocks numbering)" "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
 check "the instructions are copied verbatim, not paraphrased" \
     "$(order_check 'Do not paraphrase them, shorten them or adapt them to the user')" "True"
 

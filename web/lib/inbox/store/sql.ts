@@ -126,8 +126,8 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
           throw error;
         }
 
-        // Reference lists are replaced rather than merged, which is what the
-        // local CLI does: passing them says what they should now be.
+        // Reference lists are replaced rather than merged: passing one says what it
+        // should now be, and passing an empty one clears it.
         await tx.query(`DELETE FROM inbox_label_references WHERE user_id = $1 AND label = $2`, [
           owner,
           entry.label,
@@ -291,8 +291,8 @@ async function readLabels(sql: Transaction, owner: string): Promise<Label[]> {
 /**
  * The match history, keyed by label text.
  *
- * A label with no counts and no timestamp is simply absent, the way it is absent
- * from `matches.json` — which is why this reads the two match tables rather than
+ * A label with no counts and no timestamp is simply absent rather than present and
+ * zero — which is why this reads the two match tables rather than
  * every label. `only` narrows it to the labels just recorded.
  */
 async function readMatches(sql: Transaction, owner: string, only?: readonly string[]): Promise<Matches> {

@@ -144,7 +144,7 @@ for (const driver of drivers) {
 
     // --- creating ---------------------------------------------------------
 
-    test("a created label carries the defaults the local CLI gives it", async () => {
+    test("a created label carries the documented defaults", async () => {
       const { alice } = await fresh();
       const entry = await alice.createLabel({ label: "Invoices", instruction: "an invoice" });
 
@@ -174,7 +174,7 @@ for (const driver of drivers) {
       );
     });
 
-    test("the label rules match the local implementation's", async () => {
+    test("the label rules are the documented ones", async () => {
       const { alice } = await fresh();
       const create = (label: string) => alice.createLabel({ label, instruction: "x" });
 

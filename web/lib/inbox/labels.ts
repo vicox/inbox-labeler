@@ -1,19 +1,15 @@
 /**
  * What a label is, and every rule about one that does not need a database.
  *
- * This is `skills/inbox-labeler/labels.py` expressed in TypeScript, and that
- * file is the reference: the local CLI and the hosted MCP endpoint are two ways
- * into one product, so a label that the CLI accepts must be a label the endpoint
- * accepts, spelled and rejected the same way. Where a rule could be written
- * either as prose or as a shared mechanism, it is written twice on purpose —
- * a build step bridging Python and TypeScript for six field names would cost
- * more than it saves — and `labels.parity.test.ts` reads the Python source to
- * check the vocabulary has not drifted.
+ * This is the definition: what a label is, what spellings are accepted, and how
+ * one is rejected. Every way into the product goes through it — the MCP tools, the
+ * signed-in page, the store — so there is one answer to "is this a valid label"
+ * rather than one per caller. `store/` adds only what needs the database.
  *
- * The field names are snake_case because they are `labels.json`'s field names,
- * not this language's. `lib/policy.ts` describes the same file for the web UI's
- * own reading of it; the two agree because they are both descriptions of that
- * one document.
+ * The field names are snake_case because they are the label's own field names,
+ * the ones an MCP client passes and reads back, not this language's.
+ * `lib/policy.ts` describes the same shape for the web UI; the two agree because
+ * they are both descriptions of one document.
  */
 
 /** The Gmail namespace InboxLabeler owns. Labels are stored without it. */
@@ -24,9 +20,8 @@ export const GMAIL_NAMESPACE = "IL/";
  *
  * The order is the priority aggregation follows: `normal` is the absence of a
  * request, so any label that does ask for something outranks it, and `high`
- * outranks `none`. Nothing in this file aggregates — the local `attention`
- * command does — but the order is part of the vocabulary and is checked against
- * the Python source.
+ * outranks `none`. Nothing here aggregates — `inbox-labeler-attention` does, per
+ * message — but the order is part of the vocabulary and belongs with it.
  */
 export const ATTENTION_LEVELS = ["normal", "none", "high"] as const;
 export type Attention = (typeof ATTENTION_LEVELS)[number];
@@ -53,7 +48,7 @@ export const RESERVED_LABELS: Readonly<Record<string, string>> = {
 export const REFERENCE_FIELDS = ["required_labels", "recommended_labels"] as const;
 export type ReferenceField = (typeof REFERENCE_FIELDS)[number];
 
-/** A label, exactly as `labels.json` holds one. */
+/** A label, exactly as the store holds one and `get_labels` returns it. */
 export type Label = {
   label: string;
   type: LabelType;
@@ -70,8 +65,8 @@ export type Label = {
  *
  * Its own class so a store can tell a rejected label from a database failure,
  * and so the MCP tools can answer one as the caller's problem and the other as
- * ours. The messages deliberately echo the CLI's, because someone moving between
- * the two should not have to learn a second vocabulary of complaints.
+ * ours. The messages are the ones the product uses everywhere, so a client and a
+ * reader of the skills meet one vocabulary of complaints rather than two.
  */
 export class LabelError extends Error {
   override readonly name = "LabelError";
@@ -202,9 +197,9 @@ export function checkTypeUnchanged(existing: Label, wanted: LabelType): void {
  * A label with its fields in canonical order, and reference lists only where
  * they belong.
  *
- * The order is `labels.json`'s: label, type, attention, instruction, then the
- * references. It is what the file looks like, so it is what the MCP endpoint
- * returns — a client reading both should not see two orders for one document.
+ * The order is the one the product documents: label, type, attention, instruction,
+ * then the references. It is what the MCP endpoint returns and what the skills
+ * describe — a client and a reader should not see two orders for one label.
  */
 export function orderLabel(entry: Label): Label {
   const ordered: Label = {
@@ -230,7 +225,7 @@ export function byLabel(labels: readonly Label[]): Label[] {
 // --- messages the store needs ---------------------------------------------
 //
 // Built here rather than at the query, so that every complaint the product makes
-// about a label is written in one file and can be read against labels.py.
+// about a label is written in one place and worded the same way each time.
 
 export function labelNotFound(label: string): LabelError {
   return new LabelError(`no label "${normalise(label)}" (use get_labels to see them)`);

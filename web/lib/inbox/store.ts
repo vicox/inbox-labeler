@@ -93,10 +93,10 @@ export type { Attention, Label, LabelType, ReferenceField, Matches };
  * could be anything a request body contained; this type only exists on the far
  * side of a verified token.
  *
- * A new user has no state and none is created for them. `labels.example.json` is
- * documentation — nothing in InboxLabeler has ever read it on its own, locally
- * or here — so a first `get_labels` returns an empty list rather than fifteen
- * labels somebody else chose.
+ * A new user has no state and none is created for them: a first `get_labels`
+ * returns an empty list rather than fifteen labels somebody else chose. The
+ * starter set lives in `skills/inbox-labeler-setup`, and arrives only when
+ * somebody asks for it.
  */
 export async function inboxStore(user: AuthenticatedUser): Promise<ProductStore> {
   const driver = await prepared();
