@@ -107,8 +107,14 @@ export function LabelCard({
             </span>
           )}
         </span>
+        {/* The arrow says which way the dependency runs, so the line reads as one
+            statement — "Large invoice ← Invoice + Large amount" — rather than as a
+            row of loose names beneath a title. */}
         {references.length > 0 && (
-          <span className="mt-2 flex flex-wrap gap-1.5">
+          <span className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span aria-hidden="true" className="text-[12px] leading-4 text-ink-faint">
+              ←
+            </span>
             {references.map((reference) => (
               <Reference
                 key={reference.name}

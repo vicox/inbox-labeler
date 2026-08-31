@@ -95,6 +95,87 @@ export function connectionsOf(labels: Label[]): Connection[] {
 }
 
 /**
+ * The four groups the signed-in page reads best in, in reading order.
+ *
+ * Three of them are the model as it stands: the two kinds of fact a detection
+ * label can state, and the conclusions drawn from them. The fourth is not a kind
+ * of anything — it is where a detection label goes when nobody has said yet
+ * whether it is a category or an attribute.
+ *
+ * `no-role` is a grouping in this file and nowhere else. It is not a role, not a
+ * type, and not a value any label carries: `Label.role` is `"category"`,
+ * `"attribute"` or absent, and absent is what puts a label in this group. Nothing
+ * here reads a name or an instruction to work one out, and nothing writes.
+ */
+export type LabelGroupKey = "category" | "attribute" | "derived" | "no-role";
+
+export type LabelGroup = {
+  key: LabelGroupKey;
+  title: string;
+  /** One short line saying what question the group answers. */
+  note: string;
+  /** Which palette the group borrows. `no-role` borrows none. */
+  tone: "detection" | "derived" | "neutral";
+  labels: Label[];
+};
+
+const GROUPS: readonly Omit<LabelGroup, "labels">[] = [
+  {
+    key: "category",
+    title: "Categories",
+    note: "What kind of email is this?",
+    tone: "detection",
+  },
+  {
+    key: "attribute",
+    title: "Attributes",
+    note: "What does it contain, indicate or require?",
+    tone: "detection",
+  },
+  {
+    key: "derived",
+    title: "Derived",
+    note: "Conclusions drawn from those facts.",
+    tone: "derived",
+  },
+  {
+    key: "no-role",
+    title: "No role",
+    note: "Not yet a category or an attribute.",
+    tone: "neutral",
+  },
+];
+
+/** Which group a label belongs to. Total: every label lands in exactly one. */
+function groupOf(label: Label): LabelGroupKey {
+  if (label.type === "derived") return "derived";
+  return label.role ?? "no-role";
+}
+
+/**
+ * Every label sorted into its group, ordered within it, empty groups dropped.
+ *
+ * Two properties this is written to have, both of them the reason it is a function
+ * rather than four filters at the call site. **Every label appears exactly once**:
+ * `groupOf` is total and returns one key, so a label cannot be shown twice and —
+ * the failure that matters — cannot vanish for want of a role. And **an empty
+ * group is absent**, which is what keeps `No role` off the page for an account
+ * whose labels all have one, without a special case for it.
+ *
+ * `perDay` is passed in for the same reason `byRelevance` takes it: how often a
+ * label matches is not something a label carries.
+ */
+export function groupLabels(labels: Label[], perDay: (label: Label) => number): LabelGroup[] {
+  return GROUPS.map((group) => ({
+    ...group,
+    labels: byRelevance(
+      labels.filter((label) => groupOf(label) === group.key),
+      perDay,
+    ),
+  })).filter((group) => group.labels.length > 0);
+}
+
+/**
  * Which labels to emphasise while `focused` is hovered or focused: itself, and
  * whatever sits on the other side of its relationships. Null means nothing is
  * focused and every label stands at full strength.

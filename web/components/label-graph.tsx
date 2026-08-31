@@ -3,12 +3,14 @@
 import { useMemo, useState } from "react";
 
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
-import { byRelevance, connectionsOf, emphasis, type Label } from "@/lib/label-graph";
+import { connectionsOf, emphasis, groupLabels, type Label, type LabelGroup } from "@/lib/label-graph";
 import { LabelCard } from "./label-card";
 import { LabelDetail } from "./label-detail";
 
 /**
- * The labels one account has, as the two columns they divide into.
+ * The labels one account has, as the groups they divide into: the two kinds of
+ * fact a detection label states, the conclusions drawn from them, and — only when
+ * there are any — the detection labels nobody has sorted yet.
  *
  * Given its data rather than fetching it. The page above is a Server Component
  * that has already opened the signed-in user's store, so there is nothing here to
@@ -52,18 +54,11 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
   // reports its age against the same moment, and both columns order against it.
   const now = new Date();
 
-  // Ordered here rather than memoised: the order depends on `now`, which changes
-  // every render, so memoising it would only add a dependency that never holds.
-  // Twenty-five labels cost nothing to sort.
+  // Grouped here rather than memoised: the order inside each group depends on
+  // `now`, which changes every render, so memoising would only add a dependency
+  // that never holds. Twenty-five labels cost nothing to sort.
   const rate = (label: Label) => matchesPerDay(matches[label.label], now);
-  const detection = byRelevance(
-    labels.filter((l) => l.type === "detection"),
-    rate,
-  );
-  const derived = byRelevance(
-    labels.filter((l) => l.type === "derived"),
-    rate,
-  );
+  const groups = groupLabels(labels, rate);
 
   // One parameter only: this goes straight into Array.map, which passes the index
   // as a second argument to anything that takes one.
@@ -98,29 +93,38 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
     />
   );
 
+  // The three model groups share a row where there is room for one; `No role` is
+  // deliberately outside it. It comes and goes with the account rather than with
+  // the layout, and a conditional cell would reflow the other three when it did.
+  const model = groups.filter((group) => group.key !== "no-role");
+  const unsorted = groups.find((group) => group.key === "no-role");
+
   return (
     <>
-      {/* No items-start: the two panels stay the same height whichever of them
-          holds more labels. */}
-      <div className="grid gap-6 md:grid-cols-2 md:gap-x-24">
-        <Panel
-          tone="detection"
-          title="Detection"
-          note="What's in the email?"
-          count={detection.length}
-        >
-          {detection.map(card)}
-        </Panel>
-
-        <Panel
-          tone="derived"
-          title="Derived"
-          note="What does it mean to you?"
-          count={derived.length}
-        >
-          {derived.map(card)}
-        </Panel>
+      {/* Categories and Attributes pair off first — both are facts about the mail.
+          Derived takes the width beneath them until there is room for three
+          abreast, because its cards carry the labels they are built from. */}
+      <div className="grid gap-6 md:grid-cols-2 md:gap-x-10 lg:grid-cols-3 lg:gap-x-12">
+        {model.map((group) => (
+          <Panel
+            key={group.key}
+            group={group}
+            className={
+              group.key === "derived" && model.length > 2 ? "md:col-span-2 lg:col-span-1" : ""
+            }
+          >
+            {group.labels.map(card)}
+          </Panel>
+        ))}
       </div>
+
+      {/* Rendered only because there is something in it. Full width and last: it
+          is a gap in the model rather than a part of it, and reads as one there. */}
+      {unsorted && (
+        <div className="mt-6">
+          <Panel group={unsorted}>{unsorted.labels.map(card)}</Panel>
+        </div>
+      )}
 
       {openedLabel && (
         <LabelDetail label={openedLabel} feeds={feeds} onClose={() => setOpened(null)} />
@@ -129,33 +133,35 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
   );
 }
 
+/**
+ * One group, in its own surface.
+ *
+ * Categories and Attributes share the detection palette because they are both
+ * detection facts — the note is what tells them apart, which is why it stays
+ * visible at every width. `No role` borrows no palette at all: it is not a third
+ * kind of fact, and giving it a colour of its own would suggest it were.
+ */
+const TONES: Record<LabelGroup["tone"], string> = {
+  detection: "border-detection-rule bg-detection",
+  derived: "border-derived-rule bg-derived",
+  neutral: "border-rule bg-transparent",
+};
+
 function Panel({
-  tone,
-  title,
-  note,
-  count,
+  group,
+  className = "",
   children,
 }: {
-  tone: "detection" | "derived";
-  title: string;
-  note: string;
-  count: number;
+  group: LabelGroup;
+  className?: string;
   children: React.ReactNode;
 }) {
-  const detection = tone === "detection";
   return (
-    <section
-      className={[
-        "rounded-2xl border p-5 sm:p-7",
-        detection ? "border-detection-rule bg-detection" : "border-derived-rule bg-derived",
-      ].join(" ")}
-    >
-      {/* The note carries the only thing that tells the two detection panels
-          apart, so it stays visible at every width. */}
+    <section className={`rounded-2xl border p-5 sm:p-7 ${TONES[group.tone]} ${className}`}>
       <header className="mb-6 flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
-        <h2 className="font-display text-[22px] leading-none tracking-[-0.01em]">{title}</h2>
-        <span className="text-[12px] text-ink-faint tabular-nums">{count}</span>
-        <p className="w-full text-[12.5px] text-ink-soft lg:ml-auto lg:w-auto">{note}</p>
+        <h2 className="font-display text-[22px] leading-none tracking-[-0.01em]">{group.title}</h2>
+        <span className="text-[12px] text-ink-faint tabular-nums">{group.labels.length}</span>
+        <p className="w-full text-[12.5px] text-ink-soft lg:ml-auto lg:w-auto">{group.note}</p>
       </header>
       <div className="flex flex-col gap-3">{children}</div>
     </section>

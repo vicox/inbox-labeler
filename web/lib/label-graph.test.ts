@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { byRelevance, connectionsOf, type Attention, type Label } from "./label-graph.ts";
+import {
+  byRelevance,
+  connectionsOf,
+  groupLabels,
+  type Attention,
+  type Label,
+} from "./label-graph.ts";
 
 function label(name: string, attention: Attention = "normal"): Label {
   return { label: name, type: "detection", attention, instruction: "x" };
@@ -100,4 +106,120 @@ test("a detection label feeding two derived labels appears in both", () => {
     .filter((c) => c.from === "Invoices")
     .map((c) => c.to);
   assert.deepEqual(feeds, ["Large invoice", "Any invoice"]);
+});
+
+// --- the groups the signed-in page reads in --------------------------------
+//
+// Tested here rather than through the rendered page: the grouping is where a
+// label could be lost or shown twice, and it is a pure function of the labels.
+
+/** A detection label with a role, or deliberately without one. */
+function detection(name: string, role?: "category" | "attribute"): Label {
+  return { label: name, type: "detection", ...(role ? { role } : {}), attention: "normal", instruction: "x" };
+}
+
+function derivedLabel(name: string, required: string[] = []): Label {
+  return {
+    label: name,
+    type: "derived",
+    attention: "normal",
+    instruction: "x",
+    required_labels: required,
+    recommended_labels: [],
+  };
+}
+
+/** The groups as `{ key: [names] }`, which is what these tests are about. */
+const grouped = (labels: Label[], rates: Record<string, number> = {}) =>
+  Object.fromEntries(
+    groupLabels(labels, (l) => rates[l.label] ?? 0).map((g) => [g.key, g.labels.map((l) => l.label)]),
+  );
+
+test("each kind of label lands in its own group", () => {
+  const labels = [
+    detection("Invoice", "category"),
+    detection("Deadline", "attribute"),
+    derivedLabel("Large invoice", ["Invoice"]),
+  ];
+
+  assert.deepEqual(grouped(labels), {
+    category: ["Invoice"],
+    attribute: ["Deadline"],
+    derived: ["Large invoice"],
+  });
+});
+
+test("a detection label with no role goes to No role, and stays a detection label", () => {
+  const legacy = detection("Legacy");
+  assert.equal("role" in legacy, false, "the fixture really has no role");
+
+  const groups = groupLabels([detection("Invoice", "category"), legacy], () => 0);
+  const noRole = groups.find((g) => g.key === "no-role");
+
+  assert.deepEqual(noRole?.labels.map((l) => l.label), ["Legacy"]);
+  // Grouped, not changed: nothing infers a role, and the label is untouched.
+  assert.equal(noRole?.labels[0].type, "detection");
+  assert.equal("role" in noRole!.labels[0], false);
+  assert.equal(legacy.role, undefined);
+});
+
+test("No role is absent when every detection label has one", () => {
+  const groups = groupLabels(
+    [detection("Invoice", "category"), detection("Deadline", "attribute")],
+    () => 0,
+  );
+  assert.equal(groups.some((g) => g.key === "no-role"), false);
+  assert.deepEqual(groups.map((g) => g.key), ["category", "attribute"]);
+});
+
+test("every label appears exactly once, and none is dropped", () => {
+  const labels = [
+    detection("Invoice", "category"),
+    detection("Delivery", "category"),
+    detection("Deadline", "attribute"),
+    detection("Legacy one"),
+    detection("Legacy two"),
+    derivedLabel("Large invoice", ["Invoice"]),
+  ];
+
+  const shown = groupLabels(labels, () => 0).flatMap((g) => g.labels.map((l) => l.label));
+
+  assert.equal(shown.length, labels.length, "no label is shown twice and none vanishes");
+  assert.deepEqual([...shown].sort(), labels.map((l) => l.label).sort());
+});
+
+test("the groups come in reading order, and each is ordered by relevance", () => {
+  const labels = [
+    detection("Rare", "category"),
+    detection("Busy", "category"),
+    detection("Deadline", "attribute"),
+    detection("Legacy"),
+    derivedLabel("Large invoice"),
+  ];
+
+  const groups = groupLabels(labels, (l) => ({ Busy: 9, Rare: 0.1 })[l.label] ?? 0);
+  assert.deepEqual(groups.map((g) => g.key), ["category", "attribute", "derived", "no-role"]);
+  // byRelevance inside the group, unchanged: busier first at the same attention.
+  assert.deepEqual(groups[0].labels.map((l) => l.label), ["Busy", "Rare"]);
+});
+
+test("a derived label keeps the references the card and the detail read", () => {
+  const labels = [
+    detection("Invoice", "category"),
+    detection("Large amount", "attribute"),
+    derivedLabel("Large invoice", ["Invoice", "Large amount"]),
+  ];
+
+  const shown = groupLabels(labels, () => 0).find((g) => g.key === "derived")?.labels[0];
+  assert.deepEqual(shown?.required_labels, ["Invoice", "Large amount"]);
+  assert.deepEqual(shown?.recommended_labels, []);
+  // And the edge list the card renders from still finds both.
+  assert.deepEqual(
+    connectionsOf(labels).filter((c) => c.to === "Large invoice").map((c) => c.from),
+    ["Invoice", "Large amount"],
+  );
+});
+
+test("no labels means no groups, so the page falls to its own empty state", () => {
+  assert.deepEqual(groupLabels([], () => 0), []);
 });
