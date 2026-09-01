@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  byRelevance,
+  byFrequency,
   connectionsOf,
   groupLabels,
   groupOf,
@@ -16,14 +16,9 @@ function label(name: string, attention: Attention = "normal"): Label {
 
 /** Reads the order back as names, which is what the test is about. */
 const order = (labels: Label[], rates: Record<string, number> = {}) =>
-  byRelevance(labels, (l) => rates[l.label] ?? 0).map((l) => l.label);
+  byFrequency(labels, (l) => rates[l.label] ?? 0).map((l) => l.label);
 
-test("attention leads, high before normal before none", () => {
-  const labels = [label("quiet", "none"), label("plain"), label("loud", "high")];
-  assert.deepEqual(order(labels), ["loud", "plain", "quiet"]);
-});
-
-test("within a level the busier label comes first", () => {
+test("the busier label comes first", () => {
   const labels = [label("rare"), label("busy"), label("middling")];
   assert.deepEqual(order(labels, { busy: 5, middling: 1, rare: 0.1 }), [
     "busy",
@@ -32,25 +27,43 @@ test("within a level the busier label comes first", () => {
   ]);
 });
 
-test("a busy label never outranks a level above it", () => {
-  const labels = [label("busy"), label("idle", "high")];
-  assert.deepEqual(order(labels, { busy: 99 }), ["idle", "busy"]);
-});
-
 test("labels that match equally often fall back to their names", () => {
   const labels = [label("Newsletter"), label("Delivery"), label("Marketing")];
   const same = { Newsletter: 0.3, Delivery: 0.3, Marketing: 0.3 };
   assert.deepEqual(order(labels, same), ["Delivery", "Marketing", "Newsletter"]);
 });
 
-test("labels that never matched land alphabetically at the foot of their level", () => {
-  const labels = [
-    label("Wohnung"),
-    label("busy"),
-    label("Invoices"),
-    label("Birthday", "high"),
+test("labels that never matched land alphabetically at the foot", () => {
+  const labels = [label("Wohnung"), label("busy"), label("Invoices"), label("Birthday")];
+  assert.deepEqual(order(labels, { busy: 2 }), ["busy", "Birthday", "Invoices", "Wohnung"]);
+});
+
+test("attention has no bearing on the order, even where the names decide it", () => {
+  // Equal frequencies, so the name is what orders these and attention is the only
+  // thing left that could interfere. A tie-break on attention before the name
+  // would reorder them; nothing else would.
+  const same = { Birthday: 3, Invoices: 3, Wohnung: 3 };
+  const alphabetical = ["Birthday", "Invoices", "Wohnung"];
+
+  // Every arrangement of the three levels over the same three names, including the
+  // ones that would put a `high` last and a `none` first if attention were read.
+  const arrangements: Attention[][] = [
+    ["high", "normal", "none"],
+    ["none", "normal", "high"],
+    ["normal", "high", "none"],
+    ["none", "high", "normal"],
+    ["high", "high", "high"],
+    ["none", "none", "none"],
   ];
-  assert.deepEqual(order(labels, { busy: 2 }), ["Birthday", "busy", "Invoices", "Wohnung"]);
+
+  for (const [first, second, third] of arrangements) {
+    const labels = [
+      label("Wohnung", first),
+      label("Birthday", second),
+      label("Invoices", third),
+    ];
+    assert.deepEqual(order(labels, same), alphabetical, `attention ${first}/${second}/${third}`);
+  }
 });
 
 test("ordering does not disturb the array it was given", () => {
@@ -189,7 +202,7 @@ test("every label appears exactly once, and none is dropped", () => {
   assert.deepEqual([...shown].sort(), labels.map((l) => l.label).sort());
 });
 
-test("the groups come in reading order, and each is ordered by relevance", () => {
+test("the groups come in reading order, and each is ordered by frequency", () => {
   const labels = [
     detection("Rare", "category"),
     detection("Busy", "category"),
@@ -200,7 +213,7 @@ test("the groups come in reading order, and each is ordered by relevance", () =>
 
   const groups = groupLabels(labels, (l) => ({ Busy: 9, Rare: 0.1 })[l.label] ?? 0);
   assert.deepEqual(groups.map((g) => g.key), ["category", "attribute", "derived", "no-role"]);
-  // byRelevance inside the group, unchanged: busier first at the same attention.
+  // byFrequency inside the group: busier first.
   assert.deepEqual(groups[0].labels.map((l) => l.label), ["Busy", "Rare"]);
 });
 

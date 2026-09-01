@@ -8,9 +8,9 @@
  * a label is.
  */
 
-export const ATTENTION_ORDER = ["high", "normal", "none"] as const;
+export const ATTENTION_LEVELS = ["high", "normal", "none"] as const;
 
-export type Attention = (typeof ATTENTION_ORDER)[number];
+export type Attention = (typeof ATTENTION_LEVELS)[number];
 
 export type Label = {
   label: string;
@@ -39,25 +39,25 @@ export type Label = {
 export type Connection = { from: string; to: string; kind: "required" | "recommended" };
 
 /**
- * The order a column is read in, most worth looking at first: what the label
- * asks of you, then how often it fires, then its name.
+ * The order a group is read in: busiest first, then by name.
  *
- * Attention leads because it is the label's own declaration about itself. The
- * rate breaks the ties within a level, so a busy label is not buried among quiet
- * ones. The name breaks what is left, which is what puts every label that has
- * never matched into a predictable alphabetical block at the foot of its level
- * rather than in file order nobody can see.
+ * How often a label matches is the one thing about it that is worth ranking, and
+ * it is what a reader is looking for — which of these is actually doing work. The
+ * name breaks ties, which is what puts every label that has never matched into a
+ * predictable alphabetical block at the foot of the group rather than in an order
+ * nobody can see. Two labels matching equally often always come out the same way
+ * round.
+ *
+ * What a label asks of you does not come into it. `attention` is a request about
+ * mail, not a claim about the label being more worth reading than its neighbour,
+ * and ranking by it buried busy labels under idle ones that happened to ask for
+ * more.
  *
  * `perDay` is passed in rather than read here: how often a label matches is not
  * something a label carries.
  */
-export function byRelevance(labels: Label[], perDay: (label: Label) => number): Label[] {
-  return [...labels].sort(
-    (a, b) =>
-      ATTENTION_ORDER.indexOf(a.attention) - ATTENTION_ORDER.indexOf(b.attention) ||
-      perDay(b) - perDay(a) ||
-      a.label.localeCompare(b.label),
-  );
+export function byFrequency(labels: Label[], perDay: (label: Label) => number): Label[] {
+  return [...labels].sort((a, b) => perDay(b) - perDay(a) || a.label.localeCompare(b.label));
 }
 
 /**
@@ -148,13 +148,13 @@ export function groupOf(label: Label): LabelGroupKey {
  * group is absent**, which is what keeps `No role` off the page for an account
  * whose labels all have one, without a special case for it.
  *
- * `perDay` is passed in for the same reason `byRelevance` takes it: how often a
+ * `perDay` is passed in for the same reason `byFrequency` takes it: how often a
  * label matches is not something a label carries.
  */
 export function groupLabels(labels: Label[], perDay: (label: Label) => number): LabelGroup[] {
   return GROUPS.map((group) => ({
     ...group,
-    labels: byRelevance(
+    labels: byFrequency(
       labels.filter((label) => groupOf(label) === group.key),
       perDay,
     ),
