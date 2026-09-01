@@ -26,9 +26,10 @@ type Props = {
 };
 
 /**
- * One label, on either side. Every card is the same surface, a step lighter than
- * the panel holding it — neither its type nor its role tints it, and the column it
- * sits in is what says which it is.
+ * One label, on either side. A card carries its panel's surface a step lighter —
+ * mint for a derived label, warm for everything else. Its role does not come into
+ * it: a category, an attribute and a label with neither look the same, and the
+ * column they sit in is what tells them apart.
  *
  * The name sits at the left and the rate at the right of the same line, with
  * when it last matched underneath. A derived label also names the detection
@@ -69,7 +70,9 @@ export function LabelCard({
         aria-label={`${label.label}, ${label.type} label`}
         className={[
           "block w-full cursor-pointer rounded-lg border px-5 py-4 text-left",
-          "border-label-rule bg-label-card",
+          label.type === "derived"
+            ? "border-derived-rule bg-derived-card"
+            : "border-label-rule bg-label-card",
           "min-h-[62px] transition-shadow duration-200 ease-out",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
           lit ? "shadow-[0_1px_0_rgba(28,26,23,0.10)]" : "shadow-none",
@@ -124,9 +127,9 @@ export function LabelCard({
 }
 
 /**
- * A detection label a derived label is built from. Carries the panel's surface
- * rather than the card's, a shade behind the card it sits on, so the names read as
- * something the card refers to rather than part of it.
+ * A detection label a derived label is built from. Carries the warm surface of the
+ * panel that label lives in rather than the mint of the card it sits on: it names a
+ * label from another column, and that is the whole point of it being here.
  *
  * Required labels all have to match before the derived label is even evaluated;
  * recommended ones are context, present or not. Dashed says the difference, and

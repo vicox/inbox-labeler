@@ -11,12 +11,19 @@
   --color-ink-faint: #a89e91;
   --color-rule: #e8ded1;
 
-  /* The surface every label sits on, panel to card. One colour for all of them:
-     what a label is, what it asks of you and what it has matched are all said in
-     words on the page, so nothing is left for a tint to say. */
+  /* The surface a label sits on, panel to card. One warm colour for everything a
+     label can be, with one exception: a derived label is mint, because it is the
+     only one that is not a fact read off the mail but a conclusion drawn from one
+     or more of them. Nothing finer than that is a colour — a label's role and what
+     it asks of you are said in words on the page, and a tint could only repeat them
+     less precisely. */
   --color-label: #f9ebdd;
   --color-label-rule: #e9d3bd;
   --color-label-card: #fffaf4;
+
+  --color-derived: #e6f0e8;
+  --color-derived-rule: #c9dfcf;
+  --color-derived-card: #f9fdfa;
 
   /* Warm, so the label surfaces keep their colour under the detail overlay
      instead of turning grey. */

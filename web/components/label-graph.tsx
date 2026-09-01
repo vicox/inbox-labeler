@@ -136,9 +136,10 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
 /**
  * One group, on the one label surface.
  *
- * Every panel is the same surface, and the cards inside it the same one a step
- * lighter. What separates the groups is the heading, the note under it and the
- * count beside it.
+ * Derived sits on the mint surface and the other three on the warm one, because
+ * `Categories`, `Attributes` and `No role` all hold facts read off the mail and
+ * differ only in how they were modelled — which their headings already say. The
+ * cards inside a panel carry its surface a step lighter.
  */
 function Panel({
   group,
@@ -150,7 +151,11 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className={`rounded-2xl border border-label-rule bg-label p-5 sm:p-7 ${className}`}>
+    <section
+      className={`rounded-2xl border p-5 sm:p-7 ${
+        group.key === "derived" ? "border-derived-rule bg-derived" : "border-label-rule bg-label"
+      } ${className}`}
+    >
       <header className="mb-6 flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
         <h2 className="font-display text-[22px] leading-none tracking-[-0.01em]">{group.title}</h2>
         <span className="text-[12px] text-ink-faint tabular-nums">{group.labels.length}</span>

@@ -127,11 +127,11 @@ const GROUPS: readonly Omit<LabelGroup, "labels">[] = [
 /**
  * Which group a label belongs to. Total: every label lands in exactly one.
  *
- * Grouping only — which section of the page a label is shown in, and nothing
- * about how it looks. Categories, Attributes, Derived and No role all render on
- * the same neutral label surface; a label's type, role and attention pick no
- * colour, here or anywhere. `attention` is not a parameter to this and must never
- * become one.
+ * Grouping only — which section of the page a label is shown in. What separates
+ * those sections visually is one step coarser than this: Categories, Attributes
+ * and No role share the warm surface, and Derived alone is mint. A label's role
+ * and what it asks of you pick no colour at all. `attention` is not a parameter
+ * to this and must never become one.
  */
 export function groupOf(label: Label): LabelGroupKey {
   if (label.type === "derived") return "derived";
