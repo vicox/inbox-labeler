@@ -38,12 +38,16 @@ const MIN_WINDOW_DAYS = 7;
  * the number to a single digit, so fourteen a week is read back as two a day and
  * twenty a month as five a week: a small number in a familiar unit rather than a
  * big one in a coarse one.
+ *
+ * Abbreviated to a letter because a rate sits at the end of a label's name line,
+ * where the room is whatever the name leaves. `days` is what picks the unit and is
+ * not the abbreviation: changing a suffix changes what is read, never when.
  */
 const UNITS = [
-  { suffix: "year", days: 365 },
-  { suffix: "month", days: 30 },
-  { suffix: "week", days: 7 },
-  { suffix: "day", days: 1 },
+  { suffix: "y", days: 365 },
+  { suffix: "m", days: 30 },
+  { suffix: "w", days: 7 },
+  { suffix: "d", days: 1 },
 ] as const;
 
 /** The UTC day a "YYYY-MM-DD" key names, counted from the epoch. */
@@ -79,11 +83,11 @@ export function matchesPerDay(entry: MatchEntry | undefined, now: Date): number 
 }
 
 /**
- * A label's match rate, as one small number and a unit — "~3/day", "~4/year", or
- * "—" when there is too little to report.
+ * A label's match rate, as one small number and a unit — "~3/d", "~4/y", or "—"
+ * when there is too little to report.
  *
  * The tilde is not decoration. This is an average over a window, rounded to a
- * single digit; a bare "4/month" would read as a count someone had made, and the
+ * single digit; a bare "4/m" would read as a count someone had made, and the
  * number is not that precise. Saying "about" is the honest form.
  *
  * Derived from the daily counts alone; last_matched_at says nothing about how
@@ -101,7 +105,7 @@ export function matchRate(entry: MatchEntry | undefined, now: Date): string {
   }
   // More than nine a day: the number stops being single-digit before the unit
   // stops being the right one.
-  return `~${Math.round(perDay)}/day`;
+  return `~${Math.round(perDay)}/d`;
 }
 
 /**

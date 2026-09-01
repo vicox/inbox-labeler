@@ -43,21 +43,21 @@ test("a label with no history at all has no rate", () => {
 });
 
 test("about five a day reads as five a day", () => {
-  assert.equal(matchRate(history(5 * 365, 365), NOW), "~5/day");
+  assert.equal(matchRate(history(5 * 365, 365), NOW), "~5/d");
 });
 
 test("about six a week reads as six a week, not one a day", () => {
   // Both readings are single-digit; the coarser unit is the one that says
   // something, since rounding the daily rate would flatten it to one.
-  assert.equal(matchRate(history(Math.round((6 / 7) * 365), 365), NOW), "~6/week");
+  assert.equal(matchRate(history(Math.round((6 / 7) * 365), 365), NOW), "~6/w");
 });
 
 test("about eight a month reads as eight a month", () => {
-  assert.equal(matchRate(history(Math.round((8 / 30) * 365), 365), NOW), "~8/month");
+  assert.equal(matchRate(history(Math.round((8 / 30) * 365), 365), NOW), "~8/m");
 });
 
 test("about four a year reads as four a year", () => {
-  assert.equal(matchRate(history(4, 365), NOW), "~4/year");
+  assert.equal(matchRate(history(4, 365), NOW), "~4/y");
 });
 
 test("less than about once a year has no rate", () => {
@@ -72,16 +72,16 @@ test("less than about once a year has no rate", () => {
 
 test("more than nine a week is shown per day instead", () => {
   // Fourteen a week; the week reading would not be single-digit.
-  assert.equal(matchRate(history(2 * 365, 365), NOW), "~2/day");
+  assert.equal(matchRate(history(2 * 365, 365), NOW), "~2/d");
 });
 
 test("more than nine a month is shown per week instead", () => {
   // Twenty a month is about five a week.
-  assert.equal(matchRate(history(Math.round((20 / 30) * 365), 365), NOW), "~5/week");
+  assert.equal(matchRate(history(Math.round((20 / 30) * 365), 365), NOW), "~5/w");
 });
 
 test("more than nine a year is shown per month instead", () => {
-  assert.equal(matchRate(history(12, 365), NOW), "~1/month");
+  assert.equal(matchRate(history(12, 365), NOW), "~1/m");
 });
 
 test("the number behind the rate is exposed for ordering", () => {
@@ -104,7 +104,7 @@ test("two labels that read the same rate can still be told apart", () => {
 test("a label created days ago is rated over a week, not a year", () => {
   // Nine matches over three days. Rated over the year it has not lived through,
   // this would round to nothing.
-  assert.equal(matchRate(daily(3, 3), NOW), "~9/week");
+  assert.equal(matchRate(daily(3, 3), NOW), "~9/w");
 });
 
 test("a single match on the day a label was created is not one a day", () => {
@@ -112,7 +112,7 @@ test("a single match on the day a label was created is not one a day", () => {
   // unit is the one that stays single-digit and readable.
   const today = NOW.toISOString().slice(0, 10);
   const entry: MatchEntry = { last_matched_at: null, daily_matches: { [today]: 1 } };
-  assert.equal(matchRate(entry, NOW), "~4/month");
+  assert.equal(matchRate(entry, NOW), "~4/m");
 });
 
 test("sparse history counts the quiet days in between", () => {
@@ -122,7 +122,7 @@ test("sparse history counts the quiet days in between", () => {
     const at = new Date(NOW.getTime() - daysAgo * DAY);
     entry.daily_matches[at.toISOString().slice(0, 10)] = 1;
   }
-  assert.equal(matchRate(entry, NOW), "~1/month");
+  assert.equal(matchRate(entry, NOW), "~1/m");
 });
 
 test("a label that stopped matching a year ago falls back to no rate", () => {
@@ -134,7 +134,7 @@ test("days outside the window are not counted", () => {
   const entry = daily(30, 50, 700);
   const yesterday = new Date(NOW.getTime() - DAY).toISOString().slice(0, 10);
   entry.daily_matches[yesterday] = 1;
-  assert.equal(matchRate(entry, NOW), "~1/year");
+  assert.equal(matchRate(entry, NOW), "~1/y");
 });
 
 // --- last matched -----------------------------------------------------------
@@ -188,7 +188,7 @@ test("a matched label gives a rate to show beside the name", () => {
   const entry = history(Math.round((8 / 30) * 365), 365);
   entry.last_matched_at = daysAgoLocal(0, 9);
   assert.deepEqual(matchDisplay(entry, NOW), {
-    rate: "~8/month",
+    rate: "~8/m",
     last: "Last matched today",
   });
 });
