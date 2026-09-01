@@ -442,12 +442,6 @@ So when a user expects a change of this kind to reach mail they have already had
 fix the old ones" — **say plainly that it will not**, and that it applies from the next processing
 run onwards.
 
-**A Gmail label's colour follows its type, which never changes.** Colour is metadata on the label
-itself rather than a judgement about any message, and `inbox-labeler-process` is what writes it.
-Settling or changing a `role` does not change it: a category, an attribute and a label with
-neither are all the one detection colour. So nothing done here alters how a label already looks in
-Gmail.
-
 **Attention metadata is the exception.** `attention` is not part of what a label detects: it is
 what the label *asks for*, and `inbox-labeler-attention` reads it fresh from `get_labels` every
 time it runs, against mail that is already processed and still unread. Raising a label from

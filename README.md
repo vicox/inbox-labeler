@@ -161,23 +161,6 @@ marked read, because `none` is the only thing either label actually asked for. A
 labels comes out `normal`, so it is left alone. The behaviours above are fixed and not
 configurable.
 
-**Color says what kind of label it is, and nothing else.** Detection Labels are warm yellow and
-Derived Labels coral — two families, from the one mapping the processing skill keeps, in tiles
-from Gmail's own palette. A Detection Label's role plays no part: a Category, an Attribute and
-one whose role nobody has settled are all the same yellow, because all three are the same kind of
-label. Role is
-how a label is modelled and how the website groups it, not something a color says. Attention plays
-no part either — a label is the same color whether it asks for `high` or `none`. Attention is
-still part of a label's own configuration, and still what decides whether a message gets starred
-or marked read; it is simply not what a Gmail label's color encodes. The website uses the same two
-families, though the hex values differ because the palettes do.
-
-Color is purely presentation: it never feeds back into what a label detects, and processing never
-recolors a message — only the Gmail label itself, and only Detection and Derived Labels get one;
-the reserved system labels never do. It's set the moment a Gmail label is created, and since a
-label's type never changes it stays as it is from then on, so no color is ever chosen or edited by
-hand.
-
 Inbox Labeler resolves each label to a Gmail label inside its own `IL/` namespace whenever it
 talks to Gmail — `IL/` itself is never part of a label's identity and is never stored anywhere.
 [How processing works](#how-processing-works) covers the full namespace, including the two

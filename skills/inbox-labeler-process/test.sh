@@ -174,34 +174,17 @@ check "the state markers are never recorded, and a no-match message has no call"
     "$(order_check 'are never recorded' 'so it has no call')" "True"
 
 echo
-echo "--- Gmail label colors ---"
+echo "--- Gmail labels are used, not restyled ---"
 
-# The contract is the mapping and the reason for it: colour follows a label type,
-# and the two families are exact Gmail palette values. The table is read in
-# document order so a row cannot be silently swapped for another.
-colors=(
-    'A label'
-    'type** decides its business label'
-    '`detection` | `#fdedc1` | `#684e07`'
-    '`derived` | `#f2b2a8` | `#8a1c0a`'
-)
-check "detection is warm, derived is coral, and there are only those two" \
-    "$(order_check "${colors[@]}")" "True"
-check "the values are Gmail palette tiles, passed exactly as written" \
-    "$(order_check 'tiles from Gmail' 'pass them exactly as written')" "True"
-check "a detection label is the same colour whatever its role" \
-    "$(order_check 'role` has nothing to do with its color' \
-        'a detection label whose role nobody has settled are all the same yellow')" "True"
-check "the role still matters, just not for colour" \
-    "$(order_check 'The role still matters')" "True"
-check "attention never decides a business label colour" \
-    "$(order_check 'Attention has nothing to do with it either' \
-        'the same color whether it asks for `high`, `normal` or `none`')" "True"
-check "colours are written in one step, and only when they differ" \
-    "$(order_check 'Colors are written in step 2 and nowhere else' \
-        'matching already → do nothing')" "True"
-check "the reserved labels stay uncoloured" \
-    "$(order_check '`IL/processed` and `IL/no-match` get no color')" "True"
+# A run creates a label by name and reuses an existing one untouched. `update_label`
+# is deliberately not among the Gmail tools this skill names: how an `IL/` label
+# looks is the user setting it in Gmail, and a run has no way to overwrite that.
+check "a missing label is created by name, an existing one is reused untouched" \
+    "$(order_check 'passing the resolved name and nothing else' \
+        'reused exactly as it is' \
+        'changes nothing about the label itself')" "True"
+check "the Gmail tools named do not include update_label" \
+    "$(grep -c 'update_label' "$SKILL")" "0"
 check "attention is carried through the run without being used by it" \
     "$(order_check 'carried for `inbox-labeler-attention`, unused here')" "True"
 

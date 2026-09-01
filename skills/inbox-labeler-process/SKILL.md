@@ -12,9 +12,9 @@ labels is a different job, and so is acting on Attention — see `inbox-labeler-
 **Two connections do different things.** Inbox Labeler's MCP server holds the labels and the
 match history and has no access to the mailbox; Gmail holds the mail. Never look for labels in
 Gmail and never look for mail in the MCP. `get_labels` and `record_matches` are the MCP's;
-`list_labels`, `create_label`, `update_label`, `search_threads`, `get_thread` and
-`label_message` are Gmail's. Identity is the authenticated MCP session — never ask the user for
-an account id and never pass one to any tool.
+`list_labels`, `create_label`, `search_threads`, `get_thread` and `label_message` are Gmail's.
+Identity is the authenticated MCP session — never ask the user for an account id and never pass
+one to any tool.
 
 ## Scope
 
@@ -121,14 +121,9 @@ it.
    its Gmail name — `Large amount` → `IL/Large amount` — and work with the resolved names from
    here on; Gmail knows nothing about the unprefixed form.
 2. Run `list_labels` and note the ids of `IL/processed`, `IL/no-match` and every resolved
-   business label, together with each business label's current Gmail color where it already
-   exists. Create any that are missing with `create_label`, passing the resolved name and the
-   color for what that label is from the table in
-   [Gmail label colors](#gmail-label-colors) (the `IL` parent is created automatically); create
-   `IL/processed` and `IL/no-match` with no color, since they are not business labels. For a
-   business label that already exists, compare its current color to that table's value and call
-   `update_label` only when they differ — a label's type never changes, so this is only ever
-   catching up a label coloured under an older mapping.
+   business label. Create any that are missing with `create_label`, passing the resolved name
+   and nothing else — the `IL` parent is created automatically. A label that already exists is
+   reused exactly as it is: this run takes its id and changes nothing about the label itself.
 3. Find candidate threads with `search_threads`, query
    `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display name.
    If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use `pageSize: 50`.
@@ -250,37 +245,6 @@ evaluate the label anyway.
 Treat the listed detection labels as established facts and reason from them — do not re-check
 whether the email really is an invoice. The email is there for the details the labels do not
 carry, like the due date. Read those details as they stood when the email was written.
-
-## Gmail label colors
-
-A label's **type** decides its business label's **Gmail color** — presentation only. Take it from
-this table and never choose a color by hand:
-
-| Label | `backgroundColor` | `textColor` |
-| --- | --- | --- |
-| `detection` | `#fdedc1` | `#684e07` |
-| `derived` | `#f2b2a8` | `#8a1c0a` |
-
-These are tiles from Gmail's own label palette rather than free choices, so pass them exactly as
-written — Gmail refuses a color that is not one of its own. Each pair is one Gmail uses itself: a
-pale background with the dark tone of its own hue, which is how a label coloured from Gmail's own
-picker looks. Two families, a warm yellow and a coral, matching the two the website uses; the
-values differ because the palettes do, and neither side reads the other.
-
-**A detection label's `role` has nothing to do with its color.** A category, an attribute and a
-detection label whose role nobody has settled are all the same yellow, because colour says what
-kind of label this is and all three are the same kind. The role still matters — it is how a label
-is modelled and how the website groups it — it is simply not something a Gmail label can show.
-
-**Attention has nothing to do with it either.** A label is the same color whether it asks for
-`high`, `normal` or `none`. `attention` is still part of every label's configuration and still
-arrives with it from `get_labels` — it is simply not what a Gmail color encodes. What a label asks
-of you is carried out on the *message* by `inbox-labeler-attention`.
-
-Colors are written in step 2 and nowhere else. Compare before writing: **matching already → do
-nothing**. `IL/processed` and `IL/no-match` get no color, because they are not business labels and
-have no role or type of their own. If a color update fails, say which Gmail label could not be
-recolored and continue with the rest.
 
 ## Rules while processing
 

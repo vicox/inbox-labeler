@@ -227,10 +227,9 @@ test("no labels means no groups, so the page falls to its own empty state", () =
 
 /**
  * `groupOf` decides which section of the page a label is shown in — four of them,
- * and no colour among them: a category, an attribute and a role-less detection
- * label all render on the one detection surface, and only their type would change
- * that. What these protect is the sorting, and the one input that must never
- * reach it.
+ * and no colour among them: all four render on the same neutral label surface, and
+ * neither type nor role nor attention changes that. What these protect is the
+ * sorting, and the one input that must never reach it.
  */
 test("a group per kind of label, and no fifth", () => {
   assert.equal(groupOf(detection("Travel", "category")), "category");

@@ -148,9 +148,9 @@ check "it runs only when asked, and never as part of or after a processing run" 
         'a processing run must never chain into it on its own initiative')" "True"
 check "STARRED and UNREAD are the only two writes" \
     "$(order_check '`STARRED` and `UNREAD` are the only two things this run writes')" "True"
-check "it never touches an IL/ label, and never recolors one" \
+check "it never touches an IL/ label, in either direction" \
     "$(order_check 'It never touches an `IL/` label, in either direction' \
-        'not even `IL/processed`, and no recoloring either')" "True"
+        'not even `IL/processed`')" "True"
 check "it never calls record_matches" \
     "$(order_check 'It never calls `record_matches`' 'Recording belongs to processing')" "True"
 check "it never archives, deletes or replies" \

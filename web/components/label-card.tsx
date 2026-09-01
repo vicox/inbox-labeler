@@ -26,10 +26,9 @@ type Props = {
 };
 
 /**
- * One label, on either side. A card carries its type's colour, one step lighter
- * than the panel holding it. Its role does not come into it: a category and an
- * attribute are the same yellow, and the column they sit in is what tells them
- * apart.
+ * One label, on either side. Every card is the same surface, a step lighter than
+ * the panel holding it — neither its type nor its role tints it, and the column it
+ * sits in is what says which it is.
  *
  * The name sits at the left and the rate at the right of the same line, with
  * when it last matched underneath. A derived label also names the detection
@@ -49,13 +48,6 @@ export function LabelCard({
   onLeave,
   onOpen,
 }: Props) {
-  // Type, and only type. A detection label is warm whether it is a category, an
-  // attribute or neither yet; a derived label is coral.
-  const surface =
-    label.type === "detection"
-      ? "border-detection-rule bg-detection-card"
-      : "border-derived-rule bg-derived-card";
-
   return (
     // Positioned, so the attention mark can sit in the right-hand margin. The
     // relationship hover sits here rather than on the button so that it covers
@@ -77,9 +69,9 @@ export function LabelCard({
         aria-label={`${label.label}, ${label.type} label`}
         className={[
           "block w-full cursor-pointer rounded-lg border px-5 py-4 text-left",
+          "border-label-rule bg-label-card",
           "min-h-[62px] transition-shadow duration-200 ease-out",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-          surface,
           lit ? "shadow-[0_1px_0_rgba(28,26,23,0.10)]" : "shadow-none",
         ].join(" ")}
       >
@@ -132,10 +124,9 @@ export function LabelCard({
 }
 
 /**
- * A detection label a derived label is built from. Carries the detection panel's
- * colours rather than the card's: it names a label from the other column, and
- * that is the whole point of it being here. Every reference is a detection label,
- * whatever its role, so every chip is the one warm colour.
+ * A detection label a derived label is built from. Carries the panel's surface
+ * rather than the card's, a shade behind the card it sits on, so the names read as
+ * something the card refers to rather than part of it.
  *
  * Required labels all have to match before the derived label is even evaluated;
  * recommended ones are context, present or not. Dashed says the difference, and
@@ -146,7 +137,7 @@ function Reference({ name, suggested = false }: { name: string; suggested?: bool
     <span
       title={suggested ? "Recommended" : "Required"}
       className={[
-        "rounded-md border border-detection-rule bg-detection px-2 py-0.5",
+        "rounded-md border border-label-rule bg-label px-2 py-0.5",
         "text-[11px] leading-4 text-ink-soft",
         suggested ? "border-dashed" : "",
       ].join(" ")}

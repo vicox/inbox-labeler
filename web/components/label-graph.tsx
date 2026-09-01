@@ -134,17 +134,12 @@ export function LabelGraph({ labels, matches }: { labels: Label[]; matches: Matc
 }
 
 /**
- * One group, in its own surface.
+ * One group, on the one label surface.
  *
- * A panel is tinted by the type of label it holds, and the cards inside it carry
- * the same family one step lighter. `Categories`, `Attributes` and `No role` all
- * hold detection labels, so all three are the one warm colour — the headings and
- * their notes are what tell them apart, and a colour per role would have said the
- * same thing twice.
+ * Every panel is the same surface, and the cards inside it the same one a step
+ * lighter. What separates the groups is the heading, the note under it and the
+ * count beside it.
  */
-const DETECTION_TONE = "border-detection-rule bg-detection";
-const DERIVED_TONE = "border-derived-rule bg-derived";
-
 function Panel({
   group,
   className = "",
@@ -155,11 +150,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section
-      className={`rounded-2xl border p-5 sm:p-7 ${
-        group.key === "derived" ? DERIVED_TONE : DETECTION_TONE
-      } ${className}`}
-    >
+    <section className={`rounded-2xl border border-label-rule bg-label p-5 sm:p-7 ${className}`}>
       <header className="mb-6 flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
         <h2 className="font-display text-[22px] leading-none tracking-[-0.01em]">{group.title}</h2>
         <span className="text-[12px] text-ink-faint tabular-nums">{group.labels.length}</span>

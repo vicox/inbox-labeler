@@ -114,8 +114,7 @@ Without labels there is no attention to apply.
   `instruction`, and does not reconsider whether a label belongs on a message. The labels
   already on the message are the whole input.
 - **It never touches an `IL/` label, in either direction** — no adding, no removing, not even
-  `IL/processed`, and no recoloring either; Gmail label color is synchronized by
-  `inbox-labeler-process`, never here.
+  `IL/processed`.
 - **It never calls `record_matches`.** Recording belongs to processing.
 - **It never archives, deletes or replies**, and it writes nothing to Gmail beyond `STARRED` and
   `UNREAD`.

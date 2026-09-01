@@ -11,30 +11,14 @@
   --color-ink-faint: #a89e91;
   --color-rule: #e8ded1;
 
-  /* Two families, and colour says nothing else. A label's **type** picks one:
-     detection warm, derived a soft coral. Both sit in the same key as the paper — a panel
-     near 92% lightness, a rule near 83%, a card just off white — and stay low in
-     saturation, because a page is mostly these surfaces.
+  /* The surface every label sits on, panel to card. One colour for all of them:
+     what a label is, what it asks of you and what it has matched are all said in
+     words on the page, so nothing is left for a tint to say. */
+  --color-label: #f9ebdd;
+  --color-label-rule: #e9d3bd;
+  --color-label-card: #fffaf4;
 
-     Role is not an input here. A category, an attribute and a detection label
-     whose role nobody has settled are all the same yellow, because they are all
-     the same kind of thing: a fact read off the mail. Which fact it is, the page
-     says in words — the groups it sorts them into and the headings above them —
-     and a colour per role only spent the palette on a distinction the layout was
-     already making.
-
-     What a label asks of you is not in here either. Attention is a mark on the
-     card and a line in its detail panel; it has never been a colour and is not
-     one now. */
-  --color-detection: #f9ebdd;
-  --color-detection-rule: #e9d3bd;
-  --color-detection-card: #fffaf4;
-
-  --color-derived: #f7ddd9;
-  --color-derived-rule: #e9bdb5;
-  --color-derived-card: #fffaf8;
-
-  /* Warm, so the peach and coral keep their colour under the detail overlay
+  /* Warm, so the label surfaces keep their colour under the detail overlay
      instead of turning grey. */
   --color-scrim: rgba(120, 88, 52, 0.16);
 
