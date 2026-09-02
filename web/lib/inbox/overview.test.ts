@@ -303,10 +303,22 @@ test("processed and no-match are not unknown labels either", () => {
 
 test("the IL/ prefix is accepted and stripped, and a label is counted once", () => {
   const labels = [detection("Invoice", "category")];
-  const result = one(["IL/Invoice", "Invoice", "invoice"], labels);
+  const result = one(["IL/Invoice", "Invoice"], labels);
 
   assert.equal(result.representative, "Invoice");
   assert.deepEqual(result.secondary, []);
+  assert.deepEqual(result.unknown, []);
+});
+
+test("two labels are two labels, however alike their text looks", () => {
+  // The store hands this function the text it holds each label under, so telling
+  // them apart is reading the text rather than judging it. `store.test.ts` holds
+  // the case that matters: a pair Postgres keeps apart and case folding does not.
+  const labels = [detection("Invoice", "category"), detection("invoice", "category")];
+  const result = one(["Invoice", "invoice"], labels);
+
+  assert.equal(result.secondary.length, 1, "neither label was swallowed by the other");
+  assert.deepEqual([result.representative, ...result.secondary].sort(), ["Invoice", "invoice"]);
 });
 
 test("a label this account no longer defines is named as unknown, not ranked", () => {

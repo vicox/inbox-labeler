@@ -14,6 +14,12 @@ import type { Matches } from "./matches.ts";
  * already put on the message; no instruction is evaluated and no label is added,
  * removed or reconsidered.
  *
+ * **A label is its stored text here.** Every label reaching this point has been
+ * resolved by the store to the spelling it is held under, so two labels are the
+ * same label when their text is the same and not otherwise. Nothing below folds
+ * case or normalises Unicode to decide that: the store already answered it, and a
+ * second opinion would merge labels it keeps apart.
+ *
  * It ranks against the model **as it stands now**, not as it stood when the
  * message was processed. Nothing here reads history the store does not keep: the
  * match history holds a label, a day and a count, and cannot say what a message
@@ -78,12 +84,17 @@ export function matchClass(label: Label): MatchClass {
  * Required and recommended references count alike, once each, and one that is not
  * on the message does not count. Nothing here re-checks the gate: whether the
  * derived label belongs was decided at processing time.
+ *
+ * A reference names a label, and both sides are stored text, so it is present
+ * only when that label is. Anything looser would let a reference to one label be
+ * satisfied by a different one, which would raise this count and could hand the
+ * message to the wrong derived label.
  */
 function presentReferences(label: Label, present: readonly string[]): number {
   const counted: string[] = [];
   for (const reference of [...(label.required_labels ?? []), ...(label.recommended_labels ?? [])]) {
-    if (!present.some((one) => sameLabel(one, reference))) continue;
-    if (counted.some((already) => sameLabel(already, reference))) continue;
+    if (!present.includes(reference)) continue;
+    if (counted.includes(reference)) continue;
     counted.push(reference);
   }
   return counted.length;
@@ -96,14 +107,22 @@ function presentReferences(label: Label, present: readonly string[]): number {
  * reading Gmail label names off a message and the namespace is plumbing.
  * InboxLabeler's own two labels are dropped: `processed` and `no-match` are state
  * rather than meaning, so they are never a heading and never a secondary label.
+ *
+ * One label twice is one label, and two labels are two: the store resolves each
+ * of a message's labels to the text it holds it under before the ranking sees
+ * them, so a repeat is a repeat of the same text. Collapsing by any looser notion
+ * of sameness would drop one of two labels the store keeps apart, and the message
+ * would lose it from both the heading and the row.
  */
 function businessLabels(given: readonly string[]): string[] {
   const labels: string[] = [];
   for (const value of given) {
     const label = normalise(stripNamespace(normalise(value)));
     if (!label) continue;
+    // The two reserved names are InboxLabeler's own, spelled in ASCII, so this
+    // one comparison is about a fixed pair of words rather than about identity.
     if (Object.keys(RESERVED_LABELS).some((reserved) => sameLabel(label, reserved))) continue;
-    if (labels.some((already) => sameLabel(already, label))) continue;
+    if (labels.includes(label)) continue;
     labels.push(label);
   }
   return labels;
@@ -114,20 +133,22 @@ function businessLabels(given: readonly string[]): string[] {
  *
  * `localeCompare` alone is the order a reader expects — `apple` before `Zebra`,
  * accents where a dictionary puts them — but it is not a strict order over the
- * strings InboxLabeler treats as distinct: it answers 0 for a composed `é` and a
- * decomposed `e` + combining accent, which `sameLabel` reads as two labels
- * because nothing here normalises Unicode. Sorting is stable, so a 0 there would
- * leave the pair in the order the caller happened to pass them, and an overview
- * would depend on the order Gmail returned labels in.
+ * labels the store keeps apart: it answers 0 for a composed `é` and a decomposed
+ * `e` + combining accent, and for `İ` against the `I` + combining dot it decomposes
+ * to, all of which the store can hold as separate labels. Sorting is stable, so a
+ * 0 there would leave such a pair in the order the caller happened to pass them,
+ * and the overview would depend on the order Gmail returned labels in.
  *
- * So the reading order decides whenever it has an opinion, identity decides when
- * it does not, and code points settle what is left. This orders labels; it does
- * not change what makes two of them the same.
+ * So the reading order decides whenever it has an opinion, the label's own text
+ * decides when it does not, and code points settle what is left. Only one label
+ * compares equal to itself. This orders labels; it does not decide which are the
+ * same, and it must not, because two texts the store holds separately are two
+ * labels however alike they look.
  */
 function byLabelText(one: string, other: string): number {
   const reading = one.localeCompare(other);
   if (reading !== 0) return reading;
-  if (sameLabel(one, other)) return 0;
+  if (one === other) return 0;
   return one < other ? -1 : 1;
 }
 
@@ -149,7 +170,10 @@ function rank(
   perDay: (label: string) => number,
 ): Label[] {
   const ranked = present
-    .map((text) => known.find((one) => sameLabel(one.label, text)))
+    // Stored text on both sides, so a label is found by being that label. Folding
+    // case here would let one of two labels the store keeps apart stand in for
+    // the other, and it would be ranked on the other's class and history.
+    .map((text) => known.find((one) => one.label === text))
     .filter((one): one is Label => Boolean(one))
     .map((label) => ({
       label,
@@ -186,11 +210,12 @@ export function overviewOf(
   matches: Matches,
   now: Date,
 ): EmailOverview[] {
-  const history = new Map<string, MatchEntry>(
-    Object.entries(matches).map(([label, entry]) => [normalise(label).toLowerCase(), entry]),
-  );
-  const perDay = (label: string) =>
-    matchesPerDay(history.get(normalise(label).toLowerCase()), now);
+  // Both sides of this lookup are stored label text — the history is keyed by the
+  // label a match was recorded against, and a label carries its own — so they are
+  // matched exactly. Folding case here would let two labels the store keeps apart
+  // share one entry, and one of them would then be ranked on the other's history.
+  const history = new Map<string, MatchEntry>(Object.entries(matches));
+  const perDay = (label: string) => matchesPerDay(history.get(label), now);
 
   return emails.map((given) => {
     const present = businessLabels(given);
@@ -200,7 +225,7 @@ export function overviewOf(
       representative: best?.label ?? null,
       secondary: rest.map((one) => one.label),
       unknown: present
-        .filter((text) => !labels.some((one) => sameLabel(one.label, text)))
+        .filter((text) => !labels.some((one) => one.label === text))
         .sort(byLabelText),
     };
   });

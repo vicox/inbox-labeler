@@ -20,6 +20,7 @@ import {
   referenceNotDetection,
   RESERVED_LABELS,
   sameLabel,
+  stripNamespace,
   type Label,
   type LabelType,
   type ReferenceField,
@@ -64,7 +65,10 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
     },
 
     async label(label) {
-      const found = (await readLabels(driver, owner)).find((one) => sameLabel(one.label, label));
+      const canonical = await resolveLabel(driver, owner, label);
+      const found = canonical
+        ? (await readLabels(driver, owner)).find((one) => one.label === canonical)
+        : undefined;
       if (!found) throw labelNotFound(label);
       return found;
     },
@@ -98,7 +102,8 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
 
       return driver.transaction(async (tx) => {
         const existing = await readLabels(tx, owner);
-        const current = existing.find((one) => sameLabel(one.label, label));
+        const canonical = await resolveLabel(tx, owner, label);
+        const current = canonical ? existing.find((one) => one.label === canonical) : undefined;
         if (!current) throw labelNotFound(label);
 
         const merged: LabelDraft = {
@@ -157,16 +162,20 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
 
       return driver.transaction(async (tx) => {
         const existing = await readLabels(tx, owner);
-        const entry = existing.find((one) => sameLabel(one.label, label));
+        const canonical = await resolveLabel(tx, owner, label);
+        const entry = canonical ? existing.find((one) => one.label === canonical) : undefined;
         if (!entry) throw labelNotFound(label);
 
         // Asked before deleting so the refusal can name what is in the way. The
         // ON DELETE RESTRICT on the references table is the backstop that makes
         // the rule true even if this check were ever skipped.
+        // Both sides are stored text here — a reference target is the exact
+        // spelling of the label it points at, which the foreign key guarantees —
+        // so they compare exactly rather than by any notion of sameness.
         const blocking = existing.filter((other) =>
           other.label !== entry.label &&
-          [...(other.required_labels ?? []), ...(other.recommended_labels ?? [])].some((ref) =>
-            sameLabel(ref, entry.label),
+          [...(other.required_labels ?? []), ...(other.recommended_labels ?? [])].some(
+            (ref) => ref === entry.label,
           ),
         );
         if (blocking.length) throw deleteBlocked(entry, blocking);
@@ -195,15 +204,15 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
         readLabels(driver, owner),
         readMatches(driver, owner),
       ]);
-      return overviewOf(emails, labels, matches, new Date());
+      return overviewOf(await storedSpellings(driver, owner, emails), labels, matches, new Date());
     },
 
     async matchesFor(label) {
-      const found = (await readLabels(driver, owner)).find((one) => sameLabel(one.label, label));
-      if (!found) throw labelNotFound(label);
+      const canonical = await resolveLabel(driver, owner, label);
+      if (!canonical) throw labelNotFound(label);
 
       const all = await readMatches(driver, owner);
-      return orderMatches({ [found.label]: all[found.label] ?? noHistory() });
+      return orderMatches({ [canonical]: all[canonical] ?? noHistory() });
     },
 
     async recordMatches(labels, emailTimestamp) {
@@ -217,15 +226,15 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
         // are keyed the way the labels are even when the caller wrote a different case.
         // Doing it inside the transaction is what makes one bad label mean
         // nothing is recorded — the rollback takes the earlier increments with it.
-        const existing = await readLabels(tx, owner);
+        const found = await resolveLabels(tx, owner, named);
         const resolved: string[] = [];
-        for (const text of named) {
-          const found = existing.find((one) => sameLabel(one.label, text));
-          if (!found) throw labelNotFound(text);
-          if (resolved.some((already) => sameLabel(already, found.label))) {
-            throw duplicateLabel(found.label);
-          }
-          resolved.push(found.label);
+        for (const [index, text] of named.entries()) {
+          const canonical = found[index];
+          if (!canonical) throw labelNotFound(text);
+          // Two spellings the database reads as one label resolve to one stored
+          // name, so naming it twice is caught here however it was spelled.
+          if (resolved.includes(canonical)) throw duplicateLabel(canonical);
+          resolved.push(canonical);
         }
 
         for (const label of resolved) {
@@ -264,6 +273,81 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
       });
     },
   };
+}
+
+// --- resolving a handle ----------------------------------------------------
+//
+// A label's text is its handle, and which handle names which label is a
+// question the database answers: `inbox_labels_identity` is `lower(label)`, so
+// `lower()` is the rule, and it is asked rather than reproduced. Folding case in
+// JavaScript instead would be a second opinion — the two disagree on real
+// Unicode, and a label that exists would then fail to be found by a spelling
+// Postgres considers the same.
+//
+// Whitespace is not case: `normalise` collapses it here because that is the
+// product's own rule about what a caller may have typed, and stored labels were
+// normalised the same way on the way in.
+
+/**
+ * The stored labels these supplied spellings name, one entry per input, in
+ * order, `undefined` where this user has no such label.
+ *
+ * One statement rather than one per name: a derived label with five references
+ * resolves in a single round trip, and every row is scoped by `user_id` in the
+ * join, so a spelling can never reach another tenant's label of the same name.
+ */
+async function resolveLabels(
+  sql: Transaction,
+  owner: string,
+  supplied: readonly string[],
+): Promise<(string | undefined)[]> {
+  if (!supplied.length) return [];
+
+  const rows = await sql.query<{ label: string | null }>(
+    `SELECT stored.label
+       FROM unnest($2::text[]) WITH ORDINALITY AS given(text, position)
+       LEFT JOIN inbox_labels AS stored
+         ON stored.user_id = $1 AND lower(stored.label) = lower(given.text)
+      ORDER BY given.position`,
+    [owner, supplied.map((text) => normalise(text))],
+  );
+  return rows.map((row) => row.label ?? undefined);
+}
+
+/** The stored label one supplied spelling names, or undefined. */
+async function resolveLabel(
+  sql: Transaction,
+  owner: string,
+  supplied: string,
+): Promise<string | undefined> {
+  const [found] = await resolveLabels(sql, owner, [supplied]);
+  return found;
+}
+
+/**
+ * The labels on each message, in the spelling this account stores them under.
+ *
+ * Gmail hands back the label text Gmail holds, which need not be the spelling
+ * the label is stored with, so the database is asked which of its labels each
+ * one names. A name it does not recognise is passed through untouched: the
+ * overview reports it as a label this account no longer defines, and it should
+ * say what is actually on the mail.
+ *
+ * Only the spellings change. Which labels are on which message, and everything
+ * the ranking then does with them, is untouched.
+ */
+async function storedSpellings(
+  sql: Transaction,
+  owner: string,
+  emails: readonly (readonly string[])[],
+): Promise<string[][]> {
+  const handle = (text: string) => normalise(stripNamespace(normalise(text)));
+
+  const supplied = [...new Set(emails.flat().map(handle))].filter(Boolean);
+  const found = await resolveLabels(sql, owner, supplied);
+  const stored = new Map(supplied.map((text, index) => [text, found[index]]));
+
+  return emails.map((given) => given.map((text) => stored.get(handle(text)) ?? text));
 }
 
 // --- reading ---------------------------------------------------------------
@@ -384,16 +468,27 @@ async function validate(
   // on an update.
   const role = checkRole(draft.role, type, own);
 
-  const clash = existing.find(
-    (other) => (!own || other.label !== own.label) && sameLabel(other.label, label),
-  );
-  if (clash) throw labelExists(clash.label);
+  // The unique index is what actually decides this, and it decides it in
+  // `lower()`, so the question is put to the database rather than answered
+  // beside it. Asking early is only for the message: a collision that races past
+  // this is caught by the index itself, and reported the same way.
+  const clash = await resolveLabel(sql, owner, label);
+  if (clash && (!own || clash !== own.label)) throw labelExists(clash);
 
   const entry: Label = { label, type, attention, instruction };
   if (role) entry.role = role;
   if (type === "derived") {
-    entry.required_labels = resolveReferences(existing, own, draft.required_labels, "required_labels");
-    entry.recommended_labels = resolveReferences(
+    entry.required_labels = await resolveReferences(
+      sql,
+      owner,
+      existing,
+      own,
+      draft.required_labels,
+      "required_labels",
+    );
+    entry.recommended_labels = await resolveReferences(
+      sql,
+      owner,
       existing,
       own,
       draft.recommended_labels,
@@ -410,28 +505,36 @@ async function validate(
  * naming one twice is a list of one rather than a complaint — the reference is a
  * set, and the caller's intent is unambiguous either way.
  */
-function resolveReferences(
+async function resolveReferences(
+  sql: Transaction,
+  owner: string,
   existing: readonly Label[],
   own: Label | undefined,
   values: unknown,
   field: ReferenceField,
-): string[] {
-  const resolved: string[] = [];
-  for (const value of Array.isArray(values) ? values : []) {
-    const wanted = normalise(value);
-    if (!wanted) continue;
+): Promise<string[]> {
+  const wanted = (Array.isArray(values) ? values : [])
+    .map((value) => normalise(value))
+    .filter(Boolean);
+  const found = await resolveLabels(sql, owner, wanted);
 
-    const target = existing.find(
-      (other) => (!own || other.label !== own.label) && sameLabel(other.label, wanted),
-    );
+  const resolved: string[] = [];
+  for (const [index, name] of wanted.entries()) {
+    // A label may not reference itself. On an update it is in the table under
+    // its current name, so the query does find it — excluded here rather than in
+    // the query, which would have to be told what is being updated.
+    const canonical = found[index] === own?.label ? undefined : found[index];
+    const target = canonical ? existing.find((other) => other.label === canonical) : undefined;
     if (!target) {
       const detection = existing
         .filter((other) => (!own || other.label !== own.label) && other.type === "detection")
         .map((other) => other.label);
-      throw referenceMissing(field, wanted, detection);
+      throw referenceMissing(field, name, detection);
     }
     if (target.type !== "detection") throw referenceNotDetection(field, target);
-    if (!resolved.some((already) => sameLabel(already, target.label))) resolved.push(target.label);
+    // Two spellings the database reads as one label resolved to one stored name,
+    // so this collapses them without a second opinion about what "same" means.
+    if (!resolved.includes(target.label)) resolved.push(target.label);
   }
   return resolved;
 }

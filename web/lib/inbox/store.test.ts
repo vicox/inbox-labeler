@@ -901,6 +901,271 @@ for (const driver of drivers) {
       ]);
     });
 
+    // --- which handle names which label ----------------------------------
+    //
+    // The database decides that, in `lower()`, and these tests hold the store to
+    // the same answer. `İ` is the case they turn on: Postgres lowercases it to
+    // `i`, JavaScript to `i` followed by a combining dot, so a store that folded
+    // case itself would fail to find a label the database can see. Each test
+    // first asks this database what it thinks, so the premise is checked rather
+    // than assumed — a build whose Postgres disagrees skips rather than lies.
+
+    const DOTTED = "\u0130stanbul";
+
+    /** Whether this database reads the two spellings as one label. */
+    async function readsAsOne(sql: SqlDriver, one: string, other: string): Promise<boolean> {
+      const [row] = await sql.query<{ same: boolean }>(
+        "SELECT lower($1::text) = lower($2::text) AS same",
+        [one, other],
+      );
+      return row.same;
+    }
+
+    test("the database and JavaScript really do fold this case differently", async () => {
+      const { sql } = await fresh();
+
+      assert.equal(await readsAsOne(sql, DOTTED, "istanbul"), true, "Postgres reads them as one");
+      assert.notEqual(DOTTED.toLowerCase(), "istanbul", "JavaScript does not");
+    });
+
+    test("a label is found by any spelling the database reads as its own", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      assert.equal((await alice.label("istanbul")).label, DOTTED);
+      assert.equal((await alice.label("ISTANBUL")).label, DOTTED);
+    });
+
+    test("an update reaches the label the database says was meant", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      const updated = await alice.updateLabel("istanbul", { instruction: "reached it" });
+
+      assert.equal(updated.label, DOTTED, "the stored spelling is untouched");
+      assert.equal(updated.instruction, "reached it");
+      assert.deepEqual((await alice.labels()).map((one) => one.label), [DOTTED]);
+    });
+
+    test("a delete reaches the label the database says was meant", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      assert.equal((await alice.deleteLabel("ISTANBUL")).label, DOTTED);
+      assert.deepEqual(await alice.labels(), []);
+    });
+
+    test("a delete is still refused while a reference remains, whatever the spelling", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+      await alice.createLabel({
+        label: "Trips",
+        type: "derived",
+        instruction: "a trip",
+        required_labels: [DOTTED],
+      });
+
+      assert.match(await refusal(alice.deleteLabel("istanbul")), /it is referenced by derived label/);
+    });
+
+    test("a reference resolves to the stored spelling, not the one that was typed", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      const derived = await alice.createLabel({
+        label: "Trips",
+        type: "derived",
+        instruction: "a trip",
+        required_labels: ["istanbul"],
+      });
+
+      assert.deepEqual(derived.required_labels, [DOTTED]);
+    });
+
+    test("two spellings of one label make one reference, not two", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      const derived = await alice.createLabel({
+        label: "Trips",
+        type: "derived",
+        instruction: "a trip",
+        required_labels: [DOTTED, "istanbul", "ISTANBUL"],
+      });
+
+      assert.deepEqual(derived.required_labels, [DOTTED]);
+    });
+
+    test("one email naming a label twice is refused however it is spelled", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      assert.match(
+        await refusal(alice.recordMatches([DOTTED, "istanbul"], "2026-08-20T10:12:00Z")),
+        /was given twice for the same email/,
+      );
+    });
+
+    test("a match records against the stored spelling, not the one that was typed", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      await alice.recordMatches(["istanbul"], "2026-08-20T10:12:00Z");
+
+      assert.deepEqual(Object.keys(await alice.matches()), [DOTTED]);
+      assert.deepEqual(Object.keys(await alice.matchesFor("ISTANBUL")), [DOTTED]);
+    });
+
+    test("the overview groups a message under the label the database recognises", async () => {
+      const { alice, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(alice, DOTTED);
+
+      // Gmail hands back its own spelling of the label on the message.
+      const [overview] = await alice.representativeLabels([["IL/istanbul"]]);
+
+      assert.equal(overview.representative, DOTTED);
+      assert.deepEqual(overview.unknown, []);
+    });
+
+    test("two labels the store keeps apart never share one history", async () => {
+      const { alice, sql } = await fresh();
+
+      // The store keeps these apart — their lowercased forms differ — while
+      // JavaScript folds both to the same string. A rarity lookup that folded
+      // would hand one of them the other's matches.
+      const apart = "\u0130stanbul";
+      const folds = "i\u0307stanbul";
+      const [premise] = await sql.query<{ apart: boolean }>(
+        "SELECT lower($1::text) <> lower($2::text) AS apart",
+        [apart, folds],
+      );
+      if (!premise.apart) return;
+      assert.equal(apart.toLowerCase(), folds.toLowerCase(), "JavaScript folds them together");
+
+      await detection(alice, apart);
+      await detection(alice, folds);
+      await detection(alice, "Zephyr");
+
+      // The label JavaScript would collide with is the busiest; the one it would
+      // collide *into* has never matched at all, and so is the rarest thing here.
+      for (let n = 0; n < 5; n += 1) {
+        await alice.recordMatches([apart], "2026-08-20T10:12:00Z");
+      }
+      await alice.recordMatches(["Zephyr"], "2026-08-20T10:12:00Z");
+
+      const [overview] = await alice.representativeLabels([[folds, "Zephyr"]]);
+
+      // Rarest wins: the label with no history. Borrowing the busy label's five
+      // matches would have made Zephyr the rarer of the two, and the heading.
+      assert.equal(overview.representative, folds);
+      assert.deepEqual(overview.secondary, ["Zephyr"]);
+    });
+
+    test("a reference is not satisfied by a different label that folds like it", async () => {
+      const { alice, sql } = await fresh();
+      const apart = "\u0130stanbul";
+      const folds = "i\u0307stanbul";
+      const [premise] = await sql.query<{ apart: boolean }>(
+        "SELECT lower($1::text) <> lower($2::text) AS apart",
+        [apart, folds],
+      );
+      if (!premise.apart) return;
+      assert.equal(apart.toLowerCase(), folds.toLowerCase(), "JavaScript folds them together");
+
+      await detection(alice, apart);
+      await detection(alice, folds);
+      // One derived label refers to the label that is NOT on the message; the
+      // other refers to the one that is. Only the second has a reference present.
+      await alice.createLabel({
+        label: "Aaa refers elsewhere",
+        type: "derived",
+        instruction: "x",
+        required_labels: [apart],
+      });
+      await alice.createLabel({
+        label: "Zzz refers here",
+        type: "derived",
+        instruction: "y",
+        required_labels: [folds],
+      });
+
+      const [overview] = await alice.representativeLabels([
+        [folds, "Aaa refers elsewhere", "Zzz refers here"],
+      ]);
+
+      // More references present wins. Counting the absent one as present would
+      // level them, and the alphabet would then hand the heading to the other.
+      assert.equal(overview.representative, "Zzz refers here");
+    });
+
+    test("a message carrying two labels that fold alike keeps both", async () => {
+      const { alice, sql } = await fresh();
+      const apart = "\u0130stanbul";
+      const folds = "i\u0307stanbul";
+      const [premise] = await sql.query<{ apart: boolean }>(
+        "SELECT lower($1::text) <> lower($2::text) AS apart",
+        [apart, folds],
+      );
+      if (!premise.apart) return;
+      assert.equal(apart.toLowerCase(), folds.toLowerCase(), "JavaScript folds them together");
+
+      await detection(alice, apart);
+      await detection(alice, folds);
+
+      const [overview] = await alice.representativeLabels([[apart, folds]]);
+
+      assert.equal(overview.secondary.length, 1, "neither label was swallowed by the other");
+      assert.deepEqual(
+        [overview.representative, ...overview.secondary].sort(),
+        [apart, folds].sort(),
+      );
+    });
+
+    test("two labels the reading order cannot separate still order the same way twice", async () => {
+      const { alice, sql } = await fresh();
+      // The precomposed dotted capital and the letters it decomposes to: the
+      // store keeps them apart, and a reader's alphabet has no opinion between
+      // them, so the order has to come from somewhere that always answers.
+      const composed = "\u0130zmir";
+      const decomposed = "I\u0307zmir";
+      const [premise] = await sql.query<{ apart: boolean }>(
+        "SELECT lower($1::text) <> lower($2::text) AS apart",
+        [composed, decomposed],
+      );
+      if (!premise.apart) return;
+      assert.equal(composed.localeCompare(decomposed), 0, "the alphabet cannot separate them");
+      assert.equal(composed.toLowerCase(), decomposed.toLowerCase(), "nor can case folding");
+
+      await detection(alice, composed);
+      await detection(alice, decomposed);
+
+      const [forwards] = await alice.representativeLabels([[composed, decomposed]]);
+      const [backwards] = await alice.representativeLabels([[decomposed, composed]]);
+
+      assert.equal(backwards.representative, forwards.representative);
+      assert.deepEqual(backwards.secondary, forwards.secondary);
+    });
+
+    test("a spelling never reaches another tenant's label of that name", async () => {
+      const { alice, bob, sql } = await fresh();
+      if (!(await readsAsOne(sql, DOTTED, "istanbul"))) return;
+      await detection(bob, DOTTED);
+
+      assert.match(await refusal(alice.label("istanbul")), /no label "istanbul"/);
+      assert.match(await refusal(alice.updateLabel("istanbul", { instruction: "x" })), /no label/);
+      assert.match(await refusal(alice.deleteLabel(DOTTED)), /no label/);
+      assert.deepEqual((await bob.labels()).map((one) => one.label), [DOTTED]);
+    });
+
     test("a day with no matches is absent rather than stored as zero", async () => {
       const { alice, sql } = await fresh();
       await detection(alice, "Invoices");
