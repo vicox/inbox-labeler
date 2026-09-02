@@ -297,16 +297,17 @@ Two more rules keep the references honest:
 
 ## How processing works
 
-`process` labels; `attention` acts on those labels. Two commands, two jobs.
+`process` labels; `attention` and `overview` act on those labels. Three commands, three jobs.
 
-Both work on **individual messages**, not threads, and both are scoped to **unread inbox mail
-only** — archived and read mail are never touched. Their scopes are mirror images and never
-overlap:
+All three work on **individual messages**, not threads, and all three are scoped to **unread
+inbox mail only** — archived and read mail are never touched. `process` and the other two have
+scopes that are mirror images and never overlap:
 
 | | Scope | Per run | What it writes |
 | --- | --- | --- | --- |
 | **`process`** | unread inbox mail **without** `IL/processed` | at most **10** | `IL/` labels, match counts |
 | **`attention`** | unread inbox mail **with** `IL/processed` | no limit | `STARRED`, `UNREAD` |
+| **`overview`** | unread inbox mail **with** `IL/processed` | no limit | `UNREAD`, and only when asked |
 
 ### process
 
@@ -353,6 +354,30 @@ Run it by saying **"apply attention"**. It reads the `IL/` labels already on a m
 the effective level, and sets `STARRED` or clears `UNREAD` accordingly. It never looks at the
 email, never classifies anything, and never adds or removes an `IL/` label. See
 [Attention](#attention) for the levels and their timings.
+
+### overview
+
+Run it by saying **"show me my inbox overview"**. It presents the mail that has already been
+processed as one section per label and one compact row per email — as an interactive selection
+where the agent's host can render one, and as readable grouped text where it cannot. It
+classifies nothing, changes no `IL/` label, and writes nothing to Gmail by being built. Clearing
+`UNREAD` happens only when the user asks for it, on exactly the messages they identified from the
+overview in front of them, and Gmail message ids are never shown to them.
+
+Each email is shown once, under **one** representative label, and which one is not a judgement.
+`get_representative_labels` ranks the labels on the message: a derived label beats a category, a
+category beats an attribute, an attribute beats a detection label with no role. Between two
+derived labels, the one with more of its references present on the message wins; then the rarer
+label, by the same match rate the label cards show; then the label text. Everything else on the
+email is shown on the row as secondary metadata, so the heading says what the mail *is* and the
+row says what else is true about it.
+
+**It ranks against the model as it stands.** The Gmail labels on a message are exactly what
+processing put there and are never revisited, but how they read is answered by today's labels,
+today's roles and today's references — so editing a label can move an old message into a
+different section next time, without changing anything on the message. Mail carrying labels this
+account no longer defines is grouped under `Unknown labels`, which is a heading and not a label;
+mail carrying no business label at all is grouped under `No match`.
 
 ### System labels
 
@@ -438,7 +463,8 @@ it, from [`inbox-labeler-setup`](skills/inbox-labeler-setup/SKILL.md).
 ## What matched, and how often
 
 The match history counts how often each label has matched, and is the one thing Inbox Labeler
-keeps after a run. It is written only by `record_matches` and read only by `get_matches`; label
+keeps after a run. It is written only by `record_matches`, and read by `get_matches` and by
+`get_representative_labels`, which breaks a tie between two of an email's labels with it; label
 definitions never hold a count.
 
 **It records that a label matched, not what it matched.** Per label it holds the newest email
@@ -492,16 +518,18 @@ access token rather than named in any call:
 | `delete_label` | remove one, and its match history with it |
 | `get_matches` | how often each label has matched |
 | `record_matches` | record that an email matched these labels |
+| `get_representative_labels` | which one of an email's labels represents it, and which are secondary |
 | `get_server_info` | that the endpoint is reachable, and who is calling |
 
 **Processing a mailbox is not here.** Nothing in the endpoint reads mail, classifies
 it, or applies attention: the MCP holds configuration and match counts and has no
 access to Gmail. That mailbox work belongs to the focused agent skills, which pair
 this endpoint with a Gmail connector — `inbox-labeler-process` classifies new unread
-inbox mail and `inbox-labeler-attention` acts on what it has already labelled, while
-`inbox-labeler-setup` and `inbox-labeler-manage` use these tools for configuration
-alone. These tools are the state those runs read and write, which is why
-`record_matches` takes the labels that matched rather than an email.
+inbox mail, and `inbox-labeler-attention` and `inbox-labeler-overview` act on what it
+has already labelled, while `inbox-labeler-setup` and `inbox-labeler-manage` use these
+tools for configuration alone. These tools are the state those runs read and write,
+which is why `record_matches` takes the labels that matched rather than an email — and
+why `get_representative_labels` ranks label texts and is given nothing about a message.
 
 Every request is attributed to one user before a tool is reached:
 
@@ -960,7 +988,8 @@ Nothing else is configured. The client reads the `401`, follows it to the protec
 resource metadata, finds the authorization server, registers itself, and opens the
 browser for the consent page and Google sign-in. After that its tools are
 `get_labels`, `create_label`, `update_label`, `delete_label`, `get_matches`,
-`record_matches` and `get_server_info`, all acting on the account that signed in.
+`record_matches`, `get_representative_labels` and `get_server_info`, all acting on the
+account that signed in.
 
 **The web UI is per-user.** `/` is one address in two states: signed out it is the
 public landing page and its closed-beta notice, and signed in it is the visitor's own
@@ -991,7 +1020,7 @@ always agree. There is no local label file any more: the store is the only place
 
 ## Repository layout
 
-Four Agent Skills implement Inbox Labeler, one per job:
+Five Agent Skills implement Inbox Labeler, one per job:
 
 | Skill | Owns |
 | --- | --- |
@@ -999,10 +1028,11 @@ Four Agent Skills implement Inbox Labeler, one per job:
 | **`inbox-labeler-manage`** | create, model, rename and delete labels |
 | **`inbox-labeler-process`** | classify new unread inbox mail, and record what matched |
 | **`inbox-labeler-attention`** | star or mark read the mail that has already been processed |
+| **`inbox-labeler-overview`** | show the mail that has already been processed, grouped for scanning |
 
 One skill per job, so an agent asked to rename a label does not also load the ten-message bound
-and the Gmail query. All four reach labels and match history through the same remote MCP server,
-and the two that touch mail use Gmail as well. A message is eligible for processing when it is in
+and the Gmail query. All five reach labels and match history through the same remote MCP server,
+and the three that touch mail use Gmail as well. A message is eligible for processing when it is in
 the inbox, unread and not yet carrying `IL/processed`, and a run stops after **ten messages**.
 
 ```
@@ -1018,13 +1048,16 @@ skills/inbox-labeler-process/
 skills/inbox-labeler-attention/
 ├── SKILL.md              the Gmail state that follows from the labels already on a message
 └── test.sh               its own test suite
+skills/inbox-labeler-overview/
+├── SKILL.md              already processed mail, grouped under one representative label each
+└── test.sh               its own test suite
 web/
 ├── app/                  the web UI, and the MCP and OAuth routes
 └── lib/
     ├── identity.ts       who an authenticated request belongs to — one stable id
     ├── db.ts, db/        one Postgres connection, and the migrations for all three schemas
     ├── mcp/              the MCP server, its tools, and the auth boundary
-    ├── inbox/            per-user labels and match history
+    ├── inbox/            per-user labels, match history, and the representative label
     └── oauth/            the authorization server: discovery, grants, tokens
 README.md
 ```
@@ -1038,13 +1071,13 @@ is *not* picked up. It must be at `<skills-dir>/<skill-name>/SKILL.md`, and each
 under a different `<skills-dir>`: Claude Code under `.claude/skills/`, Codex under
 `.agents/skills/`.
 
-Nothing is committed under either. These four skills reach your labels through the remote MCP
+Nothing is committed under either. These five skills reach your labels through the remote MCP
 server rather than through anything in this checkout, so they are useful from any project — link
 the ones you want into your personal skills directory instead:
 
 ```bash
 mkdir -p ~/.claude/skills
-for skill in setup manage process attention; do
+for skill in setup manage process attention overview; do
   ln -s "$PWD/skills/inbox-labeler-$skill" ~/.claude/skills/inbox-labeler-$skill
 done
 ```
@@ -1062,10 +1095,11 @@ skills/inbox-labeler-setup/test.sh      # the starter set, checked as data
 skills/inbox-labeler-manage/test.sh     # the label model and the boundaries around it
 skills/inbox-labeler-process/test.sh    # eligibility, the ten-message bound, the two stages
 skills/inbox-labeler-attention/test.sh  # the scope, the ranking, and its two writes
+skills/inbox-labeler-overview/test.sh   # the scope, the delegated ranking, and the read boundary
 cd web && npm test                      # the store, the MCP boundary, OAuth, and sign-in
 ```
 
-Each skill script prints one line per check and exits non-zero if any fails. The four are
+Each skill script prints one line per check and exits non-zero if any fails. The five are
 **Markdown contract regression tests**: they ask one question — did someone remove or alter an
 explicit contract rule? — using canonical phrases, exact table data, counts and document order,
 because those flows live in prose rather than code and would otherwise drift. They deliberately

@@ -14,7 +14,7 @@ change: one new label, a rename, a deletion, a reworded instruction, a different
 remodelling what already exists. Those belong to `inbox-labeler-manage`, and so does every
 question about *which* labels a particular user should have.
 
-The four skills divide the work like this, and the boundaries are strict:
+The five skills divide the work like this, and the boundaries are strict:
 
 | Skill | Its job |
 | --- | --- |
@@ -22,6 +22,7 @@ The four skills divide the work like this, and the boundaries are strict:
 | `inbox-labeler-manage` | customise and model labels afterwards |
 | `inbox-labeler-process` | classify new unread inbox mail |
 | `inbox-labeler-attention` | carry out Attention on already processed unread mail |
+| `inbox-labeler-overview` | show already processed unread mail, grouped for scanning |
 
 **This never touches mail.** It never searches Gmail, never opens a thread, never classifies
 anything, never applies a Gmail label to a message, never stars or marks anything, and never

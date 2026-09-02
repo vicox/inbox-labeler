@@ -140,6 +140,7 @@ test("every tool is discoverable, and only the intended ones", async () => {
     "delete_label",
     "get_labels",
     "get_matches",
+    "get_representative_labels",
     "get_server_info",
     "record_matches",
     "update_label",

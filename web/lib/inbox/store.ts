@@ -4,6 +4,7 @@ import { prepareSchema } from "../db/migrate.ts";
 import type { AuthenticatedUser } from "../identity.ts";
 import type { Attention, DetectionRole, Label, LabelType, ReferenceField } from "./labels.ts";
 import type { Matches } from "./matches.ts";
+import type { EmailOverview } from "./overview.ts";
 
 /**
  * One user's InboxLabeler state, and every operation on it.
@@ -89,10 +90,21 @@ export type ProductStore = {
    * what makes the history usable.
    */
   recordMatches(labels: readonly string[], emailTimestamp: unknown): Promise<Recorded>;
+
+  /**
+   * Which one label represents each of these already-processed emails.
+   *
+   * One entry in, one entry out, in the same order. Each entry is the business
+   * labels a processing run already put on one message; nothing about the
+   * message itself is passed, and nothing is written. `lib/inbox/overview.ts`
+   * holds the rule, and it ranks against the model as it stands now — this reads
+   * the labels and the history it needs.
+   */
+  representativeLabels(emails: readonly (readonly string[])[]): Promise<EmailOverview[]>;
 };
 
 /** Re-exported so a caller needs one import to work with what these return. */
-export type { Attention, DetectionRole, Label, LabelType, ReferenceField, Matches };
+export type { Attention, DetectionRole, Label, LabelType, ReferenceField, Matches, EmailOverview };
 
 /**
  * Opens the store for one authenticated user.

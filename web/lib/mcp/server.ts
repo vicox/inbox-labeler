@@ -253,6 +253,36 @@ export function inboxLabelerMcpServer(session: McpSession): McpServer {
   );
 
   server.registerTool(
+    "get_representative_labels",
+    {
+      title: "Pick each email's representative label",
+      description:
+        "For each already-processed email, which ONE of the labels on it represents it, which " +
+        "are secondary, and which this account no longer defines. Pass the labels a processing " +
+        "run already applied; this classifies nothing, reads no mail and writes nothing. The " +
+        "choice is a deterministic ranking over the labels, the current label model and the " +
+        "match history — not a judgement — so use it instead of deciding which label matters " +
+        "most, which would give a different answer each run.",
+      inputSchema: z.object({
+        emails: z
+          .array(
+            z
+              .array(z.string())
+              .describe("One email: the exact texts of the labels that matched it."),
+          )
+          .describe(
+            "One entry per email, answered in the same order. Each entry holds only label " +
+              "texts, with or without the IL/ prefix; processed and no-match are ignored. Pass " +
+              "nothing about the message — no id, no subject, no sender, no snippet, no body.",
+          ),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ emails }) =>
+      attempt(async () => ({ emails: await store.representativeLabels(emails) })),
+  );
+
+  server.registerTool(
     "record_matches",
     {
       title: "Record matches",

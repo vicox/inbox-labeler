@@ -34,6 +34,7 @@ import {
   parseEmailTimestamp,
   type Matches,
 } from "../matches.ts";
+import { overviewOf } from "../overview.ts";
 import type { LabelDraft, ProductStore, Recorded } from "../store.ts";
 import { INBOX_SCHEMA } from "./schema.ts";
 
@@ -182,6 +183,19 @@ export function sqlProductStore(driver: SqlDriver, user: AuthenticatedUser): Pro
 
     async matches() {
       return readMatches(driver, owner);
+    },
+
+    async representativeLabels(emails) {
+      // Both reads, then one pure function over them. The ranking needs the whole
+      // model and the whole history — a per-email query would ask the database
+      // the same two questions once per message — and it needs no transaction,
+      // because it writes nothing and a label appearing or disappearing mid-batch
+      // would change one email's answer rather than corrupt anything.
+      const [labels, matches] = await Promise.all([
+        readLabels(driver, owner),
+        readMatches(driver, owner),
+      ]);
+      return overviewOf(emails, labels, matches, new Date());
     },
 
     async matchesFor(label) {

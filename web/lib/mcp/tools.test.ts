@@ -29,8 +29,8 @@ async function tokenFor(user: string): Promise<string> {
 /**
  * A tool's answer, as a client reads it.
  *
- * `structuredContent` is left loosely typed on purpose: seven tools return seven
- * shapes, and pinning each one here would restate the schemas rather than test
+ * `structuredContent` is left loosely typed on purpose: the tools return a shape
+ * each, and pinning each one here would restate the schemas rather than test
  * them. The assertions below name the fields they care about.
  */
 type ToolResult = {
@@ -367,6 +367,116 @@ test("deleting a label takes its history with it", async () => {
   await ok(token, "delete_label", { label: "Invoices" });
 
   assert.deepEqual((await ok(token, "get_matches")).matches, {});
+});
+
+// --- the representative label ----------------------------------------------
+
+test("the representative label comes back with the current model applied to it", async () => {
+  const token = await tokenFor(someone());
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+  await ok(token, "create_label", { label: "Large amount", instruction: "a big number", role: "attribute" });
+  await ok(token, "create_label", {
+    label: "Large invoice",
+    type: "derived",
+    instruction: "worth a look",
+    required_labels: ["Invoices"],
+    recommended_labels: ["Large amount"],
+  });
+
+  const read = await ok(token, "get_representative_labels", {
+    emails: [["IL/Invoices", "IL/Large amount", "IL/Large invoice", "IL/processed"], ["IL/Invoices"]],
+  });
+
+  assert.deepEqual(read.emails, [
+    {
+      representative: "Large invoice",
+      secondary: ["Invoices", "Large amount"],
+      unknown: [],
+    },
+    { representative: "Invoices", secondary: [], unknown: [] },
+  ]);
+});
+
+test("a label the account no longer defines comes back as unknown, not as a heading", async () => {
+  const token = await tokenFor(someone());
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+
+  const read = await ok(token, "get_representative_labels", {
+    emails: [["IL/Invoices", "IL/Retired"], ["IL/Retired"], ["IL/no-match"]],
+  });
+
+  assert.deepEqual(read.emails, [
+    { representative: "Invoices", secondary: [], unknown: ["Retired"] },
+    { representative: null, secondary: [], unknown: ["Retired"] },
+    { representative: null, secondary: [], unknown: [] },
+  ]);
+});
+
+test("an account with no labels still gets an answer for its processed mail", async () => {
+  const token = await tokenFor(someone());
+
+  const read = await ok(token, "get_representative_labels", {
+    emails: [["IL/Invoices"], ["IL/processed"]],
+  });
+
+  assert.deepEqual(read.emails, [
+    { representative: null, secondary: [], unknown: ["Invoices"] },
+    { representative: null, secondary: [], unknown: [] },
+  ]);
+});
+
+test("changing the model changes the grouping of labels that are already applied", async () => {
+  const token = await tokenFor(someone());
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+  await ok(token, "create_label", { label: "Large amount", instruction: "a big number", role: "attribute" });
+  await ok(token, "create_label", {
+    label: "Aaa broad",
+    type: "derived",
+    instruction: "one",
+    required_labels: ["Invoices"],
+  });
+  await ok(token, "create_label", {
+    label: "Zzz narrow",
+    type: "derived",
+    instruction: "another",
+    required_labels: ["Invoices"],
+  });
+  const emails = [["Invoices", "Large amount", "Aaa broad", "Zzz narrow"]];
+
+  const before = await ok(token, "get_representative_labels", { emails });
+  await ok(token, "update_label", { label: "Zzz narrow", recommended_labels: ["Large amount"] });
+  const after = await ok(token, "get_representative_labels", { emails });
+
+  assert.equal(before.emails[0].representative, "Aaa broad");
+  assert.equal(after.emails[0].representative, "Zzz narrow");
+});
+
+test("the ranking reads one user's own labels and history, not another's", async () => {
+  const alice = await tokenFor(someone());
+  const bob = await tokenFor(someone());
+  for (const token of [alice, bob]) {
+    await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+    await ok(token, "create_label", { label: "Travel", instruction: "a trip", role: "category" });
+  }
+  // Only Alice has ever seen an invoice, so only for her is Travel the rarer of
+  // the two — Bob's answer must not move because of mail that is not his.
+  await ok(alice, "record_matches", { labels: ["Invoices"], email_timestamp: "2026-08-20T10:12:00Z" });
+
+  const hers = await ok(alice, "get_representative_labels", { emails: [["Invoices", "Travel"]] });
+  const his = await ok(bob, "get_representative_labels", { emails: [["Invoices", "Travel"]] });
+
+  assert.equal(hers.emails[0].representative, "Travel");
+  assert.equal(his.emails[0].representative, "Invoices");
+});
+
+test("ranking labels changes nothing: it is a read", async () => {
+  const token = await tokenFor(someone());
+  await ok(token, "create_label", { label: "Invoices", instruction: "an invoice", role: "category" });
+
+  await ok(token, "get_representative_labels", { emails: [["Invoices"], ["Invoices"]] });
+
+  assert.deepEqual((await ok(token, "get_matches")).matches, {});
+  assert.equal((await ok(token, "get_labels")).labels.length, 1);
 });
 
 // --- isolation, through the token -----------------------------------------

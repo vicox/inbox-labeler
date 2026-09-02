@@ -1,10 +1,15 @@
 /**
  * How often a label matches, and when it last did.
  *
- * For display only: nothing here writes, and a label with no history is a normal
- * state rather than a gap to fill in. The store keeps a label, a day and a count —
- * there is nothing about an email to show even if this wanted to. The shape matches
+ * Nothing here writes, and a label with no history is a normal state rather than a
+ * gap to fill in. The store keeps a label, a day and a count — there is nothing
+ * about an email to show even if this wanted to. The shape matches
  * `lib/inbox/matches.ts` field for field.
+ *
+ * `matchesPerDay` is the product's one answer to "how often does this label fire":
+ * the signed-in page orders labels by it, and `lib/inbox/overview.ts` breaks a tie
+ * between two matched labels with it. A second frequency model would let the same
+ * two labels be rare in one place and busy in the other.
  */
 
 export type MatchEntry = {
