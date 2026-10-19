@@ -991,6 +991,22 @@ browser for the consent page and Google sign-in. After that its tools are
 `record_matches`, `get_representative_labels` and `get_server_info`, all acting on the
 account that signed in.
 
+### The ChatGPT plugin
+
+The connector gives ChatGPT the tools. The skills that say how to use them ship separately, as a
+ChatGPT plugin. `chatgpt-plugin/` holds its manifest and a reference to the connector, and
+`build.sh` packages them together with every skill under `skills/`:
+
+```bash
+bash chatgpt-plugin/build.sh      # → chatgpt-plugin/dist/inbox-labeler.zip
+```
+
+Upload the ZIP in ChatGPT as a plugin. It does not bundle the MCP server. Instead, `.app.json`
+names the connector above by its registered app ID, which starts with `asdk_app_`, `connector_`
+or `templated_apps_`. It never takes the `plugin_…` ID in ChatGPT's address bar, and the build
+refuses one. The skills are copied unchanged, so they name Gmail's tools the way Claude's Gmail
+connector does. Whether ChatGPT's Gmail exposes the same tools is not yet checked.
+
 **The web UI is per-user.** `/` is one address in two states: signed out it is the
 public landing page and its closed-beta notice, and signed in it is the visitor's own
 labels. The signed-in half reads them server-side through `inboxStore(visitor.user)` —
@@ -1051,6 +1067,11 @@ skills/inbox-labeler-attention/
 skills/inbox-labeler-overview/
 ├── SKILL.md              already processed mail, grouped under one representative label each
 └── test.sh               its own test suite
+chatgpt-plugin/
+├── .codex-plugin/        the ChatGPT plugin manifest, plugin.json
+├── .app.json             the connector the plugin relies on, by app ID
+├── build.sh              packages it with skills/ into dist/inbox-labeler.zip
+└── test.sh               its own test suite
 web/
 ├── app/                  the web UI, and the MCP and OAuth routes
 └── lib/
@@ -1096,6 +1117,7 @@ skills/inbox-labeler-manage/test.sh     # the label model and the boundaries aro
 skills/inbox-labeler-process/test.sh    # eligibility, the ten-message bound, the two stages
 skills/inbox-labeler-attention/test.sh  # the scope, the ranking, and its two writes
 skills/inbox-labeler-overview/test.sh   # the scope, the delegated ranking, and the read boundary
+bash chatgpt-plugin/test.sh             # the plugin manifest, the app ID, and what the ZIP holds
 cd web && npm test                      # the store, the MCP boundary, OAuth, and sign-in
 ```
 

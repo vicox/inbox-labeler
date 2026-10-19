@@ -1,0 +1,8 @@
+{
+  "apps": {
+    "inbox-labeler-mcp": {
+      "id": "asdk_app_6a9935553ca8819194b32858433d08bf",
+      "required": true
+    }
+  }
+}
