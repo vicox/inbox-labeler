@@ -1,6 +1,6 @@
 {
   "name": "inbox-labeler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Label Gmail with categories you define, using the Inbox Labeler app for your label definitions.",
   "author": {
     "name": "Georg Schmidl",
@@ -14,8 +14,8 @@
   "apps": "./.app.json",
   "interface": {
     "displayName": "Inbox Labeler",
-    "shortDescription": "Label your mail with categories you define",
-    "longDescription": "Describe in plain language what matters to you in an email. Inbox Labeler detects it in new unread mail and applies it as a Gmail label, stars or marks read what each label asks for, and shows already processed mail grouped for scanning. Label definitions live in the Inbox Labeler app.",
+    "shortDescription": "Label Gmail by what mail means and asks of you",
+    "longDescription": "Your inbox, your meaning, your attention. Describe in plain language what matters to you in an email, and Inbox Labeler applies it to new unread mail as Gmail labels. Detection labels recognise what a message directly shows, such as an invoice or a large amount; derived labels interpret what those facts mean together, such as a large invoice. Separately, each label's attention stars a message, marks it read or leaves it alone. Already processed mail is shown grouped for scanning. Label definitions live in the Inbox Labeler app.",
     "developerName": "Georg Schmidl",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

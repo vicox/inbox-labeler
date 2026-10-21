@@ -17,7 +17,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Inbox Labeler",
-  description: "The labels your mail is read against.",
+  description:
+    "Your inbox, your meaning, your attention. Gmail labels you define in plain language — what your mail shows, what it means, and what it asks of you.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

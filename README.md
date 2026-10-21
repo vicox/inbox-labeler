@@ -1,25 +1,25 @@
 # Inbox Labeler
 
+**Your Inbox. Your Meaning. Your Attention.**
+
 ## What is Inbox Labeler?
 
-Inbox Labeler turns a mailbox full of unlabelled mail into one that carries categories you
-defined — the ones that matter to you, not a fixed set someone else chose. You describe, in
-plain language, the aspects of a message you care about; Claude reads your mail and detects
-which of those aspects are present, applying each one as a Gmail label.
+**Your inbox.** Inbox Labeler turns a mailbox full of unlabelled mail into one that carries
+categories you defined — the ones that matter to you, not a fixed set someone else chose. You
+describe, in plain language, the aspects of a message you care about; Claude reads your mail
+and detects which of those aspects are present, applying each one as a Gmail label.
 
-A label names the aspect of a message it detects, how to detect it, and the Gmail label to
-apply when that aspect is present.
+**Your meaning.** A detection label recognises what a message directly shows: `Invoices`,
+`Large amount`. Some things only matter in combination, though — an invoice on its own is
+routine, but a large invoice is worth a second look. A derived label interprets what detection
+labels mean together, building `Large invoice` from `Invoices` and `Large amount` rather than
+writing a new rule from scratch. [A concrete example](#a-concrete-example) walks through
+exactly how.
 
-Two things make this more than a labelling script. First, some things only matter in
-combination: an invoice, on its own, is routine, but a large invoice is worth a second look. A
-Derived Label lets you say that directly, building `Large invoice` from `Invoices` and
-`Large amount` rather than writing a new rule from scratch.
-[A concrete example](#a-concrete-example) walks through exactly how.
-
-Second, meaning alone isn't the whole story. Not every label deserves the same reaction, so
-every label also carries an **Attention** level — what it asks of you, separately from what it
-means: star a message, mark it read, or leave it alone. [The model](#the-model) covers what
-each level does in full.
+**Your attention.** Meaning alone isn't the whole story. Not every label deserves the same
+reaction, so every label also carries an **Attention** level — what it asks of you, separately
+from what it means: star a message, mark it read, or leave it alone. [The model](#the-model)
+covers what each level does in full.
 
 Nothing runs on its own. You ask, and something happens — see
 [Automating it](#automating-it) if you would rather it happened hourly.

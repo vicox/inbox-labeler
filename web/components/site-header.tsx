@@ -25,7 +25,7 @@ export function SiteHeader({ children }: { children: React.ReactNode }) {
     <header className="mb-10 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3 border-b border-rule pb-5 sm:mb-14">
       <div className="flex items-baseline gap-4">
         <h1 className="font-display text-[19px] tracking-[-0.01em]">Inbox Labeler</h1>
-        <p className="text-[12.5px] text-ink-faint">Teach your AI how to label your inbox.</p>
+        <p className="text-[12.5px] text-ink-faint">Teach your AI what your mail means to you.</p>
       </div>
       {children}
     </header>

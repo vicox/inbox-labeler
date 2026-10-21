@@ -40,8 +40,8 @@ import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
  * handed to the next. The response headers that say so to every cache in between
  * are in `next.config.ts`, because a Server Component cannot set one.
  *
- * What is given up is a prerendered shell for the landing half, which is a heading
- * and a fixed notice — little enough that prerendering it was never worth much. A
+ * What is given up is a prerendered shell for the landing half, which is fixed text
+ * and nothing else — little enough that prerendering it was never worth much. A
  * visitor with no session cookie is still answered without the database being
  * touched at all: `signedInVisitor` returns on the missing cookie, and the landing
  * branch opens no store. Neither half fetches anything from the browser; the
@@ -86,16 +86,51 @@ function Landing() {
       {/*
         The public page reads nothing. It once rendered the same columns against a
         local fixture file, which was a demo of the product rather than anybody's
-        labels — and hosted there was no file, so this notice is what it showed. Now
-        the columns belong to the signed-in page, where the labels are real, and the
-        landing page states the one fact a stranger needs.
+        labels — and hosted there was no file, so the closed-beta notice is what it
+        showed. Now the columns belong to the signed-in page, where the labels are
+        real, and the landing page says in words what they would be, then states the
+        one fact a stranger needs.
+
+        Meaning holds both label types, because both say what the mail is: detection
+        reads a fact off it, derived concludes from those facts. Attention stands
+        apart, because what a message asks of you is decided separately from what it
+        means — the same split the README draws.
       */}
-      <p className="py-24 text-center text-[14px] text-ink-soft">
-        <span className="block text-ink">Closed beta</span>
-        <span className="mt-1.5 block text-[12.5px] text-ink-faint">
-          Connect Inbox Labeler through your MCP client.
-        </span>
-      </p>
+      <section className="mx-auto max-w-3xl py-12 text-center sm:py-20">
+        <h2 className="font-display text-[34px] leading-[1.1] tracking-[-0.02em] sm:text-[46px]">
+          Your Inbox. Your Meaning. Your Attention.
+        </h2>
+        <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-ink-soft">
+          Describe in plain language what matters to you in an email. Your AI assistant
+          applies it to your inbox as Gmail labels — categories you defined, not a fixed
+          set someone else chose.
+        </p>
+
+        <dl className="mt-12 grid gap-8 text-left sm:grid-cols-2 sm:gap-12">
+          <div>
+            <dt className="font-display text-[19px] tracking-[-0.01em]">Meaning</dt>
+            <dd className="mt-2 text-[13.5px] leading-relaxed text-ink-soft">
+              Detection labels recognise what an email directly shows, such as an invoice
+              or a large amount. Derived labels interpret what those facts mean together:
+              a large invoice.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-display text-[19px] tracking-[-0.01em]">Attention</dt>
+            <dd className="mt-2 text-[13.5px] leading-relaxed text-ink-soft">
+              Separately from what it means, every label says what it asks of you: star
+              the message, mark it read, or leave it alone.
+            </dd>
+          </div>
+        </dl>
+
+        <p className="mt-16 text-[14px] text-ink-soft sm:mt-20">
+          <span className="block text-ink">Closed beta</span>
+          <span className="mt-1.5 block text-[12.5px] text-ink-faint">
+            Connect Inbox Labeler through your MCP client.
+          </span>
+        </p>
+      </section>
 
       {/*
         Linked rather than merely present: Google's OAuth branding step asks for a
