@@ -21,6 +21,12 @@ import { handleMcpRequest } from "@/lib/mcp/endpoint";
  */
 export const dynamic = "force-dynamic";
 
+/**
+ * Ten seconds at most, so a request that stalls is ended rather than left to
+ * run until the deployment platform's default limit.
+ */
+export const maxDuration = 10;
+
 export async function POST(request: Request): Promise<Response> {
   return handleMcpRequest(request);
 }
