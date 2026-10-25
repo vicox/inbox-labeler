@@ -1,0 +1,14 @@
+{
+  "name": "inbox-labeler",
+  "displayName": "Inbox Labeler",
+  "version": "0.2.0",
+  "description": "Label Gmail with categories you define, using the Inbox Labeler app for your label definitions.",
+  "author": {
+    "name": "Georg Schmidl",
+    "url": "https://github.com/vicox"
+  },
+  "homepage": "https://inboxlabeler.com",
+  "repository": "https://github.com/vicox/inbox-labeler",
+  "license": "MIT",
+  "keywords": ["gmail", "email", "labels", "inbox"]
+}

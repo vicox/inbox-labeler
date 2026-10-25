@@ -81,14 +81,13 @@ check "the absence of IL/processed is not sufficient on its own" \
         'in the inbox **and** unread **and** lacks `IL/processed`')" "True"
 
 selection=(
-    'in:inbox is:unread -label:<IL/processed id>'
-    'pageSize: 50'
-    'Work through the pages in order, and stop at ten messages'
-    'pick out the individual messages that are in the inbox, unread, and lack the `IL/processed` id in `labelIds`'
+    'Search Gmail for candidates: unread mail in the inbox that lacks `IL/processed`'
+    'Work through the results in order, and stop at ten messages'
+    'Pick out the individual messages that are in the inbox, unread, and lack `IL/processed`'
     'check every message and skip the ones that do not qualify'
     'count only the ones you actually process against the ten'
 )
-check "the canonical query, the per-message recheck and the per-message count" \
+check "the candidate search, the per-message recheck and the per-message count" \
     "$(order_check "${selection[@]}")" "True"
 
 echo
@@ -101,8 +100,8 @@ check "ten is stated as a hard maximum" \
     "$(order_check 'Ten is a hard maximum, not a target')" "True"
 check "exhausted results end the run" \
     "$(order_check 'When the search results run out, the run is over' \
-        'once ten have been processed, stop and fetch no further page' \
-        'If the pages run out first, you are done — fewer than ten is fine, and so is none')" "True"
+        'once ten have been processed, stop and fetch no further results' \
+        'If the results run out first, you are done — fewer than ten is fine, and so is none')" "True"
 
 echo
 echo "--- step zero: no labels, no processing ---"
@@ -119,8 +118,7 @@ check "step zero and its stop rules come before the first Gmail step" \
         'It returns an empty list' \
         'Report the error verbatim and stop' \
         'Complete [step zero](#step-zero-make-sure-labels-are-available)' \
-        'Find candidate threads with `search_threads`' \
-        'in:inbox is:unread -label:<IL/processed id>')" "True"
+        'Search Gmail for candidates')" "True"
 
 echo
 echo "--- the two stages ---"
@@ -154,7 +152,7 @@ echo "--- what the run writes ---"
 
 check "IL/processed goes on last, and only when earned" \
     "$(order_check 'Apply `IL/processed` last, once both stages finished' \
-        'leave `IL/processed` off so the message is picked up again on the next run' \
+        'labelling write fails or is refused, leave `IL/processed` off so the message is picked up again on the next run' \
         '`IL/processed` is always last and always earned')" "True"
 check "the run never changes UNREAD, never stars, never archives or deletes" \
     "$(order_check 'Never add or remove `STARRED`, never add or remove `UNREAD`' \
@@ -170,20 +168,46 @@ check "one call per message, after it is fully labelled" \
     "$(order_check 'Every message this run labelled gets one call, once it is fully labelled' \
         'One call per message, naming every business label that matched it' \
         'without their `IL/` prefix')" "True"
+check "a message left without IL/processed is not recorded" \
+    "$(order_check 'A message left without `IL/processed` is not recorded' \
+        'the next run processes it again and records it then')" "True"
 check "the state markers are never recorded, and a no-match message has no call" \
     "$(order_check 'are never recorded' 'so it has no call')" "True"
+
+echo
+echo "--- Gmail: no tool named, and the rules every call is held to ---"
+
+# The skill ships unchanged to Claude and to ChatGPT, whose Gmail connections name their
+# tools differently. So it names none of them, nor their parameters or Gmail search
+# syntax, and states instead the rules any Gmail call must keep.
+check "no Gmail tool, API field or search syntax is named" \
+    "$(grep -cE 'search_threads|get_thread|get_message|list_labels|label_message|label_thread|update_message_labels|create_label|labelIds|pageSize|nextPageToken|maxResults|in:inbox|is:unread|newer_than|label:<' "$SKILL")" \
+    "0"
+check "every Gmail rule is stated, in order, before the run" \
+    "$(order_check '## Gmail rules' 'This skill names no Gmail tool' \
+        '**One message per write.** Each write to mail changes exactly one message, addressed by its own message id' \
+        'Never write to a thread or conversation, never to several messages at once, and never to whatever a search query or filter selects' \
+        'Creating a missing `IL/` label in [step 2](#the-run) is the one write that addresses no message' \
+        '**Search selects, it never decides.**' \
+        '**Labels are resolved through Gmail' 'Never guess a label id' \
+        '**`STARRED` and `UNREAD` are Gmail' 'and this run touches neither' \
+        '**A failed or refused write did not happen.**' \
+        'Report it for that message, which then stays without `IL/processed`' \
+        'If the user declined the write, stop writing and ask how to go on' \
+        '**No suitable connection, no writes.**' \
+        '## The run')" "True"
 
 echo
 echo "--- Gmail labels are used, not restyled ---"
 
 # A run creates a label by name and reuses an existing one untouched. `update_label`
-# is deliberately not among the Gmail tools this skill names: how an `IL/` label
-# looks is the user setting it in Gmail, and a run has no way to overwrite that.
+# is deliberately not named: how an `IL/` label looks is the user setting it in Gmail,
+# and a run has no way to overwrite that.
 check "a missing label is created by name, an existing one is reused untouched" \
-    "$(order_check 'passing the resolved name and nothing else' \
+    "$(order_check 'by the resolved name and nothing else' \
         'reused exactly as it is' \
         'changes nothing about the label itself')" "True"
-check "the Gmail tools named do not include update_label" \
+check "update_label is not named" \
     "$(grep -c 'update_label' "$SKILL")" "0"
 check "attention is carried through the run without being used by it" \
     "$(order_check 'carried for `inbox-labeler-attention`, unused here')" "True"

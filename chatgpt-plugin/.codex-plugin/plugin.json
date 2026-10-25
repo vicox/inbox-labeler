@@ -1,6 +1,6 @@
 {
   "name": "inbox-labeler",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Label Gmail with categories you define, using the Inbox Labeler app for your label definitions.",
   "author": {
     "name": "Georg Schmidl",

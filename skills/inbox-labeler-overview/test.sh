@@ -69,9 +69,10 @@ check "the scope is inbox, unread and carrying IL/processed, with no cap" \
     "$(order_check 'Only **unread inbox messages that carry `IL/processed`**' \
         'Archived mail and read mail are out of scope' \
         'There is **no message limit**')" "True"
-check "the canonical scope query and the per-message recheck" \
-    "$(order_check 'in:inbox is:unread label:<IL/processed id>' \
-        'pick out the messages that are in the inbox, unread and carry `IL/processed`' \
+check "the candidate search and the per-message recheck" \
+    "$(order_check 'Search Gmail for candidates: unread mail in the inbox that carries `IL/processed`' \
+        'followed until the results run out' \
+        'Pick out the messages that are in the inbox, unread and carry `IL/processed`' \
         'check every message and skip the ones that do not qualify')" "True"
 check "producing the overview mutates nothing, and UNREAD is the one write" \
     "$(order_check 'Producing the overview is a read' \
@@ -79,6 +80,27 @@ check "producing the overview mutates nothing, and UNREAD is the one write" \
 check "it runs only when asked, and nothing chains into it" \
     "$(order_check 'Run this only when the user asks for it' \
         'neither processing nor attention may chain into it on its own initiative')" "True"
+
+echo
+echo "--- Gmail: no tool named, and the rules every call is held to ---"
+
+# The skill ships unchanged to Claude and to ChatGPT, whose Gmail connections name their
+# tools differently. So it names none of them, nor their parameters or Gmail search
+# syntax, and states instead the rules any Gmail call must keep.
+check "no Gmail tool, API field or search syntax is named" \
+    "$(grep -cE 'search_threads|get_thread|get_message|list_labels|label_message|label_thread|update_message_labels|labelIds|pageSize|nextPageToken|maxResults|in:inbox|is:unread|newer_than|label:<' "$SKILL")" \
+    "0"
+check "every Gmail rule is stated, in order, before the run" \
+    "$(order_check '## Gmail rules' 'This skill names no Gmail tool' \
+        '**One message per write.** Each write changes exactly one message, addressed by its own message id' \
+        'Never write to a thread or conversation, never to several messages at once, and never to whatever a search query or filter selects' \
+        '**Search selects, it never decides.**' \
+        '**Labels are resolved through Gmail' 'Never guess a label id' \
+        '**`UNREAD` is Gmail' 'Marking a message read removes `UNREAD` from it, and nothing else' \
+        '**A failed or refused write did not happen.**' \
+        'If the user declined the write, stop writing and ask how to go on' \
+        '**No suitable connection, no writes.**' \
+        '## The run')" "True"
 
 echo
 echo "--- the three sides, and what each is told ---"
@@ -148,7 +170,7 @@ check "step zero comes before the first Gmail step, and the run creates no Gmail
     "$(order_check '## Step zero: reach the MCP server' \
         'Complete [step zero](#step-zero-reach-the-mcp-server)' \
         '**Create nothing here**' \
-        'Find candidate threads with `search_threads`')" "True"
+        'Search Gmail for candidates')" "True"
 check "the labels on the message are read, not reconsidered" \
     "$(order_check 'Read the labels already on the message' \
         'do not reconsider whether a label belongs there' \
@@ -176,7 +198,7 @@ check "it happens only on an explicit request about the overview in front of the
         'Never on render, never on selection')" "True"
 check "exactly the messages identified, resolved by the agent, and UNREAD is all it clears" \
     "$(order_check '**Exactly those** — never the section they sit in, never everything shown' \
-        'Clear `UNREAD` on them with `unlabel_message`')" "True"
+        'Remove `UNREAD` from each of them, one message per write')" "True"
 check "an ambiguous or stale request asks rather than widening" \
     "$(order_check 'ask, and change nothing' \
         'Widening an unclear request to a whole section is the failure this rule exists to prevent')" \
