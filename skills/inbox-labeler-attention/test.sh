@@ -73,11 +73,11 @@ check "archived and read mail are out of scope for both skills" \
     "$(order_check 'archived mail and read mail are out of scope for both')" "True"
 
 scope=(
-    'in:inbox is:unread label:<IL/processed id>'
+    'Search Gmail for candidates: unread mail in the inbox that carries `IL/processed`'
     'only mail that **has** been processed'
-    'pick out the messages that are in the inbox, unread and carry `IL/processed`'
+    'Pick out the messages that are in the inbox, unread and carry `IL/processed`'
 )
-check "the canonical scope query and the per-message recheck" \
+check "the candidate search and the per-message recheck" \
     "$(order_check "${scope[@]}")" "True"
 check "a thread can mix in-scope and out-of-scope messages, so each is rechecked" \
     "$(order_check 'check every message and skip the ones that do not qualify')" "True"
@@ -97,8 +97,29 @@ check "step zero and its stop rules come before the first Gmail step" \
         'It returns an empty list' \
         'Report the error verbatim and stop' \
         'Complete [step zero](#step-zero-make-sure-labels-are-available)' \
-        'Find candidate threads with `search_threads`' \
-        'in:inbox is:unread label:<IL/processed id>')" "True"
+        'Search Gmail for candidates')" "True"
+
+echo
+echo "--- Gmail: no tool named, and the rules every call is held to ---"
+
+# The skill ships unchanged to Claude and to ChatGPT, whose Gmail connections name their
+# tools differently. So it names none of them, nor their parameters or Gmail search
+# syntax, and states instead the rules any Gmail call must keep.
+check "no Gmail tool, API field or search syntax is named" \
+    "$(grep -cE 'search_threads|get_thread|get_message|list_labels|label_message|label_thread|update_message_labels|labelIds|pageSize|nextPageToken|maxResults|in:inbox|is:unread|newer_than|label:<' "$SKILL")" \
+    "0"
+check "every Gmail rule is stated, in order, before the run" \
+    "$(order_check '## Gmail rules' 'This skill names no Gmail tool' \
+        '**One message per write.** Each write changes exactly one message, addressed by its own message id' \
+        'Never write to a thread or conversation, never to several messages at once, and never to whatever a search query or filter selects' \
+        '**Search selects, it never decides.**' \
+        '**Labels are resolved through Gmail' 'Never guess a label id' \
+        '**`STARRED` and `UNREAD` are Gmail' \
+        'Starring a message adds `STARRED`; marking it read removes `UNREAD`' \
+        '**A failed or refused write did not happen.**' \
+        'If the user declined the write, stop writing and ask how to go on' \
+        '**No suitable connection, no writes.**' \
+        '## The run')" "True"
 
 echo
 echo "--- the labels on the message are the whole input ---"
@@ -130,8 +151,8 @@ check "high outranks none outranks normal, and the behaviours are fixed" \
     "$(order_check "${ranking[@]}")" "True"
 
 check "high stars, none clears UNREAD, normal does nothing" \
-    "$(order_check '`star` → `label_message` with `STARRED`' \
-        '`mark_read` → `unlabel_message` with `UNREAD`' \
+    "$(order_check '`star` → add `STARRED` to the message' \
+        '`mark_read` → remove `UNREAD` from the message' \
         'nothing → leave the message untouched')" "True"
 check "age is counted from receipt, and 24h is inclusive" \
     "$(order_check 'Ages count from **when the message was received**' \
@@ -147,7 +168,7 @@ check "it runs only when asked, and never as part of or after a processing run" 
         'it is not part of a processing run, it does not follow one' \
         'a processing run must never chain into it on its own initiative')" "True"
 check "STARRED and UNREAD are the only two writes" \
-    "$(order_check '`STARRED` and `UNREAD` are the only two things this run writes')" "True"
+    "$(order_check '`STARRED` and `UNREAD` are the only two things this run writes, one message per write')" "True"
 check "it never touches an IL/ label, in either direction" \
     "$(order_check 'It never touches an `IL/` label, in either direction' \
         'not even `IL/processed`')" "True"

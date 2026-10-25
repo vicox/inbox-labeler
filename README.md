@@ -186,7 +186,7 @@ happens inside processing:
 | **"process my inbox"** | classifies unread inbox mail that hasn't been processed yet, labels it, and records what matched |
 | **"apply attention"** | stars and marks read already-labelled mail, from the attention its labels carry |
 
-Both use Claude's Gmail tools when they are connected — see
+Both use the Gmail connection of the agent you ask — see
 [How processing works](#how-processing-works) for exactly how the two relate. Want the whole run? Say
 **"process my inbox, update matches, then apply attention."**
 
@@ -991,28 +991,87 @@ browser for the consent page and Google sign-in. After that its tools are
 `record_matches`, `get_representative_labels` and `get_server_info`, all acting on the
 account that signed in.
 
-### The ChatGPT plugin
-
-The connector gives ChatGPT the tools. The skills that say how to use them ship separately, as a
-ChatGPT plugin. `chatgpt-plugin/` holds its manifest and a reference to the connector, and
-`build.sh` packages them together with every skill under `skills/`:
-
-```bash
-bash chatgpt-plugin/build.sh      # → chatgpt-plugin/dist/inbox-labeler.zip
-```
-
-Upload the ZIP in ChatGPT as a plugin. It does not bundle the MCP server. Instead, `.app.json`
-names the connector above by its registered app ID, which starts with `asdk_app_`, `connector_`
-or `templated_apps_`. It never takes the `plugin_…` ID in ChatGPT's address bar, and the build
-refuses one. The skills are copied unchanged, so they name Gmail's tools the way Claude's Gmail
-connector does. Whether ChatGPT's Gmail exposes the same tools is not yet checked.
-
 **The web UI is per-user.** `/` is one address in two states: signed out it is the
 public landing page and its closed-beta notice, and signed in it is the visitor's own
 labels. The signed-in half reads them server-side through `inboxStore(visitor.user)` —
 the same store `get_labels` and `get_matches` answer from, scoped to the account the
 session cookie resolves to — so the page and an MCP client on one Google account
 always agree. There is no local label file any more: the store is the only place labels live.
+
+### The plugins for Claude and ChatGPT
+
+The connector gives an agent the tools. The skills that say how to use them ship as a plugin,
+built twice from the one copy under `skills/`: once for Claude and once for ChatGPT. Both ZIPs
+hold the same five `SKILL.md` files, byte for byte, and `claude-plugin/test.sh` builds both to
+check it. Neither ZIP bundles the MCP server or holds a credential.
+
+```bash
+bash claude-plugin/build.sh       # → claude-plugin/dist/inbox-labeler.zip
+bash chatgpt-plugin/build.sh      # → chatgpt-plugin/dist/inbox-labeler.zip
+```
+
+| | Claude | ChatGPT |
+| --- | --- | --- |
+| Manifest | `claude-plugin/.claude-plugin/plugin.json` | `chatgpt-plugin/.codex-plugin/plugin.json` |
+| How it reaches Inbox Labeler | `.mcp.json`, written by the build: `https://inboxlabeler.com/mcp` as a remote server | `.app.json`: the registered app, by its app ID |
+| Skills | every `skills/*/SKILL.md`, copied at build time | the same files |
+
+Raise `version` in both manifests together before uploading a new build; the test holds them
+equal.
+
+**Neither plugin brings Gmail.** The three skills that touch mail — `process`, `attention` and
+`overview` — name no Gmail tool, no tool parameter and no Gmail search syntax, because Claude's
+and ChatGPT's Gmail connections name theirs differently. They use the Gmail connection the host
+already has, and hold every call to the rules each of them states: one message per write to
+mail, addressed by its own message id, and never a thread, several messages at once or whatever
+a search selects (creating a missing `IL/` label is the one write that addresses no message); a search only selects, and every message is rechecked on its own labels; `IL/`
+labels are resolved through Gmail's label list; `STARRED` and `UNREAD` are Gmail's system labels,
+which only `attention` (and `overview`, for `UNREAD`, when asked) may change; a failed or refused
+write did not happen and is never retried another way; and `IL/processed` goes on last, only once
+everything before it succeeded. Inbox Labeler's own tools are still named, because they are the
+same on every host.
+
+#### Install it in Claude
+
+1. In claude.ai, open **Customize > Plugins > Add > Upload plugin** and select
+   `claude-plugin/dist/inbox-labeler.zip`. On Team and Enterprise, this option appears only when
+   an Owner has **User-created skills** on. An Owner can instead add it for everyone under
+   **Organization settings > Plugins & skills**.
+2. **Check the connection — the upload does not.** Open the plugin, then its **Connectors** tab:
+   - **Connected**: your existing Inbox Labeler connection is in use. Nothing more to do.
+   - **Not connected**: sign in, with the Google account whose mail you label.
+   - **Not added**: no connector at exactly `https://inboxlabeler.com/mcp` exists. Compare the
+     URL in your connector settings character for character, and do not add a second connector.
+3. Connect Gmail in Claude as well. The plugin does not.
+
+With Claude Code, `claude plugin validate <unzipped>/inbox-labeler` checks the shape. Its
+README, LICENSE and privacy-URL findings are about Anthropic's public directory, not an upload.
+
+#### Install it in ChatGPT
+
+Upload `chatgpt-plugin/dist/inbox-labeler.zip` in ChatGPT as a plugin. `.app.json` names the
+connector above by its registered app ID, which starts with `asdk_app_`, `connector_` or
+`templated_apps_`. It never takes the `plugin_…` ID in ChatGPT's address bar, and the build
+refuses one. Enable ChatGPT's Gmail connection as well.
+
+#### What to know before relying on it
+
+- **Not yet tried end to end in either host** with the host-neutral skills. Uploading each ZIP,
+  processing a few messages, applying attention and marking a row read from an overview is the
+  check still to do.
+- **Gmail writes depend on the host's connection.** Where it cannot change a single message by
+  its id — only whole threads, several messages at once, or nothing at all — the skills write
+  nothing and say so; `process` then presents its decisions as a plan. Whether ChatGPT's Gmail
+  connection can write labels, star or mark read is not yet checked.
+- **The rules are instructions, not enforcement.** Nothing technical stops a model from calling
+  a host's thread or bulk tool; the skills tell it not to, and the skill tests only check that
+  they still say so.
+- **A host may ask the user to confirm each write.** A declined write stops the run's writing
+  until the user says how to go on, so an unattended run with confirmations on changes nothing.
+- **A search a host cannot narrow costs time, not correctness.** If it cannot leave out mail that
+  carries `IL/processed`, `process` reads past it and skips it message by message.
+- **The plugin adds no access of its own,** but `/mcp` offers all eight tools — including
+  creating, changing and deleting labels — to the conversation, whichever skill is running.
 
 ### What is not finished
 
@@ -1067,6 +1126,10 @@ skills/inbox-labeler-attention/
 skills/inbox-labeler-overview/
 ├── SKILL.md              already processed mail, grouped under one representative label each
 └── test.sh               its own test suite
+claude-plugin/
+├── .claude-plugin/       the Claude plugin manifest, plugin.json
+├── build.sh              packages it with skills/ and an .mcp.json into dist/inbox-labeler.zip
+└── test.sh               its own test suite, and the check that both plugins ship the same skills
 chatgpt-plugin/
 ├── .codex-plugin/        the ChatGPT plugin manifest, plugin.json
 ├── .app.json             the connector the plugin relies on, by app ID
@@ -1117,6 +1180,7 @@ skills/inbox-labeler-manage/test.sh     # the label model and the boundaries aro
 skills/inbox-labeler-process/test.sh    # eligibility, the ten-message bound, the two stages
 skills/inbox-labeler-attention/test.sh  # the scope, the ranking, and its two writes
 skills/inbox-labeler-overview/test.sh   # the scope, the delegated ranking, and the read boundary
+bash claude-plugin/test.sh              # the manifest, the tools named, the ZIP, and both ZIPs' skills
 bash chatgpt-plugin/test.sh             # the plugin manifest, the app ID, and what the ZIP holds
 cd web && npm test                      # the store, the MCP boundary, OAuth, and sign-in
 ```
@@ -1140,7 +1204,7 @@ true.
 Deliberately small. One store per account, in Postgres, reached only through the hosted
 application: the MCP endpoint for a client, the signed-in page for a browser. No scheduler, and
 nothing runs in the background — a run happens when somebody asks for one. Mailbox work happens
-through Claude's Gmail connector as described in each `SKILL.md`; nothing in this repository
+through the host's Gmail connection, under the rules each `SKILL.md` states; nothing in this repository
 holds a Google credential of the user's, and no skill reaches the network on its own.
 
 The classifying itself is Claude reading the email against your instructions — there is no model

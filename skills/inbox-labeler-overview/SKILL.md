@@ -19,9 +19,10 @@ mail has been processed, say that an overview is available and wait to be asked.
 
 **Two connections do different things.** Inbox Labeler's MCP server holds the labels, the match
 history and the ranking and has no access to the mailbox; Gmail holds the mail. `get_labels` and
-`get_representative_labels` are the MCP's; `list_labels`, `search_threads`, `get_thread` and
-`unlabel_message` are Gmail's. You hold the two together, and the messages stay on your side —
-see [What each side is told](#what-each-side-is-told). Identity is the authenticated MCP session:
+`get_representative_labels` are the MCP's. Mail is read — and marked read when the user asks —
+through the Gmail connection the host provides, under [the Gmail rules](#gmail-rules). You hold
+the two together, and the messages stay on your side — see
+[What each side is told](#what-each-side-is-told). Identity is the authenticated MCP session:
 never ask the user for an account id and never pass one to any tool.
 
 ## Scope
@@ -32,6 +33,29 @@ mail are out of scope, and so is anything without `IL/processed`.
 
 There is **no message limit**. The whole eligible inbox goes into one overview, because scanning
 half of it is worse than scanning none.
+
+## Gmail rules
+
+This skill names no Gmail tool. Use the Gmail connection the host provides, whatever its tools
+are called, and hold every call to these rules:
+
+- **One message per write.** Each write changes exactly one message, addressed by its own
+  message id. Never write to a thread or conversation, never to several messages at once, and
+  never to whatever a search query or filter selects — not even when every message in it was
+  identified.
+- **Search selects, it never decides.** A search only finds candidates. Every message is checked
+  against the scope on its own labels before it is shown or changed.
+- **Labels are resolved through Gmail's label list.** Find each `IL/` label in the label list
+  Gmail reports and use what that list gives for it. Never guess a label id and never reuse one
+  from memory or an earlier run.
+- **`UNREAD` is Gmail's own system label.** Marking a message read removes `UNREAD` from it, and
+  nothing else. It is not an `IL/` label: never look for it in the `IL/` namespace and never
+  create a label by that name.
+- **A failed or refused write did not happen.** Do not retry it another way — another tool, the
+  thread, a bulk action — and do not report it as done. Report it for that message. If the user
+  declined the write, stop writing and ask how to go on.
+- **No suitable connection, no writes.** If Gmail cannot write to a single message by its id,
+  mark nothing read and say so; the overview itself is still a read.
 
 ## Building the overview changes nothing
 
@@ -157,23 +181,21 @@ secondary labels answer *what else is true about it* — `Action required`, `Imm
 ## The run
 
 1. Complete [step zero](#step-zero-reach-the-mcp-server).
-2. Run `list_labels` and note the id of `IL/processed` and every `IL/` label's resolved Gmail
-   name. **Create nothing here** — a label that does not exist in Gmail cannot be on a message,
-   and creating Gmail labels belongs to processing.
-3. Find candidate threads with `search_threads`, query
-   `in:inbox is:unread label:<IL/processed id>` — pass the label *id*, not the display name. Use
-   `pageSize: 50` and follow `nextPageToken` until the pages run out.
-4. For each thread, call `get_thread` and pick out the messages that are in the inbox, unread and
-   carry `IL/processed`. Gmail returns a whole thread when any one of its messages matches, so
-   check every message and skip the ones that do not qualify.
-5. **Read the labels already on the message.** Take its `labelIds`, keep the ones that resolve to
-   an `IL/` name, and strip the prefix. Ignore `IL/processed` and `IL/no-match` — they are state,
-   not meaning. Do not evaluate the email against any instruction and do not reconsider whether a
-   label belongs there.
+2. Read Gmail's label list and find `IL/processed` and every `IL/` label in it. **Create nothing
+   here** — a label that does not exist in Gmail cannot be on a message, and creating Gmail
+   labels belongs to processing.
+3. Search Gmail for candidates: unread mail in the inbox that carries `IL/processed`, followed
+   until the results run out.
+4. Pick out the messages that are in the inbox, unread and carry `IL/processed`. A search can
+   answer with whole threads, so check every message and skip the ones that do not qualify.
+5. **Read the labels already on the message.** Resolve each label Gmail reports on it through
+   Gmail's label list, keep the ones named `IL/…`, and strip the prefix. Ignore `IL/processed`
+   and `IL/no-match` — they are state, not meaning. Do not evaluate the email against any
+   instruction and do not reconsider whether a label belongs there.
 6. Call `get_representative_labels` **once**, with one entry per message, in message order. Keep
    each answer with its message by position.
 7. Read the facts for each row **out of the message you already fetched** — subject, sender,
-   snippet, and the body from `get_thread` when they are not enough. That is reading for display,
+   snippet, and the full body when they are not enough. That is reading for display,
    not classification: no instruction is evaluated and no label changes.
 8. Present it, [as richly as the host allows](#presenting-it).
 9. Report how many messages the overview covers, how many sections it has, any message that could
@@ -216,8 +238,8 @@ Then:
 1. Resolve exactly the rows the user identified to their Gmail messages, from the overview you
    are holding. **Exactly those** — never the section they sit in, never everything shown, never
    a message from an earlier overview.
-2. Clear `UNREAD` on them with `unlabel_message`, and report what changed. A message that is
-   already read is left alone.
+2. Remove `UNREAD` from each of them, one message per write, and report what changed. A message
+   that is already read is left alone.
 
 **If you cannot tell exactly which messages are meant — the request is ambiguous, or it refers to
 an overview that has since been rebuilt — ask, and change nothing.** Widening an unclear request
@@ -254,6 +276,7 @@ message was processed — nothing keeps that — so do not describe it as one.
   already read.
 - **It sends nothing about a message to the MCP server** — no id, no subject, no sender, no
   snippet, no body.
-- If a Gmail tool is unavailable, say which messages you could not reach and show the overview
+- If Gmail cannot reach a message, say which messages you could not reach and show the overview
   for the rest; never invent a row and never substitute a different action.
-- One failing message is not a failing run: report it and carry on with the rest.
+- One failing message is not a failing run: report it and carry on with the rest — unless the
+  user declined a write, which stops the writing until they say how to go on.

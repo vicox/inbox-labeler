@@ -10,11 +10,11 @@ resulting Gmail labels, and record what matched. Nothing else. Creating, renamin
 labels is a different job, and so is acting on Attention — see `inbox-labeler-attention`.
 
 **Two connections do different things.** Inbox Labeler's MCP server holds the labels and the
-match history and has no access to the mailbox; Gmail holds the mail. Never look for labels in
-Gmail and never look for mail in the MCP. `get_labels` and `record_matches` are the MCP's;
-`list_labels`, `create_label`, `search_threads`, `get_thread` and `label_message` are Gmail's.
-Identity is the authenticated MCP session — never ask the user for an account id and never pass
-one to any tool.
+match history and has no access to the mailbox; Gmail holds the mail. Never look for label
+definitions in Gmail and never look for mail in the MCP. `get_labels` and `record_matches` are
+the MCP's. Mail is read and labelled through the Gmail connection the host provides, under
+[the Gmail rules](#gmail-rules). Identity is the authenticated MCP session — never ask the user
+for an account id and never pass one to any tool.
 
 ## Scope
 
@@ -26,6 +26,31 @@ the processing state.
 
 **The absence of `IL/processed` is never sufficient on its own.** A message qualifies only when
 it is in the inbox **and** unread **and** lacks `IL/processed`.
+
+## Gmail rules
+
+This skill names no Gmail tool. Use the Gmail connection the host provides, whatever its tools
+are called, and hold every call to these rules:
+
+- **One message per write.** Each write to mail changes exactly one message, addressed by its
+  own message id. Never write to a thread or conversation, never to several messages at once,
+  and never to whatever a search query or filter selects — not even when every message in it
+  qualifies. Creating a missing `IL/` label in [step 2](#the-run) is the one write that
+  addresses no message.
+- **Search selects, it never decides.** A search only finds candidates. Every message is checked
+  against the scope on its own labels before it counts or is changed.
+- **Labels are resolved through Gmail's label list.** Find each `IL/` label in the label list
+  Gmail reports and use what that list gives for it. Never guess a label id and never reuse one
+  from memory or an earlier run.
+- **`STARRED` and `UNREAD` are Gmail's own system labels, and this run touches neither.** They
+  are not `IL/` labels: never look for them in the `IL/` namespace and never create a label with
+  either name.
+- **A failed or refused write did not happen.** Do not retry it another way — another tool, the
+  thread, a bulk action — and do not report it as done. Report it for that message, which then
+  stays without `IL/processed`. If the user declined the write, stop writing and ask how to go on.
+- **No suitable connection, no writes.** If Gmail cannot be reached, or cannot write to a single
+  message by its id, apply and record nothing: report which messages you cannot reach and
+  present the labelling decisions as a plan.
 
 ## What a label is
 
@@ -120,24 +145,22 @@ it.
 1. Complete [step zero](#step-zero-make-sure-labels-are-available). Then resolve each label to
    its Gmail name — `Large amount` → `IL/Large amount` — and work with the resolved names from
    here on; Gmail knows nothing about the unprefixed form.
-2. Run `list_labels` and note the ids of `IL/processed`, `IL/no-match` and every resolved
-   business label. Create any that are missing with `create_label`, passing the resolved name
-   and nothing else — the `IL` parent is created automatically. A label that already exists is
-   reused exactly as it is: this run takes its id and changes nothing about the label itself.
-3. Find candidate threads with `search_threads`, query
-   `in:inbox is:unread -label:<IL/processed id>` — pass the label *id*, not the display name.
-   If you just created `IL/processed`, `in:inbox is:unread` is equivalent. Use `pageSize: 50`.
-4. **Work through the pages in order, and stop at ten messages.** Keep calling `search_threads`
-   with the returned `nextPageToken` while you still need messages; once ten have been processed,
-   stop and fetch no further page. If the pages run out first, you are done — fewer than ten is
-   fine, and so is none. Narrow the query only if the user explicitly asked for a narrower scope
-   (e.g. "everything from today" → add `newer_than:1d`). That is selection; it does not change
-   what any selected message means.
-5. For each thread, call `get_thread` and pick out the individual messages that are in the
-   inbox, unread, and lack the `IL/processed` id in `labelIds`. Gmail returns a whole thread
-   when any one of its messages matches, so a result can mix in-scope and out-of-scope
-   messages — check every message and skip the ones that do not qualify. Take them in the order
-   the search returned them and count only the ones you actually process against the ten.
+2. Read Gmail's label list and find `IL/processed`, `IL/no-match` and every resolved business
+   label in it. Create any that are missing in Gmail by the resolved name and nothing else — no
+   colour, no visibility, no other setting. A label that already exists is reused exactly as it
+   is: this run changes nothing about the label itself.
+3. Search Gmail for candidates: unread mail in the inbox that lacks `IL/processed`. The search
+   only selects — step 5 checks every message it returns.
+4. **Work through the results in order, and stop at ten messages.** Fetch further results only
+   while you still need messages; once ten have been processed, stop and fetch no further
+   results. If the results run out first, you are done — fewer than ten is fine, and so is none.
+   Narrow the search only if the user explicitly asked for a narrower scope (e.g. "everything
+   from today"). That is selection; it does not change what any selected message means.
+5. Pick out the individual messages that are in the inbox, unread, and lack `IL/processed`
+   among their labels. A search can answer with whole threads, so a result can mix in-scope and
+   out-of-scope messages — check every message and skip the ones that do not qualify. Take them
+   in the order the search returned them and count only the ones you actually process against
+   the ten.
 6. **Detection stage.** For each in-scope message, work through the whole list of detection
    labels and decide each one independently, keeping the ones whose aspect is present. **The
    label's `instruction` is the rule** — it is read as a prompt, not matched as a pattern, and
@@ -145,11 +168,11 @@ it.
    your own, and never pick a single best label: every label gets its own MATCH or NO MATCH, and
    any number of them may match. A label's `role` takes no part in that decision — a category and
    an attribute are judged the same way, by their own instructions. Subject, sender and snippet are usually enough; use the full
-   body from `get_thread` when they are not. The result is the complete set of triggered
+   body of the message when they are not. The result is the complete set of triggered
    detection labels — empty, one, several, or all. Note one short reason per match: that is the
    **evidence**, and the derived stage needs it.
-7. Apply the detection outcome with `label_message`, which branch depending on whether the set
-   is empty:
+7. Apply the detection outcome to the message, which branch depending on whether the set is
+   empty:
    - **At least one detection label triggered** — apply the resolved business label of every
      triggered label.
    - **No detection label triggered** — apply `IL/no-match`.
@@ -160,10 +183,11 @@ it.
    match; that is not a failure, it simply does not apply here. One derived label's outcome is
    never input to another.
 9. Apply `IL/processed` last, once both stages finished and every business label is in place.
-   If either stage is incomplete or a labelling call fails, leave `IL/processed` off so the
-   message is picked up again on the next run.
+   If either stage is incomplete or a labelling write fails or is refused, leave `IL/processed`
+   off so the message is picked up again on the next run.
 10. **Record what matched.** Every message this run labelled gets one call, once it is fully
-    labelled — this step is part of every run and is never skipped:
+    labelled — this step is part of every run and is never skipped. A message left without
+    `IL/processed` is not recorded: the next run processes it again and records it then.
 
     ```text
     record_matches   labels:          [<each business label applied>]
@@ -270,6 +294,5 @@ carry, like the due date. Read those details as they stood when the email was wr
 - **Never stop for the wrong reason.** Ten messages is the only limit. Within a run, size is
   never a reason to pause: do not sample, do not ask for confirmation because the inbox is large,
   and do not cut a message short because it triggered many labels.
-- One failing message is not a failing run: report it and continue with the rest.
-- If Gmail tools are unavailable, do not fake it: report which messages you cannot reach and
-  present the labelling decisions as a plan, applying nothing.
+- One failing message is not a failing run: report it and continue with the rest — unless the
+  user declined a write, which stops the writing until they say how to go on.
