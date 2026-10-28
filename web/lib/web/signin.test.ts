@@ -43,6 +43,7 @@ const { deployment, signingKey } = await import("../oauth/config.ts");
 const { mintAccessToken } = await import("../oauth/tokens.ts");
 const { handleMcpRequest } = await import("../mcp/endpoint.ts");
 const { inboxStore } = await import("../inbox/store.ts");
+const { findLabel } = await import("./screens.ts");
 
 // Types only, so the modules under test are still reached through the dynamic
 // imports above — which is what makes the configuration set at the top of this
@@ -202,6 +203,21 @@ async function home(
   const store = await inboxStore(visitor.user);
   const [labels, matches] = await Promise.all([store.labels(), store.matches()]);
   return { email: visitor.email, labels, matches };
+}
+
+/**
+ * What `/label?name=…` answers, expressed as the composition `app/label/page.tsx`
+ * is: the same owner from the same cookie and the same store opened for them, and
+ * only then the name from the query, choosing among the labels already read.
+ *
+ * `null` is either signed out — where the page sends the browser to `/` — or "not
+ * here". Neither shows a label, which is what the assertions below are about.
+ */
+async function labelScreen(cookieValue: string | null, name: string | null): Promise<Label | null> {
+  const visitor = await signedInVisitor(cookieValue);
+  if (!visitor) return null;
+  const labels = await (await inboxStore(visitor.user)).labels();
+  return findLabel(labels, name);
 }
 
 /** Calls an MCP tool as one user, the way a real client would. */
@@ -535,6 +551,21 @@ test("nothing a request carries can name whose labels are read", async () => {
   assert.deepEqual(shown?.labels.map((one) => one.label), ["Gamma only"]);
 });
 
+test("a label's screen shows only the signed-in account's label, whatever the URL names", async () => {
+  // The query is the one thing on this page a request does carry, and it names a
+  // label — never whose. Another account's label, named exactly, is not here.
+  await mcp("google:screen-one", "create_label", { label: "Screen one", instruction: "One's.", role: "category" });
+  await mcp("google:screen-two", "create_label", { label: "Screen two", instruction: "Two's.", role: "category" });
+
+  const one = await signIn(account("screen-one", "screen-one@example.com"));
+  assert.equal((await labelScreen(one, "Screen one"))?.instruction, "One's.");
+  assert.equal(await labelScreen(one, "Screen two"), null, "another account's label is not here");
+
+  for (const cookie of [null, "", "not-a-session"]) {
+    assert.equal(await labelScreen(cookie, "Screen one"), null, `signed out: ${JSON.stringify(cookie)}`);
+  }
+});
+
 test("signing in as another account in one browser replaces the session", async () => {
   await mcp("google:epsilon", "create_label", { label: "Epsilon only", instruction: "Epsilon's.", role: "category" });
   await mcp("google:zeta", "create_label", { label: "Zeta only", instruction: "Zeta's.", role: "category" });
@@ -845,6 +876,16 @@ test("the home page is declared private and uncacheable", async () => {
   // here is the landing page, which is meant to be found.
   assert.equal(header("x-robots-tag"), "");
 
+  // A label's screen carries one person's label, and its name in the URL: no copy
+  // anywhere in between, and no referrer taking the address to another site.
+  const labelRule = rules.find((rule) => rule.source === "/label");
+  assert.ok(labelRule, "a label's screen has a header rule");
+  const labelHeader = (key: string) => labelRule.headers.find((one) => one.key === key)?.value ?? "";
+  assert.match(labelHeader("cache-control"), /private/);
+  assert.match(labelHeader("cache-control"), /no-store/);
+  assert.equal(labelHeader("x-frame-options"), "DENY");
+  assert.equal(labelHeader("referrer-policy"), "same-origin");
+
   // The sign-in endpoints answer redirects and refusals mid-flow, which must not
   // be cached either.
   const authRule = rules.find((rule) => rule.source === "/auth/:path*");
@@ -919,6 +960,22 @@ test("the signed-in page opens one store, for the session owner, and writes noth
   }
 });
 
+test("a label's screen opens one store, for the session owner, and writes nothing", async () => {
+  // The same literal check, for the same reason, against what `labelScreen` above
+  // composes. This page does read a search parameter — the label's name — and it
+  // is handed to `findLabel` over the labels already read, never to the store.
+  const page = readFileSync(new URL("../../app/label/page.tsx", import.meta.url), "utf8");
+
+  assert.equal(page.match(/inboxStore\(/g)?.length, 1, "exactly one store is opened");
+  assert.match(page, /inboxStore\(visitor\.user\)/);
+  assert.match(page, /findLabel\(labels, single\(query\.name\)\)/);
+  assert.match(page, /\.labels\(\)/);
+
+  for (const mutation of ["createLabel", "updateLabel", "deleteLabel", "recordMatches"]) {
+    assert.equal(page.includes(mutation), false, `the page calls ${mutation}`);
+  }
+});
+
 test("the web app reads labels from the store, never from a file", async () => {
   // The columns were first written against data/labels.json and data/matches.json,
   // fetched through a public /api/labels. The endpoint is gone, so is the store that
@@ -954,10 +1011,11 @@ test("the old label list component stays removed", async () => {
   assert.equal(existsSync(new URL("../../components/labels.tsx", import.meta.url)), false);
 });
 
-test("there is one application route, and no /dashboard behind it", async () => {
+test("the labels live at /, and no /dashboard behind it", async () => {
   // The app used to live at its own address. It does not any more, and there is no
   // redirect standing in for it either — a second address that renders the same
-  // rows, or resolves to the one that does, is a second thing to keep true.
+  // rows, or resolves to the one that does, is a second thing to keep true. A
+  // label's own screen, `/label`, is one label in full rather than the list again.
   assert.equal(
     existsSync(new URL("../../app/dashboard", import.meta.url)),
     false,

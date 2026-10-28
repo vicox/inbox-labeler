@@ -25,10 +25,6 @@
   --color-derived-rule: #c9dfcf;
   --color-derived-card: #f9fdfa;
 
-  /* Warm, so the label surfaces keep their colour under the detail overlay
-     instead of turning grey. */
-  --color-scrim: rgba(120, 88, 52, 0.16);
-
   --color-thread-lit: #8a6f52;
 }
 

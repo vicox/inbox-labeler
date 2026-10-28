@@ -5,23 +5,22 @@ import { useMemo, useState } from "react";
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
 import { byFrequency, connectionsOf, emphasis, type Label } from "@/lib/label-stream";
 import { LabelCard } from "./label-card";
-import { LabelDetail } from "./label-detail";
 
 /**
  * The labels one account has, as one stream: a single narrow list, busiest first,
  * whatever kind of label each one is. A derived label still names what it is built
- * from, and opening any label says what kind it is.
+ * from, and each card opens its label's own screen (`app/label`), which says what
+ * kind it is.
  *
  * Given its data rather than fetching it. The page above is a Server Component
  * that has already opened the signed-in user's store, so there is nothing here to
  * fetch and no endpoint to fetch it from — which also means there is no request
  * this component could be made to send on somebody else's behalf. A client
- * component only because pointing at a label lights up what it draws on, and
- * opening one shows its instruction; the data arrives already decided.
+ * component only because pointing at a label lights up what it draws on; the
+ * data arrives already decided.
  */
 export function LabelStream({ labels, matches }: { labels: Label[]; matches: Matches }) {
   const [focused, setFocused] = useState<string | null>(null);
-  const [opened, setOpened] = useState<string | null>(null);
 
   /**
    * The relationships are no longer drawn, but they still decide what lights up:
@@ -45,11 +44,6 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
     );
   }
 
-  const openedLabel = labels.find((l) => l.label === opened) ?? null;
-  const feeds = openedLabel
-    ? connections.filter((c) => c.from === openedLabel.label).map((c) => c.to)
-    : [];
-
   // One reading of the clock for the whole render, so every card on the page
   // reports its age against the same moment, and the list is ordered against it.
   const now = new Date();
@@ -66,7 +60,7 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
    *
    * Only derived labels carry these. A detection label's own relationships — the
    * derived labels it feeds — are reachable by pointing at it, which lights them
-   * up, and by opening it.
+   * up, and on its own screen.
    */
   const referencesOf = (label: Label) =>
     label.type === "derived"
@@ -88,7 +82,6 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
       lit={lit?.has(label.label) ?? false}
       onEnter={() => setFocused(label.label)}
       onLeave={() => setFocused(null)}
-      onOpen={() => setOpened(label.label)}
     />
   );
 
@@ -99,21 +92,15 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
   const derived = ordered.filter((label) => label.type === "derived").length;
 
   return (
-    <>
-      <div className="mx-auto max-w-xl">
-        <h2 className="mb-4 font-display text-[22px] tracking-[-0.01em]">
-          Labels{" "}
-          <span className="font-sans text-[12px] tracking-normal text-ink-faint tabular-nums">
-            ({detection} / {derived})
-          </span>
-        </h2>
-        <div className="flex flex-col gap-3">{ordered.map(card)}</div>
-      </div>
-
-      {openedLabel && (
-        <LabelDetail label={openedLabel} feeds={feeds} onClose={() => setOpened(null)} />
-      )}
-    </>
+    <div className="mx-auto max-w-xl">
+      <h2 className="mb-4 font-display text-[22px] tracking-[-0.01em]">
+        Labels{" "}
+        <span className="font-sans text-[12px] tracking-normal text-ink-faint tabular-nums">
+          ({detection} / {derived})
+        </span>
+      </h2>
+      <div className="flex flex-col gap-3">{ordered.map(card)}</div>
+    </div>
   );
 }
 
