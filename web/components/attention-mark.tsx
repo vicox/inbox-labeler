@@ -30,11 +30,13 @@ export function AttentionMark({ attention }: { attention: Attention }) {
   const mark = MARKS[attention];
 
   return (
-    // Sits in the card's right-hand margin as a sibling of the card button, not
-    // inside it: it takes focus of its own, and focusable content nested in a
-    // button is neither valid nor reliably reachable. Pointer events on this
-    // element do not disturb the card's own hover, which is handled one level up
-    // and so keeps running while the pointer is in here.
+    // Sits on the card's name line, left of the rate, as a sibling of the card
+    // button, not inside it: it takes focus of its own, and focusable content
+    // nested in a button is neither valid nor reliably reachable. The card places
+    // it there, in a layer that passes the pointer through, so this element takes
+    // the pointer back. Pointer events on it do not disturb the card's own hover,
+    // which is handled further up and so keeps running while the pointer is in
+    // here.
     <span
       tabIndex={0}
       role="img"
@@ -43,9 +45,8 @@ export function AttentionMark({ attention }: { attention: Attention }) {
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
-      // top-4 / h-5 put it on the same line as the label name and the rate,
-      // rather than in the middle of a card that is now two lines tall.
-      className="absolute top-4 right-5 flex h-5 cursor-help items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
+      // Relative, so the tooltip opens from the mark itself.
+      className="pointer-events-auto relative flex h-5 cursor-help items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
     >
       {attention === "high" ? <Star /> : <EyeOff />}
       {open && <Tooltip title={mark.title} description={mark.description} />}
