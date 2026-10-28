@@ -566,6 +566,19 @@ test("a label's screen shows only the signed-in account's label, whatever the UR
   }
 });
 
+test("two labels the store keeps apart each open as themselves, however JavaScript folds them", async () => {
+  // Postgres' lower() lets one account hold both of these; JavaScript's
+  // toLowerCase() makes them one string. A lookup that folded case in JavaScript
+  // would open the first for a link to the second.
+  const session = await signIn(account("screen-fold", "screen-fold@example.com"));
+  const store = await inboxStore((await signedInVisitor(session))!.user);
+  await store.createLabel({ label: "İstanbul", instruction: "Dotted capital.", role: "category" });
+  await store.createLabel({ label: "i̇stanbul", instruction: "Combining dot.", role: "category" });
+
+  assert.equal((await labelScreen(session, "İstanbul"))?.instruction, "Dotted capital.");
+  assert.equal((await labelScreen(session, "i̇stanbul"))?.instruction, "Combining dot.");
+});
+
 test("signing in as another account in one browser replaces the session", async () => {
   await mcp("google:epsilon", "create_label", { label: "Epsilon only", instruction: "Epsilon's.", role: "category" });
   await mcp("google:zeta", "create_label", { label: "Zeta only", instruction: "Zeta's.", role: "category" });

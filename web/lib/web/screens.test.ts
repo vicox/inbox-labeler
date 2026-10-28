@@ -60,11 +60,25 @@ test("a label is found by its stored name", () => {
   }
 });
 
-test("another case or spacing is the same label, because labels are unique ignoring both", () => {
+test("another case or spacing is not a guess this page makes", () => {
+  // Links are written from the stored name, so only a stale or hand-typed one misses.
   const labels = [label("Large amount")];
   for (const typed of ["large amount", "LARGE AMOUNT", "  Large   amount "]) {
-    assert.equal(findLabel(labels, typed), labels[0], JSON.stringify(typed));
+    assert.equal(findLabel(labels, typed), null, JSON.stringify(typed));
   }
+});
+
+test("two labels JavaScript would fold together each open as themselves", () => {
+  // Postgres' lower() keeps these apart, so the store holds both; JavaScript's
+  // toLowerCase() makes them one string. Each card's link has to open its own.
+  const dotted = label("İstanbul");
+  const combining = label("i̇stanbul");
+  const labels = [dotted, combining];
+  assert.equal("İstanbul".toLowerCase(), "i̇stanbul", "the collision is real");
+
+  assert.equal(findLabel(labels, dotted.label), dotted);
+  assert.equal(findLabel(labels, combining.label), combining);
+  assert.equal(findLabel(labels, query(labelHref(combining.label)).get("name")), combining);
 });
 
 test("a label that is not there finds nothing, not a neighbour", () => {

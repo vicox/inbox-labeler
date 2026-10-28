@@ -1,5 +1,3 @@
-import { sameLabel } from "../inbox/labels.ts";
-
 /**
  * Where the signed-in screens are, and which of the user's own labels a URL
  * names.
@@ -38,17 +36,20 @@ export function single(value: string | string[] | undefined): string | null {
 }
 
 /**
- * The label a URL names, by the rule the store identifies labels by.
+ * The label a URL names, by its stored name exactly.
  *
- * Every link is written from the stored name, so it always finds its label. A
- * name typed by hand in another case or spacing finds the same label too, because
- * labels are unique ignoring both (`sameLabel`) — there is only one it can mean.
- * A name that has since been renamed or deleted finds nothing rather than a guess.
+ * Every link to a label is written from the name the store holds, so an exact
+ * match is what a link always finds. A name that has since changed, or one typed
+ * by hand in another case, finds nothing rather than a guess: whether two
+ * spellings are one label is the database's question (`lower()`, see
+ * `lib/inbox/store/sql.ts`), and folding case here instead would be a second
+ * opinion — one that, on real Unicode, takes two labels the store keeps apart
+ * for one and opens the wrong one.
  */
 export function findLabel<T extends { label: string }>(
   labels: readonly T[],
   name: string | null,
 ): T | null {
   if (name === null) return null;
-  return labels.find((label) => sameLabel(label.label, name)) ?? null;
+  return labels.find((label) => label.label === name) ?? null;
 }
