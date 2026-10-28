@@ -1,10 +1,11 @@
 import { LegalLinks } from "@/components/legal";
 import { LabelStream } from "@/components/label-stream";
-import { Account, SiteHeader, SignIn } from "@/components/site-header";
+import { SignedIn, Unavailable } from "@/components/signed-in";
+import { SiteHeader, SignIn } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
 import type { Matches } from "@/lib/inbox/matches";
 import { inboxStore } from "@/lib/inbox/store";
-import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
+import { resolveVisitor, type SignedInVisitor } from "@/lib/web/visitor";
 
 /**
  * One address, two pages: the landing page for anyone, and this user's labels for
@@ -16,9 +17,12 @@ import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
  * same rows is a second place for the two to disagree about what they say and who
  * may read them.
  *
+ * Signed in, this is the stream: every label, busiest first. A label has a screen
+ * of its own (`app/label`), reached from here.
+ *
  * ## Where the owner comes from
  *
- * From the session cookie, through `currentVisitor`, and from nowhere else. This
+ * From the session cookie, through `resolveVisitor`, and from nowhere else. This
  * page reads no route parameter, no search parameter and no request body, and
  * `inboxStore` takes the resolved user rather than an id — so there is no
  * expression here in which a value from the request could decide whose labels are
@@ -55,24 +59,6 @@ export default async function Home() {
   // Being signed in decides *whether* the labels are rendered. It is not what they
   // are, so it is not what they are called.
   return visitor ? <Labels visitor={visitor} /> : <Landing />;
-}
-
-/**
- * Who is signed in, or nobody.
- *
- * A failure to answer is not allowed to keep the page from rendering. Not knowing
- * whether somebody is signed in is a reason to offer them a sign-in, not a reason
- * to answer an error: this is the page that has to work when nothing else does,
- * and the landing page is the answer that is safe to give a stranger. Falling this
- * way cannot leak anything — a visitor treated as signed out is shown no labels.
- */
-async function resolveVisitor(): Promise<SignedInVisitor | null> {
-  try {
-    return await currentVisitor();
-  } catch (error) {
-    report("could not resolve a session", error);
-    return null;
-  }
 }
 
 /** The public page: what the product is, and the way in. */
@@ -149,26 +135,13 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
   const account = await readAccount(visitor);
 
   return (
-    <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
-      <SiteHeader>
-        <Account email={visitor.email} />
-      </SiteHeader>
-
+    <SignedIn email={visitor.email}>
       {account === "unavailable" ? (
-        <p className="py-24 text-center text-[14px] text-ink-soft">
-          <span className="block text-ink">Your labels could not be read just now</span>
-          <span className="mt-1.5 block text-[12.5px] text-ink-faint">
-            Nothing has been changed. Try again in a moment.
-          </span>
-        </p>
+        <Unavailable />
       ) : (
         <LabelStream labels={account.labels} matches={account.matches} />
       )}
-
-      <footer className="mt-14 border-t border-rule pt-5 sm:mt-20">
-        <LegalLinks />
-      </footer>
-    </main>
+    </SignedIn>
   );
 }
 

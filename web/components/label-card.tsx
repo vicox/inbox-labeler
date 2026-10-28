@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
+
 import type { Label } from "@/lib/label-stream";
+import { labelHref } from "@/lib/web/screens";
 import { AttentionMark } from "./attention-mark";
 
 type Props = {
@@ -22,18 +25,22 @@ type Props = {
   references: { name: string; suggested?: boolean }[];
   onEnter: () => void;
   onLeave: () => void;
-  onOpen: () => void;
 };
 
 /**
  * One label in the stream — mint for a derived label, warm for everything else.
  * Its role does not come into it: a category, an attribute and a label with
- * neither look the same here, and opening the card is what tells them apart.
+ * neither look the same here, and the label's own screen is what tells them apart.
+ *
+ * The whole card is one link to that screen (`labelHref`), so a press anywhere on
+ * it opens the label, and it can be opened in a new tab like any other link. Not
+ * prefetched: a label's screen is rendered per request for its owner, so there is
+ * nothing worth fetching before somebody asks for it.
  *
  * The name sits at the left and the rate at the right of the same line, with
  * when it last matched underneath. A derived label also names the detection
  * labels it is built from, between the two. The attention mark follows the name,
- * and holds elements of its own rather than being part of the card's button,
+ * and holds elements of its own rather than being part of the card's link,
  * because it takes hover and focus separately from the card.
  */
 export function LabelCard({
@@ -46,14 +53,13 @@ export function LabelCard({
   references,
   onEnter,
   onLeave,
-  onOpen,
 }: Props) {
   // `normal` carries no mark; see AttentionMark.
   const marked = label.attention !== "normal";
 
   return (
     // Positioned, so the attention mark can sit over the name line. The
-    // relationship hover sits here rather than on the button so that it keeps
+    // relationship hover sits here rather than on the link so that it keeps
     // running while the pointer is on the mark.
     <div
       onMouseEnter={onEnter}
@@ -66,9 +72,9 @@ export function LabelCard({
         lit ? "-translate-y-px" : "",
       ].join(" ")}
     >
-      <button
-        type="button"
-        onClick={onOpen}
+      <Link
+        href={labelHref(label.label)}
+        prefetch={false}
         aria-label={`${label.label}, ${label.type} label`}
         className={[
           "block w-full cursor-pointer rounded-lg border px-5 py-4 text-left",
@@ -117,10 +123,10 @@ export function LabelCard({
         >
           {last}
         </span>
-      </button>
+      </Link>
 
-      {/* The mark cannot be inside the button, so it sits in a copy of the
-          button's box laid over it: the same border, padding and name line, with
+      {/* The mark cannot be inside the link, so it sits in a copy of the
+          link's box laid over it: the same border, padding and name line, with
           the name and rate invisible, so the mark lands just after the name
           wherever the name wraps. The name is positioned so the mark's tooltip
           opens from it. Only the mark takes the pointer; the rest passes it
@@ -151,7 +157,7 @@ export function LabelCard({
  *
  * Required labels all have to match before the derived label is even evaluated;
  * recommended ones are context, present or not. Dashed says the difference, and
- * the native tooltip says it in words — the detail panel spells it out in full.
+ * the native tooltip says it in words — the label's screen lists what it requires.
  */
 function Reference({ name, suggested = false }: { name: string; suggested?: boolean }) {
   return (

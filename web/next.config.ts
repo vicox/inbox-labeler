@@ -45,6 +45,11 @@ const nextConfig: NextConfig = {
    * and this user's labels for whoever is signed in. Two answers at one URL is
    * exactly the shape a shared cache gets wrong.
    *
+   * `/label` is one label's screen, signed in only, and its URL carries the
+   * label's name. It gets the same rule, for the same reason, and for one more: the
+   * address itself is something about the person, and a referrer must not take it
+   * to another site.
+   *
    * Declared here rather than in the page because a Server Component cannot set a
    * response header — and because a rule about which URLs are private belongs
    * somewhere it can be read in one place.
@@ -61,6 +66,14 @@ const nextConfig: NextConfig = {
           { key: "x-frame-options", value: "DENY" },
           // A sign-out is a POST to this origin; a referrer leaving for another
           // site has no reason to carry the path somebody was signed in at.
+          { key: "referrer-policy", value: "same-origin" },
+        ],
+      },
+      {
+        source: "/label",
+        headers: [
+          { key: "cache-control", value: "private, no-store, max-age=0, must-revalidate" },
+          { key: "x-frame-options", value: "DENY" },
           { key: "referrer-policy", value: "same-origin" },
         ],
       },

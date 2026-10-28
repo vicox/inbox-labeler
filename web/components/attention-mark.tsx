@@ -30,9 +30,9 @@ export function AttentionMark({ attention }: { attention: Attention }) {
   const mark = MARKS[attention];
 
   return (
-    // Sits right after the label's name, as a sibling of the card button, not
+    // Sits right after the label's name, as a sibling of the card's link, not
     // inside it: it takes focus of its own, and focusable content nested in a
-    // button is neither valid nor reliably reachable. The card places it there,
+    // link is neither valid nor reliably reachable. The card places it there,
     // in a layer that passes the pointer through, so this element takes the
     // pointer back. Pointer events on it do not disturb the card's own hover,
     // which is handled further up and so keeps running while the pointer is in

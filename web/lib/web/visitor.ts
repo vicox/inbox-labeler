@@ -27,4 +27,27 @@ export async function currentVisitor(): Promise<SignedInVisitor | null> {
   return signedInVisitor(sessionOf(request, config));
 }
 
+/**
+ * Who is signed in, or nobody — for a page, which has to render either way.
+ *
+ * A failure to answer is not allowed to keep a page from rendering. Not knowing
+ * whether somebody is signed in is a reason to offer them a sign-in, not a reason
+ * to answer an error: the home page has to work when nothing else does, and the
+ * landing page is the answer that is safe to give a stranger. Falling this way
+ * cannot leak anything — a visitor treated as signed out is shown no labels.
+ *
+ * The message only, never the thrown object, for the same reason a page reports
+ * nothing else about the user.
+ */
+export async function resolveVisitor(): Promise<SignedInVisitor | null> {
+  try {
+    return await currentVisitor();
+  } catch (error) {
+    console.error(
+      `[inboxlabeler] page: could not resolve a session: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return null;
+  }
+}
+
 export type { SignedInVisitor };
