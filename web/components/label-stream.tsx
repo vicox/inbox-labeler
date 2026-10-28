@@ -92,9 +92,23 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
     />
   );
 
+  // Headed, so the cards read as this account's labels rather than as a list
+  // that arrived without a name. The count beside it is detection / derived,
+  // taken from the cards below.
+  const detection = ordered.filter((label) => label.type === "detection").length;
+  const derived = ordered.filter((label) => label.type === "derived").length;
+
   return (
     <>
-      <div className="mx-auto flex max-w-xl flex-col gap-3">{ordered.map(card)}</div>
+      <div className="mx-auto max-w-xl">
+        <h2 className="mb-4 font-display text-[22px] tracking-[-0.01em]">
+          Labels{" "}
+          <span className="font-sans text-[12px] tracking-normal text-ink-faint tabular-nums">
+            ({detection} / {derived})
+          </span>
+        </h2>
+        <div className="flex flex-col gap-3">{ordered.map(card)}</div>
+      </div>
 
       {openedLabel && (
         <LabelDetail label={openedLabel} feeds={feeds} onClose={() => setOpened(null)} />

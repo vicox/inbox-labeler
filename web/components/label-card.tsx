@@ -32,9 +32,9 @@ type Props = {
  *
  * The name sits at the left and the rate at the right of the same line, with
  * when it last matched underneath. A derived label also names the detection
- * labels it is built from, between the two. The attention mark is further right
- * again, and holds elements of its own rather than being part of the card's
- * button, because it takes hover and focus separately from the card.
+ * labels it is built from, between the two. The attention mark follows the name,
+ * and holds elements of its own rather than being part of the card's button,
+ * because it takes hover and focus separately from the card.
  */
 export function LabelCard({
   label,
@@ -48,10 +48,13 @@ export function LabelCard({
   onLeave,
   onOpen,
 }: Props) {
+  // `normal` carries no mark; see AttentionMark.
+  const marked = label.attention !== "normal";
+
   return (
-    // Positioned, so the attention mark can sit in the right-hand margin. The
-    // relationship hover sits here rather than on the button so that it covers
-    // that margin too, and keeps running while the pointer is on the mark.
+    // Positioned, so the attention mark can sit over the name line. The
+    // relationship hover sits here rather than on the button so that it keeps
+    // running while the pointer is on the mark.
     <div
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
@@ -77,16 +80,18 @@ export function LabelCard({
           lit ? "shadow-[0_1px_0_rgba(28,26,23,0.10)]" : "shadow-none",
         ].join(" ")}
       >
-        {/* pr-7 holds this line clear of the attention mark, which sits on it, on
-            every card — so the rates line up down the column whether or not a
-            card carries a mark. The line below runs the full width. */}
+        {/* The rate sits flush right. A card with an attention mark holds room for
+            it after the name — the same width and margin as the mark — so the name
+            wraps here exactly as the copy laid over it does; see below. The line
+            below runs the full width. */}
         {/* items-center, and every child in the same 20px line box: the rate and
             the attention mark then centre on the same axis, which is what makes
             them read as one line. Aligning the rate on the name's baseline
             instead drops it visibly below the mark, because it is set smaller. */}
-        <span className="flex items-center justify-between gap-4 pr-7">
+        <span className="flex items-center justify-between gap-4">
           <span className="text-[15px] leading-5 font-medium tracking-[-0.005em]">
             {label.label}
+            {marked && <span aria-hidden="true" className="ml-1.5 inline-block w-[18px]" />}
           </span>
           {rate && (
             <span className="shrink-0 text-[12px] leading-5 text-ink-faint tabular-nums">
@@ -94,14 +99,8 @@ export function LabelCard({
             </span>
           )}
         </span>
-        {/* The arrow says which way the dependency runs, so the line reads as one
-            statement — "Large invoice ← Invoice + Large amount" — rather than as a
-            row of loose names beneath a title. */}
         {references.length > 0 && (
           <span className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span aria-hidden="true" className="text-[12px] leading-4 text-ink-faint">
-              ←
-            </span>
             {references.map((reference) => (
               <Reference
                 key={reference.name}
@@ -120,7 +119,27 @@ export function LabelCard({
         </span>
       </button>
 
-      <AttentionMark attention={label.attention} />
+      {/* The mark cannot be inside the button, so it sits in a copy of the
+          button's box laid over it: the same border, padding and name line, with
+          the name and rate invisible, so the mark lands just after the name
+          wherever the name wraps. The name is positioned so the mark's tooltip
+          opens from it. Only the mark takes the pointer; the rest passes it
+          through to the card underneath. */}
+      {marked && (
+        <span className="pointer-events-none absolute inset-0 border border-transparent px-5 py-4">
+          <span className="flex items-center justify-between gap-4">
+            <span className="relative text-[15px] leading-5 font-medium tracking-[-0.005em]">
+              <span className="invisible">{label.label}</span>
+              <AttentionMark attention={label.attention} />
+            </span>
+            {rate && (
+              <span className="invisible shrink-0 text-[12px] leading-5 tabular-nums">
+                {rate}
+              </span>
+            )}
+          </span>
+        </span>
+      )}
     </div>
   );
 }
