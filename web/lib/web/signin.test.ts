@@ -191,7 +191,7 @@ async function signIn(identity: VerifiedIdentity, alsoHolding?: string): Promise
  * instead.
  *
  * Both halves come from one store opened once, which is what the page does: the
- * visualization needs the labels and how often each has matched, and there is only
+ * list needs the labels and how often each has matched, and there is only
  * one `user` in this expression for either of them to be read against.
  */
 async function home(
@@ -856,7 +856,7 @@ test("the home page is declared private and uncacheable", async () => {
 });
 
 test("the signed-in page reads the owner's matches, and only theirs", async () => {
-  // The visualization needs how often each label has matched as well as the labels,
+  // The list needs how often each label has matched as well as the labels,
   // so the history is now on the same path the labels are — and under the same rule.
   // Two accounts, each with a label of the same name, so a leak shows up as the
   // other one's count rather than as a missing key.
@@ -909,7 +909,7 @@ test("the signed-in page opens one store, for the session owner, and writes noth
   assert.equal(page.includes("searchParams"), false, "no search parameter is read");
   assert.equal(page.includes("params"), false, "no route parameter is read");
 
-  // Both halves the visualization needs, from that one store.
+  // Both halves the list needs, from that one store.
   assert.match(page, /store\.labels\(\)/);
   assert.match(page, /store\.matches\(\)/);
 
@@ -947,9 +947,10 @@ test("the web app reads labels from the store, never from a file", async () => {
   assert.deepEqual(offenders, [], "and no source reads them");
 });
 
-test("the simple label list is no longer the signed-in surface", async () => {
-  // Replaced by the visualization rather than kept beside it: two renderings of one
-  // account's labels are two things to keep true about it.
+test("the old label list component stays removed", async () => {
+  // components/labels.tsx was replaced rather than kept beside what the signed-in
+  // page renders now: two renderings of one account's labels are two things to keep
+  // true about it.
   assert.equal(existsSync(new URL("../../components/labels.tsx", import.meta.url)), false);
 });
 
