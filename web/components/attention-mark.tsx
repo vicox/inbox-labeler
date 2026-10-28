@@ -30,11 +30,11 @@ export function AttentionMark({ attention }: { attention: Attention }) {
   const mark = MARKS[attention];
 
   return (
-    // Sits on the card's name line, left of the rate, as a sibling of the card
-    // button, not inside it: it takes focus of its own, and focusable content
-    // nested in a button is neither valid nor reliably reachable. The card places
-    // it there, in a layer that passes the pointer through, so this element takes
-    // the pointer back. Pointer events on it do not disturb the card's own hover,
+    // Sits right after the label's name, as a sibling of the card button, not
+    // inside it: it takes focus of its own, and focusable content nested in a
+    // button is neither valid nor reliably reachable. The card places it there,
+    // in a layer that passes the pointer through, so this element takes the
+    // pointer back. Pointer events on it do not disturb the card's own hover,
     // which is handled further up and so keeps running while the pointer is in
     // here.
     <span
@@ -45,8 +45,10 @@ export function AttentionMark({ attention }: { attention: Attention }) {
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
-      // Relative, so the tooltip opens from the mark itself.
-      className="pointer-events-auto relative flex h-5 cursor-help items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
+      // Inline after the name, and align-top so its 20px box is the name's line
+      // box rather than a taller one. The card holds room of the same width and
+      // margin in the name under it, so keep the two together.
+      className="pointer-events-auto ml-1.5 inline-flex h-5 cursor-help items-center rounded-sm align-top focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
     >
       {attention === "high" ? <Star /> : <EyeOff />}
       {open && <Tooltip title={mark.title} description={mark.description} />}
@@ -54,12 +56,20 @@ export function AttentionMark({ attention }: { attention: Attention }) {
   );
 }
 
-/** Opens upwards, so it covers the cards above rather than the ones below. */
+/**
+ * Opens upwards, so it covers the cards above rather than the ones below. From
+ * the start of the name the mark follows, which the card positions, rather than
+ * from the mark: however far along the line the mark is, the tooltip then stays
+ * over the card instead of running off the side of a narrow screen.
+ *
+ * Sitting inside the name, it resets the weight, leading and tracking it would
+ * otherwise take from it.
+ */
 function Tooltip({ title, description }: { title: string; description: string }) {
   return (
     <span
       role="tooltip"
-      className="absolute right-0 bottom-full z-20 mb-2.5 w-56 rounded-lg border border-rule bg-paper px-3.5 py-3 text-left shadow-[0_2px_10px_rgba(28,26,23,0.07)]"
+      className="absolute bottom-full left-0 z-20 mb-2.5 w-56 rounded-lg border border-rule bg-paper px-3.5 py-3 text-left leading-normal font-normal tracking-normal shadow-[0_2px_10px_rgba(28,26,23,0.07)]"
     >
       <span className="block text-[12.5px] font-medium">{title}</span>
       <span className="mt-1 block text-[12.5px] leading-snug text-ink-soft">{description}</span>
