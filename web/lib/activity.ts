@@ -63,7 +63,7 @@ function dayIndex(day: string): number {
 /**
  * A label's matches per day over the window, or 0 when it has no history in it.
  *
- * The number behind matchRate, and what the columns are ordered by — the
+ * The number behind matchRate, and what the signed-in list is ordered by — the
  * formatted rate rounds to a single digit, so two labels that read the same can
  * still be told apart here.
  */

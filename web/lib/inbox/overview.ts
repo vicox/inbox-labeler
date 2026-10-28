@@ -40,8 +40,7 @@ import type { Matches } from "./matches.ts";
  * inside one class and never between two.
  *
  * `no-role` is not a role — it is where a detection label goes when nobody has
- * decided yet whether it is a category or an attribute, the same grouping
- * `lib/label-graph.ts` shows on the signed-in page.
+ * decided yet whether it is a category or an attribute.
  */
 export const MATCH_CLASSES = ["derived", "category", "attribute", "no-role"] as const;
 export type MatchClass = (typeof MATCH_CLASSES)[number];
