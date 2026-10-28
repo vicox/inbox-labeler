@@ -40,8 +40,8 @@ export function LegalLinks({ className = "" }: { className?: string }) {
 /**
  * The container the legal pages are written into.
  *
- * Narrower than the home page on purpose: the graph wants width and prose wants
- * a line short enough to read. Body text sits in `ink-soft` with headings in
+ * Narrower than the home page's frame on purpose: prose wants a line short enough
+ * to read. Body text sits in `ink-soft` with headings in
  * `ink`, so structure carries the emphasis rather than weight or size — the same
  * restraint as the rest of the site.
  */

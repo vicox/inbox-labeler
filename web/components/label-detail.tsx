@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import type { Label } from "@/lib/label-graph";
+import type { Label } from "@/lib/label-stream";
 
 type Props = {
   label: Label;

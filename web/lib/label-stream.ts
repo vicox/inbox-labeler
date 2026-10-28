@@ -39,19 +39,21 @@ export type Label = {
 export type Connection = { from: string; to: string; kind: "required" | "recommended" };
 
 /**
- * The order a group is read in: busiest first, then by name.
+ * The order the stream is read in: busiest first, then by name.
  *
  * How often a label matches is the one thing about it that is worth ranking, and
  * it is what a reader is looking for — which of these is actually doing work. The
  * name breaks ties, which is what puts every label that has never matched into a
- * predictable alphabetical block at the foot of the group rather than in an order
+ * predictable alphabetical block at the foot of the list rather than in an order
  * nobody can see. Two labels matching equally often always come out the same way
  * round.
  *
- * What a label asks of you does not come into it. `attention` is a request about
- * mail, not a claim about the label being more worth reading than its neighbour,
- * and ranking by it buried busy labels under idle ones that happened to ask for
- * more.
+ * What a label asks of you does not come into it, and neither does what kind of
+ * label it is. `attention` is a request about mail, not a claim about the label
+ * being more worth reading than its neighbour, and ranking by it buried busy
+ * labels under idle ones that happened to ask for more. A card's surface already
+ * says whether it is derived and its detail says its role; sorting by either as
+ * well would split the one list back into sections.
  *
  * `perDay` is passed in rather than read here: how often a label matches is not
  * something a label carries.
@@ -92,73 +94,6 @@ export function connectionsOf(labels: Label[]): Connection[] {
         .filter((reference) => detection.has(reference.name))
         .map((reference) => ({ from: reference.name, to: derived.label, kind: reference.kind })),
     );
-}
-
-/**
- * The four groups the signed-in page reads best in, in reading order.
- *
- * Three of them are the model as it stands: the two kinds of fact a detection
- * label can state, and the conclusions drawn from them. The fourth is not a kind
- * of anything — it is where a detection label goes when nobody has said yet
- * whether it is a category or an attribute.
- *
- * `no-role` is a grouping in this file and nowhere else. It is not a role, not a
- * type, and not a value any label carries: `Label.role` is `"category"`,
- * `"attribute"` or absent, and absent is what puts a label in this group. Nothing
- * here reads a name or an instruction to work one out, and nothing writes.
- */
-export type LabelGroupKey = "category" | "attribute" | "derived" | "no-role";
-
-export type LabelGroup = {
-  key: LabelGroupKey;
-  title: string;
-  /** One short line saying what question the group answers. */
-  note: string;
-  labels: Label[];
-};
-
-const GROUPS: readonly Omit<LabelGroup, "labels">[] = [
-  { key: "category", title: "Categories", note: "What is this email about?" },
-  { key: "attribute", title: "Attributes", note: "What else is true about it?" },
-  { key: "derived", title: "Derived", note: "What follows from those facts?" },
-  { key: "no-role", title: "No role", note: "Not yet a category or an attribute." },
-];
-
-/**
- * Which group a label belongs to. Total: every label lands in exactly one.
- *
- * Grouping only — which section of the page a label is shown in. What separates
- * those sections visually is one step coarser than this: Categories, Attributes
- * and No role share the warm surface, and Derived alone is mint. A label's role
- * and what it asks of you pick no colour at all. `attention` is not a parameter
- * to this and must never become one.
- */
-export function groupOf(label: Label): LabelGroupKey {
-  if (label.type === "derived") return "derived";
-  return label.role ?? "no-role";
-}
-
-/**
- * Every label sorted into its group, ordered within it, empty groups dropped.
- *
- * Two properties this is written to have, both of them the reason it is a function
- * rather than four filters at the call site. **Every label appears exactly once**:
- * `groupOf` is total and returns one key, so a label cannot be shown twice and —
- * the failure that matters — cannot vanish for want of a role. And **an empty
- * group is absent**, which is what keeps `No role` off the page for an account
- * whose labels all have one, without a special case for it.
- *
- * `perDay` is passed in for the same reason `byFrequency` takes it: how often a
- * label matches is not something a label carries.
- */
-export function groupLabels(labels: Label[], perDay: (label: Label) => number): LabelGroup[] {
-  return GROUPS.map((group) => ({
-    ...group,
-    labels: byFrequency(
-      labels.filter((label) => groupOf(label) === group.key),
-      perDay,
-    ),
-  })).filter((group) => group.labels.length > 0);
 }
 
 /**

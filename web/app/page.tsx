@@ -1,5 +1,5 @@
 import { LegalLinks } from "@/components/legal";
-import { LabelGraph } from "@/components/label-graph";
+import { LabelStream } from "@/components/label-stream";
 import { Account, SiteHeader, SignIn } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
 import type { Matches } from "@/lib/inbox/matches";
@@ -45,7 +45,7 @@ import { currentVisitor, type SignedInVisitor } from "@/lib/web/visitor";
  * visitor with no session cookie is still answered without the database being
  * touched at all: `signedInVisitor` returns on the missing cookie, and the landing
  * branch opens no store. Neither half fetches anything from the browser; the
- * signed-in columns are handed their data by this page.
+ * signed-in list is handed its data by this page.
  */
 export const dynamic = "force-dynamic";
 
@@ -84,10 +84,10 @@ function Landing() {
       </SiteHeader>
 
       {/*
-        The public page reads nothing. It once rendered the same columns against a
+        The public page reads nothing. It once rendered the signed-in view against a
         local fixture file, which was a demo of the product rather than anybody's
         labels — and hosted there was no file, so the closed-beta notice is what it
-        showed. Now the columns belong to the signed-in page, where the labels are
+        showed. Now the labels belong to the signed-in page, where they are
         real, and the landing page says in words what they would be, then states the
         one fact a stranger needs.
 
@@ -162,7 +162,7 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
           </span>
         </p>
       ) : (
-        <LabelGraph labels={account.labels} matches={account.matches} />
+        <LabelStream labels={account.labels} matches={account.matches} />
       )}
 
       <footer className="mt-14 border-t border-rule pt-5 sm:mt-20">

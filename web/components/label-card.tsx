@@ -1,6 +1,6 @@
 "use client";
 
-import type { Label } from "@/lib/label-graph";
+import type { Label } from "@/lib/label-stream";
 import { AttentionMark } from "./attention-mark";
 
 type Props = {
@@ -26,10 +26,9 @@ type Props = {
 };
 
 /**
- * One label, on either side. A card carries its panel's surface a step lighter —
- * mint for a derived label, warm for everything else. Its role does not come into
- * it: a category, an attribute and a label with neither look the same, and the
- * column they sit in is what tells them apart.
+ * One label in the stream — mint for a derived label, warm for everything else.
+ * Its role does not come into it: a category, an attribute and a label with
+ * neither look the same here, and opening the card is what tells them apart.
  *
  * The name sits at the left and the rate at the right of the same line, with
  * when it last matched underneath. A derived label also names the detection
@@ -127,9 +126,9 @@ export function LabelCard({
 }
 
 /**
- * A detection label a derived label is built from. Carries the warm surface of the
- * panel that label lives in rather than the mint of the card it sits on: it names a
- * label from another column, and that is the whole point of it being here.
+ * A detection label a derived label is built from. Carries the warm surface of a
+ * detection label rather than the mint of the card it sits on: it names another
+ * label in the stream, and that is the whole point of it being here.
  *
  * Required labels all have to match before the derived label is even evaluated;
  * recommended ones are context, present or not. Dashed says the difference, and
