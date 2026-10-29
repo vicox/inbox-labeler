@@ -3,14 +3,14 @@
 import { useMemo, useState } from "react";
 
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
-import { byFrequency, connectionsOf, emphasis, type Label } from "@/lib/label-stream";
+import { connectionsOf, emphasis, listsOf, type Label } from "@/lib/label-list";
 import { LabelCard } from "./label-card";
 
 /**
- * The labels one account has, as one stream: a single narrow list, busiest first,
- * whatever kind of label each one is. A derived label still names what it is built
- * from, and each card opens its label's own screen (`app/label`), which says what
- * kind it is.
+ * The labels one account has, as two lists side by side: detection labels and
+ * derived labels, each busiest first. On a narrow screen the derived list follows
+ * the detection list instead. A derived label still names what it is built from,
+ * and each card opens its label's own screen (`app/label`).
  *
  * Given its data rather than fetching it. The page above is a Server Component
  * that has already opened the signed-in user's store, so there is nothing here to
@@ -19,13 +19,14 @@ import { LabelCard } from "./label-card";
  * component only because pointing at a label lights up what it draws on; the
  * data arrives already decided.
  */
-export function LabelStream({ labels, matches }: { labels: Label[]; matches: Matches }) {
+export function LabelList({ labels, matches }: { labels: Label[]; matches: Matches }) {
   const [focused, setFocused] = useState<string | null>(null);
 
   /**
    * The relationships are no longer drawn, but they still decide what lights up:
    * pointing at a label picks out the ones it draws on, or the ones that draw on
-   * it, and fades the rest.
+   * it, and fades the rest — across both lists, since a derived label's sources
+   * are in the other one.
    */
   const connections = useMemo(() => connectionsOf(labels), [labels]);
   const lit = useMemo(() => emphasis(focused, connections), [focused, connections]);
@@ -45,13 +46,15 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
   }
 
   // One reading of the clock for the whole render, so every card on the page
-  // reports its age against the same moment, and the list is ordered against it.
+  // reports its age against the same moment, and the lists are ordered against it.
   const now = new Date();
 
   // Ordered here rather than memoised: the order depends on `now`, which changes
   // every render, so memoising would only add a dependency that never holds.
   // Twenty-five labels cost nothing to sort.
-  const ordered = byFrequency(labels, (label) => matchesPerDay(matches[label.label], now));
+  const { detection, derived } = listsOf(labels, (label) =>
+    matchesPerDay(matches[label.label], now),
+  );
 
   /**
    * The detection labels a derived label is built from. Read off the edge list
@@ -85,22 +88,47 @@ export function LabelStream({ labels, matches }: { labels: Label[]; matches: Mat
     />
   );
 
-  // Headed, so the cards read as this account's labels rather than as a list
-  // that arrived without a name. The count beside it is detection / derived,
-  // taken from the cards below.
-  const detection = ordered.filter((label) => label.type === "detection").length;
-  const derived = ordered.filter((label) => label.type === "derived").length;
-
+  // Side by side from `md` up; stacked below it, where two columns would leave
+  // each card narrower than a phone's.
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="mx-auto grid max-w-5xl items-start gap-x-10 gap-y-12 md:grid-cols-2">
+      <List title="Detection Labels" empty="No detection labels yet" labels={detection} card={card} />
+      <List title="Derived Labels" empty="No derived labels yet" labels={derived} card={card} />
+    </div>
+  );
+}
+
+/**
+ * One headed list. Headed, so the cards read as this account's labels of one kind
+ * rather than as a list that arrived without a name; the count beside the heading
+ * is the cards below it. A kind with none keeps its heading and says so, so the
+ * other list does not look like the only one there is.
+ */
+function List({
+  title,
+  empty,
+  labels,
+  card,
+}: {
+  title: string;
+  empty: string;
+  labels: Label[];
+  card: (label: Label) => React.ReactNode;
+}) {
+  return (
+    <section>
       <h2 className="mb-4 font-display text-[22px] tracking-[-0.01em]">
-        Labels{" "}
+        {title}{" "}
         <span className="font-sans text-[12px] tracking-normal text-ink-faint tabular-nums">
-          ({detection} / {derived})
+          ({labels.length})
         </span>
       </h2>
-      <div className="flex flex-col gap-3">{ordered.map(card)}</div>
-    </div>
+      {labels.length > 0 ? (
+        <div className="flex flex-col gap-3">{labels.map(card)}</div>
+      ) : (
+        <p className="text-[12.5px] text-ink-faint">{empty}</p>
+      )}
+    </section>
   );
 }
 

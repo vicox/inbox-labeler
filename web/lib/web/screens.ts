@@ -2,7 +2,7 @@
  * Where the signed-in screens are, and which of the user's own labels a URL
  * names.
  *
- *     /                          the stream: every label, busiest first
+ *     /                          detection and derived labels, each busiest first
  *     /label?name=Invoices       one label
  *
  * ## A query parameter, not a path segment

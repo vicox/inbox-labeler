@@ -1,4 +1,4 @@
-import type { Label } from "@/lib/label-stream";
+import type { Label } from "@/lib/label-list";
 import { BackToLabels } from "./signed-in";
 
 type Props = {
@@ -18,7 +18,7 @@ type Props = {
  *     REQUIRES / FEEDS      the labels on the other side of it, when there are any
  *     INSTRUCTION           what it is told to decide, in the user's words
  *
- * Reached from its card in the stream, and left by the link back to it or the
+ * Reached from its card in the label lists, and left by the link back to them or the
  * browser's own back. Reading only — labels are written through the MCP tools,
  * never from here — so the heading has nothing beside it.
  */

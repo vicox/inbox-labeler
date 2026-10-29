@@ -39,7 +39,7 @@ export type Label = {
 export type Connection = { from: string; to: string; kind: "required" | "recommended" };
 
 /**
- * The order the stream is read in: busiest first, then by name.
+ * The order each list is read in: busiest first, then by name.
  *
  * How often a label matches is the one thing about it that is worth ranking, and
  * it is what a reader is looking for — which of these is actually doing work. The
@@ -48,18 +48,36 @@ export type Connection = { from: string; to: string; kind: "required" | "recomme
  * nobody can see. Two labels matching equally often always come out the same way
  * round.
  *
- * What a label asks of you does not come into it, and neither does what kind of
- * label it is. `attention` is a request about mail, not a claim about the label
- * being more worth reading than its neighbour, and ranking by it buried busy
- * labels under idle ones that happened to ask for more. A card's surface already
- * says whether it is derived and its detail says its role; sorting by either as
- * well would split the one list back into sections.
+ * What a label asks of you does not come into it, and neither does its role.
+ * `attention` is a request about mail, not a claim about the label being more
+ * worth reading than its neighbour, and ranking by it buried busy labels under
+ * idle ones that happened to ask for more. A detection label's role is on its own
+ * screen; sorting by it as well would split the detection list into sections.
  *
  * `perDay` is passed in rather than read here: how often a label matches is not
  * something a label carries.
  */
 export function byFrequency(labels: Label[], perDay: (label: Label) => number): Label[] {
   return [...labels].sort((a, b) => perDay(b) - perDay(a) || a.label.localeCompare(b.label));
+}
+
+/**
+ * The two lists the signed-in page shows side by side: detection labels and
+ * derived labels, each in `byFrequency` order.
+ *
+ * The kind of label decides which list it is in and nothing else. Within a list
+ * the order is the one above, so a category, an attribute and a detection label
+ * with no role yet share the detection list and one order.
+ */
+export function listsOf(
+  labels: Label[],
+  perDay: (label: Label) => number,
+): { detection: Label[]; derived: Label[] } {
+  const ordered = byFrequency(labels, perDay);
+  return {
+    detection: ordered.filter((label) => label.type === "detection"),
+    derived: ordered.filter((label) => label.type === "derived"),
+  };
 }
 
 /**

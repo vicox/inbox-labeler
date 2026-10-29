@@ -4,7 +4,7 @@ import { LabelView } from "@/components/label-view";
 import { NotHere, SignedIn, Unavailable } from "@/components/signed-in";
 import type { Label } from "@/lib/inbox/labels";
 import { inboxStore } from "@/lib/inbox/store";
-import { connectionsOf } from "@/lib/label-stream";
+import { connectionsOf } from "@/lib/label-list";
 import { findLabel, single } from "@/lib/web/screens";
 import { resolveVisitor, type SignedInVisitor } from "@/lib/web/visitor";
 
@@ -54,7 +54,7 @@ export default async function LabelPage({
 
   // The derived labels it feeds, read off the edge list rather than the labels,
   // so a reference to a label this user does not have is dropped here the same
-  // way it is in the stream.
+  // way it is in the label lists.
   const feeds = connectionsOf(labels)
     .filter((connection) => connection.from === label.label)
     .map((connection) => connection.to);

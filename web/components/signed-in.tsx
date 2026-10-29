@@ -7,7 +7,7 @@ import { Account, SiteHeader } from "./site-header";
  * The frame every signed-in screen sits in, and the things one can say instead of
  * showing what was asked for.
  *
- * The stream and a label's screen are one product read from one store, so they
+ * The label lists and a label's screen are one product read from one store, so they
  * share a header with the account in it, a width and a footer — written once here
  * rather than twice beside two pages.
  */
@@ -57,7 +57,7 @@ export function NotHere() {
   );
 }
 
-/** The way back to the stream, at the top of a label's screen. */
+/** The way back to the label lists, at the top of a label's screen. */
 export function BackToLabels() {
   return (
     <Link

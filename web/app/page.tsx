@@ -1,5 +1,5 @@
 import { LegalLinks } from "@/components/legal";
-import { LabelStream } from "@/components/label-stream";
+import { LabelList } from "@/components/label-list";
 import { SignedIn, Unavailable } from "@/components/signed-in";
 import { SiteHeader, SignIn } from "@/components/site-header";
 import type { Label } from "@/lib/inbox/labels";
@@ -17,8 +17,9 @@ import { resolveVisitor, type SignedInVisitor } from "@/lib/web/visitor";
  * same rows is a second place for the two to disagree about what they say and who
  * may read them.
  *
- * Signed in, this is the stream: every label, busiest first. A label has a screen
- * of its own (`app/label`), reached from here.
+ * Signed in, these are the label lists: detection labels beside derived labels,
+ * each busiest first. A label has a screen of its own (`app/label`), reached from
+ * here.
  *
  * ## Where the owner comes from
  *
@@ -139,7 +140,7 @@ async function Labels({ visitor }: { visitor: SignedInVisitor }) {
       {account === "unavailable" ? (
         <Unavailable />
       ) : (
-        <LabelStream labels={account.labels} matches={account.matches} />
+        <LabelList labels={account.labels} matches={account.matches} />
       )}
     </SignedIn>
   );
