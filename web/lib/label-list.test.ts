@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { byFrequency, connectionsOf, type Attention, type Label } from "./label-stream.ts";
+import {
+  byFrequency,
+  connectionsOf,
+  listsOf,
+  type Attention,
+  type Label,
+} from "./label-list.ts";
 
 function label(name: string, attention: Attention = "normal"): Label {
   return { label: name, type: "detection", attention, instruction: "x" };
@@ -115,12 +121,33 @@ test("a detection label feeding two derived labels appears in both", () => {
   assert.deepEqual(feeds, ["Large invoice", "Any invoice"]);
 });
 
-// --- one stream -------------------------------------------------------------
+// --- two lists --------------------------------------------------------------
 //
-// The signed-in page shows every label in one list, so the order has to hold
-// across kinds of label rather than only within one.
+// The signed-in page shows detection labels and derived labels in two lists side
+// by side. The kind of label decides the list; frequency alone decides the order
+// within it.
 
-test("every kind of label shares one order, by frequency alone", () => {
+/** Reads both lists back as names. */
+const lists = (labels: Label[], rates: Record<string, number> = {}) => {
+  const { detection, derived } = listsOf(labels, (l) => rates[l.label] ?? 0);
+  return { detection: detection.map((l) => l.label), derived: derived.map((l) => l.label) };
+};
+
+test("each kind of label goes in its own list, busiest first", () => {
+  const labels: Label[] = [
+    label("Idle detection"),
+    derived("Idle conclusion", ["Idle detection"]),
+    label("Busy detection"),
+    derived("Busy conclusion", ["Busy detection"]),
+  ];
+  const rates = { "Busy detection": 3, "Busy conclusion": 5, "Idle detection": 0.1 };
+  assert.deepEqual(lists(labels, rates), {
+    detection: ["Busy detection", "Idle detection"],
+    derived: ["Busy conclusion", "Idle conclusion"],
+  });
+});
+
+test("every role shares the detection list and one order, by frequency alone", () => {
   const labels: Label[] = [
     { ...label("Idle category"), role: "category" },
     { ...label("Middling attribute"), role: "attribute" },
@@ -128,10 +155,16 @@ test("every kind of label shares one order, by frequency alone", () => {
     derived("Busy conclusion", ["Idle category"]),
   ];
   const rates = { "Busy conclusion": 5, "Middling attribute": 1, "No role yet": 0.5 };
-  assert.deepEqual(order(labels, rates), [
-    "Busy conclusion",
-    "Middling attribute",
-    "No role yet",
-    "Idle category",
-  ]);
+  assert.deepEqual(lists(labels, rates), {
+    detection: ["Middling attribute", "No role yet", "Idle category"],
+    derived: ["Busy conclusion"],
+  });
+});
+
+test("a kind with no labels is an empty list, not a missing one", () => {
+  assert.deepEqual(lists([label("Invoices")]), { detection: ["Invoices"], derived: [] });
+  assert.deepEqual(lists([derived("Large invoice", [])]), {
+    detection: [],
+    derived: ["Large invoice"],
+  });
 });

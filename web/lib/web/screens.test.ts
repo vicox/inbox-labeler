@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Label } from "../label-stream.ts";
+import type { Label } from "../label-list.ts";
 import { findLabel, labelHref, single } from "./screens.ts";
 
 /**

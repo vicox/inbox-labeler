@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import type { Label } from "@/lib/label-stream";
+import type { Label } from "@/lib/label-list";
 import { labelHref } from "@/lib/web/screens";
 import { AttentionMark } from "./attention-mark";
 
@@ -28,7 +28,7 @@ type Props = {
 };
 
 /**
- * One label in the stream — mint for a derived label, warm for everything else.
+ * One label in its list — mint for a derived label, warm for everything else.
  * Its role does not come into it: a category, an attribute and a label with
  * neither look the same here, and the label's own screen is what tells them apart.
  *
@@ -152,8 +152,8 @@ export function LabelCard({
 
 /**
  * A detection label a derived label is built from. Carries the warm surface of a
- * detection label rather than the mint of the card it sits on: it names another
- * label in the stream, and that is the whole point of it being here.
+ * detection label rather than the mint of the card it sits on: it names a label
+ * in the detection list, and that is the whole point of it being here.
  *
  * Required labels all have to match before the derived label is even evaluated;
  * recommended ones are context, present or not. Dashed says the difference, and

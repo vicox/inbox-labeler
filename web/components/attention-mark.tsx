@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { Attention } from "@/lib/label-stream";
+import type { Attention } from "@/lib/label-list";
 
 /**
  * What a label asks of the reader, as a mark rather than a word: a star for the

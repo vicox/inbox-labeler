@@ -8,7 +8,7 @@
  *
  * The field names are snake_case because they are the label's own field names,
  * the ones an MCP client passes and reads back, not this language's.
- * `lib/label-stream.ts` describes the same shape for the web UI; the two agree because
+ * `lib/label-list.ts` describes the same shape for the web UI; the two agree because
  * they are both descriptions of one document.
  */
 
