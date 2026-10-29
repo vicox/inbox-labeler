@@ -88,8 +88,7 @@ export function listsOf(
  *
  * Both kinds are here because both are real: a recommended label is used by the
  * derived label that names it, and leaving it out would hide that from anything
- * reading this — which side is emphasised on hover, and which relationships a
- * card can name.
+ * reading this — such as which relationships a card can name.
  *
  * A reference naming a label this user does not have is dropped. The UI is not
  * the place to report a reference that points at nothing.
@@ -112,20 +111,4 @@ export function connectionsOf(labels: Label[]): Connection[] {
         .filter((reference) => detection.has(reference.name))
         .map((reference) => ({ from: reference.name, to: derived.label, kind: reference.kind })),
     );
-}
-
-/**
- * Which labels to emphasise while `focused` is hovered or focused: itself, and
- * whatever sits on the other side of its relationships. Null means nothing is
- * focused and every label stands at full strength.
- */
-export function emphasis(focused: string | null, connections: Connection[]): Set<string> | null {
-  if (!focused) return null;
-
-  const labels = new Set([focused]);
-  for (const connection of connections) {
-    if (connection.from === focused) labels.add(connection.to);
-    else if (connection.to === focused) labels.add(connection.from);
-  }
-  return labels;
 }

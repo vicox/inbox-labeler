@@ -8,10 +8,6 @@ import { AttentionMark } from "./attention-mark";
 
 type Props = {
   label: Label;
-  /** Dimmed because something else is focused and this label is unrelated to it. */
-  dimmed: boolean;
-  /** Lit because it is focused, or connected to whatever is. */
-  lit: boolean;
   /** About how often it matches, beside the name — null when there is no rate. */
   rate: string | null;
   /** When it last matched, under the name, or "Never matched". */
@@ -23,8 +19,6 @@ type Props = {
    * card. `suggested` marks the ones offered as context rather than required.
    */
   references: { name: string; suggested?: boolean }[];
-  onEnter: () => void;
-  onLeave: () => void;
 };
 
 /**
@@ -43,35 +37,15 @@ type Props = {
  * and holds elements of its own rather than being part of the card's link,
  * because it takes hover and focus separately from the card.
  */
-export function LabelCard({
-  label,
-  dimmed,
-  lit,
-  rate,
-  last,
-  lastAt,
-  references,
-  onEnter,
-  onLeave,
-}: Props) {
+export function LabelCard({ label, rate, last, lastAt, references }: Props) {
   // `normal` carries no mark; see AttentionMark.
   const marked = label.attention !== "normal";
 
   return (
-    // Positioned, so the attention mark can sit over the name line. The
-    // relationship hover sits here rather than on the link so that it keeps
-    // running while the pointer is on the mark.
-    <div
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      onFocus={onEnter}
-      onBlur={onLeave}
-      className={[
-        "relative transition duration-200 ease-out",
-        dimmed ? "opacity-35" : "opacity-100",
-        lit ? "-translate-y-px" : "",
-      ].join(" ")}
-    >
+    // Positioned, so the attention mark can sit over the name line. The hover
+    // sits here rather than on the link so that it keeps running while the
+    // pointer is on the mark.
+    <div className="group relative transition duration-200 ease-out hover:-translate-y-px focus-within:-translate-y-px">
       <Link
         href={labelHref(label.label)}
         prefetch={false}
@@ -83,7 +57,7 @@ export function LabelCard({
             : "border-label-rule bg-label-card",
           "min-h-[62px] transition-shadow duration-200 ease-out",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-          lit ? "shadow-[0_1px_0_rgba(28,26,23,0.10)]" : "shadow-none",
+          "shadow-none group-hover:shadow-[0_1px_0_rgba(28,26,23,0.10)] group-focus-within:shadow-[0_1px_0_rgba(28,26,23,0.10)]",
         ].join(" ")}
       >
         {/* The rate sits flush right. A card with an attention mark holds room for
