@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { matchDisplay, matchesPerDay, type Matches } from "@/lib/activity";
-import { connectionsOf, emphasis, listsOf, type Label } from "@/lib/label-list";
+import { connectionsOf, listsOf, type Label } from "@/lib/label-list";
 import { LabelCard } from "./label-card";
 
 /**
@@ -15,21 +15,14 @@ import { LabelCard } from "./label-card";
  * Given its data rather than fetching it. The page above is a Server Component
  * that has already opened the signed-in user's store, so there is nothing here to
  * fetch and no endpoint to fetch it from — which also means there is no request
- * this component could be made to send on somebody else's behalf. A client
- * component only because pointing at a label lights up what it draws on; the
- * data arrives already decided.
+ * this component could be made to send on somebody else's behalf.
  */
 export function LabelList({ labels, matches }: { labels: Label[]; matches: Matches }) {
-  const [focused, setFocused] = useState<string | null>(null);
-
   /**
-   * The relationships are no longer drawn, but they still decide what lights up:
-   * pointing at a label picks out the ones it draws on, or the ones that draw on
-   * it, and fades the rest — across both lists, since a derived label's sources
-   * are in the other one.
+   * The relationships are not drawn. A derived card names the detection labels it
+   * is built from, and a label's own screen lists the rest.
    */
   const connections = useMemo(() => connectionsOf(labels), [labels]);
-  const lit = useMemo(() => emphasis(focused, connections), [focused, connections]);
 
   // Nothing configured yet. An empty list would look like a verdict on this
   // account's mail rather than on its setup, so the space says what is missing
@@ -62,8 +55,7 @@ export function LabelList({ labels, matches }: { labels: Label[]; matches: Match
    * filtered out here the same way it is everywhere else.
    *
    * Only derived labels carry these. A detection label's own relationships — the
-   * derived labels it feeds — are reachable by pointing at it, which lights them
-   * up, and on its own screen.
+   * derived labels it feeds — are on its own screen.
    */
   const referencesOf = (label: Label) =>
     label.type === "derived"
@@ -81,10 +73,6 @@ export function LabelList({ labels, matches }: { labels: Label[]; matches: Match
       {...matchDisplay(matches[label.label], now)}
       lastAt={matches[label.label]?.last_matched_at}
       references={referencesOf(label)}
-      dimmed={lit !== null && !lit.has(label.label)}
-      lit={lit?.has(label.label) ?? false}
-      onEnter={() => setFocused(label.label)}
-      onLeave={() => setFocused(null)}
     />
   );
 
@@ -92,8 +80,8 @@ export function LabelList({ labels, matches }: { labels: Label[]; matches: Match
   // each card narrower than a phone's.
   return (
     <div className="mx-auto grid max-w-5xl items-start gap-x-10 gap-y-12 md:grid-cols-2">
-      <List title="Detection Labels" empty="No detection labels yet" labels={detection} card={card} />
-      <List title="Derived Labels" empty="No derived labels yet" labels={derived} card={card} />
+      <List title="Detection" empty="No detection labels yet" labels={detection} card={card} />
+      <List title="Derived" empty="No derived labels yet" labels={derived} card={card} />
     </div>
   );
 }
